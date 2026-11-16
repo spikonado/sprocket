@@ -4,6 +4,16 @@ Clients older than v0.4.2 are unsupported. Each shim below is temporary code wit
 
 ## Convex API shims
 
+### Transcript part format
+
+Released v0.5.x agents send completion `work`, separate `toolInvocations`, and section metadata on `beginToolJob`. Keep accepting those arguments. Current agents put `toolInvocationId` on each completion call item and send no section data. Completion `sections` are ignored, as described in "Retired transcript section summaries".
+
+Released agents expect a boolean from `beginRun`, `saveContextHandoff`, `executor:complete` and `executor:fail`, and a completion document or `null` from `finalizeCompletionCall`. Callers get the created parts only with `returnParts: true`. Once agents that don't send it age out, return parts unconditionally and remove the old response shapes.
+
+Released clients download parts through `transcript:getPartsPage`. Their replicas need `work` for grouping, `started` tool parts for running tools, and copied `callId`, `name` and command input on tool parts. Convex keeps writing all of these, deriving `work` and job sections for current agents in `lib/legacyTranscriptWork.ts`. Current readers ignore them: they derive blocks from item order, pair results by `toolInvocationId`, and skip `started` parts.
+
+Once clients through v0.5.x age out, stop writing these fields, migrate `work` and old `completion.streamId` off stored parts, and drop copied tool fields where a matching call item has them. Keep every part number, including `started` parts.
+
 ### Retired subagent provider restriction
 
 Released agents require `providerPreferences.restrictSubagentsToProvider` in `agentRuntime.getContext`, so it is always `false`. Released UIs still call `uiPreferences.setRestrictSubagentsToProvider`, which keeps saving the ignored `restrictSubagentsToProvider` field. Once those clients age out, remove the context field and the mutation, migrate the field off `uiPreferences` rows, then drop it from the schema.
@@ -94,6 +104,10 @@ Tool parts written by the August 2026 transcript migration, with `migrated-tool:
 
 Older `artifacts` rows carry `type`, so the schema keeps it optional. `migrations:removeArtifactTypes` deletes it, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, remove `type` from the schema and remove the migration.
 
+### Completion call invocation IDs
+
+Older completion parts keep tool invocation IDs only in `work.toolInvocations`. `migrations:backfillCompletionToolInvocationIds` copies each onto its call item, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --prod --component migrations lib:getStatus` reports it done, remove the migration. `withToolInvocationIds` stays for released agents' writes, as described in "Transcript part format".
+
 ### Transcript context location
 
 Older `threadRecords` rows carry `contextSummary`, `contextSummaryPartCount`, `contextSummaryHandoffKey` and `reasoningStrippedThroughPartNumber`. Writers now use `threadTranscriptStates`; readers fall back to the thread fields while `migrations:moveTranscriptContext` copies them and unsets the old fields. The Convex Production workflow runs it after each deploy. Once `bunx convex run --prod --component migrations lib:getStatus` reports it done, remove the four fields from `threadRecords`, the location fallback and the migration. `transcript:getState` and `getStateForRun` keep the same result shape for released clients.
@@ -137,6 +151,10 @@ Each of these Convex variants goes once a full production scan confirms no retai
 
 ## Local data directory shims
 
+### Call item invocation IDs in local transcripts
+
+Parts that released clients saved locally keep tool invocation IDs in `work.toolInvocations` instead of on their call items. `TranscriptPart` deserialization and `to_local_part` in `crates/sprocket-transcript` copy them onto the items with `normalize_legacy_tool_invocations`. Remove it once old local transcript caches are deleted and downloaded again, and `migrations:backfillCompletionToolInvocationIds` reports done on production.
+
 ### Windows private files from elevated runs
 
 Older releases restricted private files to OWNER RIGHTS, so files an elevated run wrote are owned by Administrators and unreadable to the user's normal runs. On Windows, `ProfileLock::acquire` deletes those private files when the server can't read them. Remove it once releases before the per-user ACL are outside the direct-upgrade window.
@@ -159,6 +177,8 @@ An npm launcher from v0.4.3 and earlier stays in memory across in-app updates an
 
 Stored executor jobs, transcripts and local data files keep accepting these historical shapes so history stays readable. No lossless rewrite exists, so they have no removal gate:
 
+- Tool parts with `status: 'started'`. Readers skip them, but retain their part numbers so transcript ranges stay contiguous.
+- Historical tool results without a matching completion call, including `executor-job:<id>` call IDs. Their `name`, `callId`, and optional `input` preserve details unavailable in a call item.
 - `spawn_subagent` calls with `threadId`, from before follow-ups moved to `control_subagent`.
 - Retired tool names `exec_command`, `control_command`, `poll_command`, `write_stdin` and `await_question`, their historical `yieldTimeMs` values, and question text, options and poll IDs in results.
 - The optional `workdir` on `vExecCommandPayload`, shown as `(cwd …)` in the UI and ignored on replay.

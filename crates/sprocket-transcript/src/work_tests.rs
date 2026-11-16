@@ -2,18 +2,13 @@ use serde_json::json;
 
 use super::{TranscriptPart, WorkReplica};
 
-fn assigned_part(
-    number: u32,
-    items: Vec<serde_json::Value>,
-    work: serde_json::Value,
-) -> TranscriptPart {
+fn completion_part(number: u32, items: Vec<serde_json::Value>) -> TranscriptPart {
     serde_json::from_value(json!({
         "number": number,
         "sourceKey": format!("completion:run:{number}"),
         "kind": "completion",
         "runId": "run",
-        "completion": { "streamId": number.to_string(), "items": items },
-        "work": work
+        "completion": { "items": items }
     }))
     .unwrap()
 }
@@ -24,11 +19,8 @@ fn tool_part(
     status: &str,
     output: serde_json::Value,
 ) -> TranscriptPart {
-    let mut part = assigned_part(
-        number,
-        Vec::new(),
-        json!({"ranges":[],"sectionKey":"section"}),
-    );
+    let mut part = completion_part(number, Vec::new());
+    part.source_key = format!("tool:{invocation}:{status}:{number}");
     part.kind = super::TranscriptPartKind::Tool;
     part.completion = None;
     part.tool = Some(super::types::TranscriptToolBody {
@@ -44,14 +36,70 @@ fn tool_part(
 }
 
 #[test]
+fn late_text_splits_a_closed_block_and_refreshes_its_details() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+    replica
+        .save_parts(
+            "thread",
+            &[
+                completion_part(0, vec![json!({"type":"reasoning","text":"first"})]),
+                completion_part(
+                    2,
+                    vec![
+                        json!({"type":"reasoning","text":"second"}),
+                        json!({"type":"text","text":"done"}),
+                    ],
+                ),
+            ],
+        )
+        .unwrap();
+    let id = "work:run:completion:run:0:0";
+    let before = replica.page(None, 10, None, &[], false).unwrap();
+    let old_row = before["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == id)
+        .unwrap();
+    let details = replica.details(id, None, None, true, 10, false).unwrap();
+    assert_eq!(details["parts"].as_array().unwrap().len(), 2);
+
+    replica
+        .save_parts(
+            "thread",
+            &[completion_part(
+                1,
+                vec![json!({"type":"text","text":"between"})],
+            )],
+        )
+        .unwrap();
+    let after = replica.page(None, 10, None, &[], false).unwrap();
+    let row = after["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == id)
+        .unwrap();
+    assert_eq!(row["closed"], true);
+    assert!(row["revision"].as_u64().unwrap() > old_row["revision"].as_u64().unwrap());
+    let details = replica.details(id, None, None, true, 10, false).unwrap();
+    assert_eq!(details["parts"].as_array().unwrap().len(), 1);
+    assert_eq!(details["parts"][0]["text"], "first");
+    let details = replica
+        .details("work:run:completion:run:2:0", None, None, true, 10, false)
+        .unwrap();
+    assert_eq!(details["parts"][0]["text"], "second");
+}
+
+#[test]
 fn newest_first_parts_converge_to_one_section() {
     let dir = tempfile::tempdir().unwrap();
     let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
     replica.set_remote_total(2).unwrap();
-    let later = assigned_part(
+    let later = completion_part(
         1,
         vec![json!({"type":"reasoning","text":"later","startedAt":30,"completedAt":40})],
-        json!({"ranges":[{"start":0,"end":1,"sectionKey":"section"}]}),
     );
     replica.save_parts("thread", &[later]).unwrap();
     let page = replica
@@ -78,65 +126,68 @@ fn newest_first_parts_converge_to_one_section() {
     let older = replica.page(Some(next), 10, None, &[], false).unwrap();
     assert_eq!(older["indexing"], true);
     assert_eq!(older["syncing"], true);
-    let first = assigned_part(
+    let first = completion_part(
         0,
         vec![json!({"type":"reasoning","text":"first","startedAt":10,"completedAt":20})],
-        json!({"ranges":[{"start":0,"end":1,"sectionKey":"section"}]}),
     );
     replica.save_parts("thread", &[first]).unwrap();
 
     let page = replica.page(None, 10, None, &[], false).unwrap();
     assert_eq!(page["rows"].as_array().unwrap().len(), 1);
     assert_eq!(page["rows"][0]["sequence"], 0);
+    assert_eq!(page["rows"][0]["id"], "work:run:completion:run:0:0");
     assert_eq!(page["syncing"], false);
     let details = replica
-        .details("section", None, None, true, 10, false)
+        .details(
+            page["rows"][0]["id"].as_str().unwrap(),
+            None,
+            None,
+            true,
+            10,
+            false,
+        )
         .unwrap();
     assert_eq!(details["parts"].as_array().unwrap().len(), 2);
 }
 
 #[test]
-fn tool_event_before_completion_is_visible_and_then_pairs_with_the_call() {
+fn started_parts_remain_stored_but_running_requires_a_canonical_call() {
     let dir = tempfile::tempdir().unwrap();
     let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
-    let event = assigned_part(0, Vec::new(), json!({"ranges":[],"sectionKey":"section"}));
-    let mut event = TranscriptPart {
-        kind: super::TranscriptPartKind::Tool,
-        tool: Some(super::types::TranscriptToolBody {
-            job_id: None,
-            tool_invocation_id: Some("invocation".into()),
-            call_id: "call".into(),
-            name: "poll_cmd".into(),
-            input: Some(json!({"sessionId":"stored-session"})),
-            output: None,
-            status: "started".into(),
-        }),
-        ..event
-    };
+    let mut event = tool_part(0, "invocation", "started", json!(null));
     event.created_at = Some(10);
-    replica.save_parts("thread", &[event]).unwrap();
+    let tool = event.tool.as_mut().unwrap();
+    tool.call_id = "call".into();
+    tool.name = "poll_cmd".into();
+    tool.input = Some(json!({"sessionId":"stored-session"}));
+    tool.output = None;
+    replica.save_parts("thread", &[event.clone()]).unwrap();
     assert_eq!(
-        replica.page(None, 10, None, &[], false).unwrap()["rows"][0]["unpersistedToolCallIds"],
-        json!(["call"])
+        replica.page(None, 10, None, &[], false).unwrap()["rows"],
+        json!([])
     );
-    let details = replica
-        .details("section", None, None, true, 10, false)
-        .unwrap();
-    assert_eq!(details["parts"][0]["input"]["sessionId"], "stored-session");
-
-    let completion = assigned_part(
+    assert_eq!(replica.part(0).unwrap(), Some(event));
+    let completion = completion_part(
         1,
         vec![
-            json!({"type":"tool-call","callId":"call","name":"poll_cmd","input":{"sessionId":"canonical-session"}}),
+            json!({"type":"tool-call","callId":"call","toolInvocationId":"invocation","name":"poll_cmd","input":{"sessionId":"canonical-session"}}),
         ],
-        json!({
-            "ranges":[{"start":0,"end":1,"sectionKey":"section"}],
-            "toolInvocations":[{"item":0,"toolInvocationId":"invocation"}]
-        }),
     );
     replica.save_parts("thread", &[completion]).unwrap();
+    let page = replica.page(None, 10, None, &[], false).unwrap();
+    assert_eq!(page["rows"].as_array().unwrap().len(), 1);
+    assert_eq!(page["rows"][0]["closed"], false);
+    assert_eq!(page["rows"][0]["toolCounts"], json!({"poll_cmd":1}));
+    assert_eq!(page["rows"][0]["unpersistedToolCallIds"], json!(["call"]));
     let details = replica
-        .details("section", None, None, true, 10, false)
+        .details(
+            page["rows"][0]["id"].as_str().unwrap(),
+            None,
+            None,
+            true,
+            10,
+            false,
+        )
         .unwrap();
     assert_eq!(details["parts"].as_array().unwrap().len(), 1);
     assert_eq!(details["parts"][0]["callId"], "call");
@@ -147,7 +198,7 @@ fn tool_event_before_completion_is_visible_and_then_pairs_with_the_call() {
 }
 
 #[test]
-fn orphan_command_details_keep_input_with_legacy_null_fallback() {
+fn orphan_command_details_use_terminal_input_and_ignore_started_input() {
     let input = json!({"sessionId":"session","action":"terminate"});
     for (started_input, finished_input, has_invocation) in [
         (
@@ -178,8 +229,17 @@ fn orphan_command_details_keep_input_with_legacy_null_fallback() {
         }
         replica.save_parts("thread", &[started, finished]).unwrap();
 
+        let page = replica.page(None, 10, None, &[], false).unwrap();
+        assert_eq!(page["rows"].as_array().unwrap().len(), 1);
         let details = replica
-            .details("section", None, None, true, 10, false)
+            .details(
+                page["rows"][0]["id"].as_str().unwrap(),
+                None,
+                None,
+                true,
+                10,
+                false,
+            )
             .unwrap();
         let parts = details["parts"].as_array().unwrap();
         assert_eq!(parts.len(), 2);
@@ -187,11 +247,7 @@ fn orphan_command_details_keep_input_with_legacy_null_fallback() {
         assert_eq!(parts[0]["name"], "control_cmd");
         assert_eq!(
             parts[0].get("input"),
-            Some(
-                &started_input
-                    .or(finished_input.filter(|_| has_invocation))
-                    .unwrap_or(json!(null))
-            )
+            Some(&finished_input.unwrap_or(json!(null)))
         );
         assert_eq!(parts[1]["type"], "tool-result");
         assert_eq!(parts[1]["output"], output);
@@ -213,16 +269,12 @@ fn artifact_calls_and_results_appear_in_work_details() {
         started.tool.as_mut().unwrap().name = name.into();
         replica.save_parts("thread", &[started]).unwrap();
         let page = replica.page(None, 10, None, &[], false).unwrap();
-        assert_eq!(
-            page["rows"][0]["unpersistedToolCallIds"],
-            json!(["repeated"]),
-            "{name}"
-        );
-        let completion = assigned_part(
+        assert_eq!(page["rows"], json!([]), "{name}");
+        let completion = completion_part(
             1,
-            vec![json!({"type":"tool-call","callId":"repeated","name":name,"input":{}})],
-            json!({"ranges":[{"start":0,"end":1,"sectionKey":"section"}],
-                "toolInvocations":[{"item":0,"toolInvocationId":"artifact"}]}),
+            vec![
+                json!({"type":"tool-call","callId":"repeated","toolInvocationId":"artifact","name":name,"input":{}}),
+            ],
         );
         let mut finished = tool_part(2, "artifact", "completed", json!({"artifacts":[]}));
         finished.tool.as_mut().unwrap().name = name.into();
@@ -237,7 +289,14 @@ fn artifact_calls_and_results_appear_in_work_details() {
             "{name}"
         );
         let details = replica
-            .details("section", None, None, true, 10, false)
+            .details(
+                page["rows"][0]["id"].as_str().unwrap(),
+                None,
+                None,
+                true,
+                10,
+                false,
+            )
             .unwrap();
         let parts = details["parts"].as_array().unwrap();
         assert_eq!(parts.len(), 2, "{name}");
@@ -252,19 +311,12 @@ fn artifact_calls_and_results_appear_in_work_details() {
 fn repeated_call_ids_pair_by_invocation_when_results_finish_out_of_order() {
     let dir = tempfile::tempdir().unwrap();
     let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
-    let completion = assigned_part(
+    let completion = completion_part(
         0,
         vec![
-            json!({"type":"tool-call","callId":"repeated","name":"read_file","input":{"path":"one"}}),
-            json!({"type":"tool-call","callId":"repeated","name":"read_file","input":{"path":"two"}}),
+            json!({"type":"tool-call","callId":"repeated","toolInvocationId":"invocation-one","name":"read_file","input":{"path":"one"}}),
+            json!({"type":"tool-call","callId":"repeated","toolInvocationId":"invocation-two","name":"read_file","input":{"path":"two"}}),
         ],
-        json!({
-            "ranges":[{"start":0,"end":2,"sectionKey":"section"}],
-            "toolInvocations":[
-                {"item":0,"toolInvocationId":"invocation-one"},
-                {"item":1,"toolInvocationId":"invocation-two"}
-            ]
-        }),
     );
     replica.save_parts("thread", &[completion]).unwrap();
     let revision = replica.page(None, 10, None, &[], false).unwrap()["rows"][0]["revision"].clone();
@@ -283,21 +335,162 @@ fn repeated_call_ids_pair_by_invocation_when_results_finish_out_of_order() {
     );
 
     let details = replica
-        .details("section", None, None, true, 10, false)
+        .details("work:run:completion:run:0:0", None, None, true, 10, false)
         .unwrap();
     assert_eq!(details["parts"][1]["output"]["value"], "one");
     assert_eq!(details["parts"][3]["output"]["value"], "two");
 }
 
-fn command_snapshot_parts(poll_running: bool) -> Vec<TranscriptPart> {
-    let call = assigned_part(
+#[test]
+fn canonical_call_runs_without_any_tool_event_and_settles_on_terminal_result() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+    let completion = completion_part(
         0,
         vec![
-            json!({"type":"tool-call","callId":"exec","name":"exec_command","input":{"cmd":"cargo test"},"startedAt":10}),
+            json!({"type":"tool-call","callId":"repeated","toolInvocationId":"one","name":"read_file","input":{"path":"one"}}),
+        ],
+    );
+    replica.save_parts("thread", &[completion]).unwrap();
+    let page = replica.page(None, 10, None, &[], false).unwrap();
+    let id = page["rows"][0]["id"].as_str().unwrap();
+    assert_eq!(
+        page["rows"][0]["unpersistedToolCallIds"],
+        json!(["repeated"])
+    );
+    assert_eq!(page["rows"][0]["closed"], false);
+    let details = replica.details(id, None, None, true, 10, false).unwrap();
+    assert_eq!(details["parts"].as_array().unwrap().len(), 1);
+    assert_eq!(details["parts"][0]["input"], json!({"path":"one"}));
+
+    let result: TranscriptPart = serde_json::from_value(json!({
+        "number":1, "sourceKey":"tool:one:completed", "kind":"tool", "runId":"run",
+        "tool":{"toolInvocationId":"one", "status":"completed", "output":{"content":"one"}}
+    }))
+    .unwrap();
+    replica.save_parts("thread", &[result]).unwrap();
+    let page = replica.page(None, 10, None, &[], false).unwrap();
+    assert_eq!(page["rows"][0]["id"], id);
+    assert_eq!(page["rows"][0]["unpersistedToolCallIds"], json!([]));
+    assert_eq!(page["rows"][0]["closed"], false);
+    let details = replica.details(id, None, None, true, 10, false).unwrap();
+    assert_eq!(details["parts"].as_array().unwrap().len(), 2);
+    assert_eq!(details["parts"][1]["callId"], "repeated");
+    assert_eq!(details["parts"][1]["name"], "read_file");
+    assert_eq!(details["parts"][1]["status"], "completed");
+    assert_eq!(details["parts"][1]["output"], json!({"content":"one"}));
+}
+
+#[test]
+fn newest_first_result_joins_its_call_and_earlier_reasoning() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+    let result = tool_part(2, "one", "completed", json!({"content":"one"}));
+    replica.save_parts("thread", &[result]).unwrap();
+    let orphan = replica.page(None, 10, None, &[], false).unwrap();
+    let orphan_id = orphan["rows"][0]["id"].as_str().unwrap();
+    assert_eq!(orphan_id, "work:run:tool:one:completed:2:0");
+
+    let call = completion_part(
+        1,
+        vec![
+            json!({"type":"tool-call","callId":"repeated","toolInvocationId":"one","name":"read_file","input":{"path":"one"}}),
+            json!({"type":"text","text":"Done."}),
+        ],
+    );
+    replica.save_parts("thread", &[call]).unwrap();
+    let with_call = replica.page(None, 10, None, &[], false).unwrap();
+    assert_eq!(with_call["rows"].as_array().unwrap().len(), 2);
+    assert_eq!(with_call["rows"][0]["id"], "work:run:completion:run:1:0");
+
+    let reasoning = completion_part(0, vec![json!({"type":"reasoning","text":"Checking."})]);
+    replica.save_parts("thread", &[reasoning]).unwrap();
+    let joined = replica
+        .page(
+            None,
+            10,
+            Some((orphan["revision"].as_u64().unwrap(), -1)),
+            &[],
+            false,
+        )
+        .unwrap();
+    assert_eq!(joined["rows"].as_array().unwrap().len(), 2);
+    assert_eq!(joined["rows"][0]["id"], "work:run:completion:run:0:0");
+    assert_eq!(joined["rows"][0]["toolCounts"], json!({"read_file":1}));
+    assert_eq!(joined["rows"][0]["unpersistedToolCallIds"], json!([]));
+    assert_eq!(joined["rows"][0]["closed"], true);
+    assert!(
+        joined["changes"]
+            .as_array()
+            .unwrap()
+            .contains(&json!({"id":orphan_id,"row":null}))
+    );
+    let details = replica
+        .details(
+            joined["rows"][0]["id"].as_str().unwrap(),
+            None,
+            None,
+            true,
+            10,
+            false,
+        )
+        .unwrap();
+    assert_eq!(details["parts"].as_array().unwrap().len(), 3);
+    assert_eq!(details["parts"][0]["text"], "Checking.");
+    assert_eq!(details["parts"][1]["input"], json!({"path":"one"}));
+    assert_eq!(details["parts"][2]["output"], json!({"content":"one"}));
+}
+
+#[test]
+fn whitespace_does_not_open_or_close_work_blocks() {
+    let parts = [
+        completion_part(
+            0,
+            vec![
+                json!({"type":"reasoning","text":" \n\t"}),
+                json!({"type":"text","text":" \n"}),
+                json!({"type":"reasoning","text":"Checking."}),
+                json!({"type":"text","text":"\t"}),
+                json!({"type":"tool-call","callId":"call","name":"read_file"}),
+            ],
+        ),
+        completion_part(
+            1,
+            vec![
+                json!({"type":"reasoning","text":"Still checking."}),
+                json!({"type":"text","text":"Done."}),
+            ],
+        ),
+    ];
+    let blocks = super::sections::derive_work_blocks(&parts);
+    assert_eq!(blocks.len(), 1);
+    assert_eq!(blocks[0].id, "work:run:completion:run:0:2");
+    assert!(blocks[0].closed);
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+    replica.save_parts("thread", &parts).unwrap();
+    let page = replica.page(None, 10, None, &[], false).unwrap();
+    assert_eq!(page["rows"].as_array().unwrap().len(), 2);
+    assert_eq!(page["rows"][0]["id"], blocks[0].id);
+    assert_eq!(page["rows"][0]["closed"], blocks[0].closed);
+    assert_eq!(page["rows"][1]["text"], "Done.");
+    let details = replica
+        .details(&blocks[0].id, None, None, true, 10, false)
+        .unwrap();
+    assert_eq!(details["parts"].as_array().unwrap().len(), 3);
+    assert_eq!(details["parts"][0]["text"], "Checking.");
+    assert_eq!(details["parts"][1]["type"], "tool-call");
+    assert_eq!(details["parts"][2]["text"], "Still checking.");
+}
+
+fn command_snapshot_parts(poll_running: bool) -> Vec<TranscriptPart> {
+    let call = completion_part(
+        0,
+        vec![
+            json!({"type":"tool-call","callId":"exec","toolInvocationId":"exec","name":"exec_command","input":{"cmd":"cargo test"},"startedAt":10}),
             json!({"type":"text","text":"Checking something else while the tests run.","startedAt":20}),
         ],
-        json!({"ranges":[{"start":0,"end":1,"sectionKey":"section"}],
-            "toolInvocations":[{"item":0,"toolInvocationId":"exec"}]}),
     );
     let mut yielded = tool_part(
         1,
@@ -309,13 +502,11 @@ fn command_snapshot_parts(poll_running: bool) -> Vec<TranscriptPart> {
     let tool = yielded.tool.as_mut().unwrap();
     tool.call_id = "exec".into();
     tool.name = "exec_command".into();
-    let poll = assigned_part(
+    let poll = completion_part(
         2,
         vec![
-            json!({"type":"tool-call","callId":"poll","name":"write_stdin","input":{"sessionId":"7"},"startedAt":30}),
+            json!({"type":"tool-call","callId":"poll","toolInvocationId":"poll","name":"write_stdin","input":{"sessionId":"7"},"startedAt":30}),
         ],
-        json!({"ranges":[{"start":0,"end":1,"sectionKey":"poll-section"}],
-            "toolInvocations":[{"item":0,"toolInvocationId":"poll"}]}),
     );
     let mut polled = tool_part(
         3,
@@ -324,7 +515,6 @@ fn command_snapshot_parts(poll_running: bool) -> Vec<TranscriptPart> {
         json!({"running":poll_running,"success":!poll_running,"output":"More test output\n"}),
     );
     polled.created_at = Some(50);
-    polled.work.section_key = Some("poll-section".into());
     let tool = polled.tool.as_mut().unwrap();
     tool.call_id = "poll".into();
     tool.name = "write_stdin".into();
@@ -341,8 +531,9 @@ fn command_calls_settle_on_their_own_snapshot_results() {
             replica.save_parts("thread", &parts[..2]).unwrap();
             let initial = replica.page(None, 10, None, &[], false).unwrap()["rows"][0].clone();
             assert_eq!(initial["closed"], true);
+            let initial_id = initial["id"].as_str().unwrap();
             let initial_details = replica
-                .details("section", None, None, true, 10, false)
+                .details(initial_id, None, None, true, 10, false)
                 .unwrap()["parts"]
                 .clone();
             assert_eq!(
@@ -367,15 +558,22 @@ fn command_calls_settle_on_their_own_snapshot_results() {
             }
             let page = replica.page(None, 10, None, &[], false).unwrap();
             assert_eq!(page["rows"][0], initial);
-            assert_eq!(page["rows"][2]["id"], "poll-section");
+            assert_eq!(page["rows"][2]["id"], "work:run:completion:run:2:0");
             assert_eq!(
                 replica
-                    .details("section", None, None, true, 10, false)
+                    .details(initial_id, None, None, true, 10, false)
                     .unwrap()["parts"],
                 initial_details
             );
             let poll_details = replica
-                .details("poll-section", None, None, true, 10, false)
+                .details(
+                    page["rows"][2]["id"].as_str().unwrap(),
+                    None,
+                    None,
+                    true,
+                    10,
+                    false,
+                )
                 .unwrap();
             assert_eq!(
                 poll_details["parts"][1]["output"],
@@ -431,16 +629,17 @@ fn emptied_sections_reach_the_change_feed_as_deletions() {
     let dir = tempfile::tempdir().unwrap();
     let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
     replica
-        .save_parts("thread", &[tool_part(0, "one", "started", json!(null))])
+        .save_parts("thread", &[tool_part(0, "one", "completed", json!({}))])
         .unwrap();
     let before = replica.page(None, 10, None, &[], false).unwrap();
-    assert_eq!(before["rows"][0]["id"], "section");
+    let orphan_id = before["rows"][0]["id"].as_str().unwrap();
+    assert_eq!(orphan_id, "work:run:tool:one:completed:0:0");
 
-    let completion = assigned_part(
+    let completion = completion_part(
         1,
-        vec![json!({"type":"tool-call","callId":"repeated","name":"read_file"})],
-        json!({"ranges":[{"start":0,"end":1,"sectionKey":"other"}],
-            "toolInvocations":[{"item":0,"toolInvocationId":"one"}]}),
+        vec![
+            json!({"type":"tool-call","callId":"repeated","toolInvocationId":"one","name":"read_file"}),
+        ],
     );
     replica.save_parts("thread", &[completion]).unwrap();
     let page = replica
@@ -453,29 +652,26 @@ fn emptied_sections_reach_the_change_feed_as_deletions() {
         )
         .unwrap();
     assert_eq!(page["rows"].as_array().unwrap().len(), 1);
-    assert_eq!(page["rows"][0]["id"], "other");
+    assert_eq!(page["rows"][0]["id"], "work:run:completion:run:1:0");
     assert!(
         page["changes"]
             .as_array()
             .unwrap()
-            .contains(&json!({"id":"section","row":null}))
+            .contains(&json!({"id":orphan_id,"row":null}))
     );
 }
 
 #[test]
 fn tool_counts_follow_displayed_calls_in_both_download_orders() {
-    let completion = assigned_part(
+    let completion = completion_part(
         0,
         vec![
             json!({"type":"reasoning","text":"checking files","name":"not-a-tool"}),
-            json!({"type":"tool-call","callId":"repeated","name":"read_file"}),
-            json!({"type":"tool-call","callId":"repeated","name":"read_file"}),
+            json!({"type":"tool-call","callId":"repeated","toolInvocationId":"one","name":"read_file"}),
+            json!({"type":"tool-call","callId":"repeated","toolInvocationId":"two","name":"read_file"}),
             json!({"type":"tool-call","name":"list_artifacts"}),
             json!({"type":"tool-result","callId":"repeated","name":"not-a-call"}),
         ],
-        json!({"ranges":[{"start":0,"end":5,"sectionKey":"section"}],
-            "toolInvocations":[{"item":1,"toolInvocationId":"one"},
-                {"item":2,"toolInvocationId":"two"}]}),
     );
     let started = tool_part(1, "one", "started", json!(null));
     let mut failed = tool_part(2, "one", "failed", json!({"error":"missing"}));
@@ -506,46 +702,46 @@ fn tool_counts_follow_displayed_calls_in_both_download_orders() {
             replica.save_parts("thread", &[part]).unwrap();
         }
         let page = replica.page(None, 10, None, &[], false).unwrap();
+        assert_eq!(page["rows"].as_array().unwrap().len(), 3);
         assert_eq!(
             page["rows"][0]["unpersistedToolCallIds"],
             json!(["repeated"])
         );
         assert_eq!(
             page["rows"][0]["toolCounts"],
-            json!({"read_file":2,"list_artifacts":1,"poll_cmd":1,"control_cmd":1})
+            json!({"read_file":2,"list_artifacts":1})
         );
+        assert_eq!(page["rows"][1]["toolCounts"], json!({"poll_cmd":1}));
+        assert_eq!(page["rows"][2]["toolCounts"], json!({"control_cmd":1}));
     }
 }
 
 #[test]
-fn saved_tool_events_identify_live_count_overlap_until_completion_arrives() {
+fn terminal_fallback_is_replaced_when_its_canonical_call_arrives() {
     let dir = tempfile::tempdir().unwrap();
     let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
     let started = tool_part(0, "one", "started", json!(null));
     replica.save_parts("thread", &[started]).unwrap();
     let page = replica.page(None, 10, None, &[], false).unwrap();
-    assert_eq!(page["rows"][0]["toolCounts"], json!({"read_file":1}));
-    assert_eq!(
-        page["rows"][0]["unpersistedToolCallIds"],
-        json!(["repeated"])
-    );
+    assert_eq!(page["rows"], json!([]));
 
     let terminal = tool_part(1, "one", "completed", json!({}));
     replica.save_parts("thread", &[terminal]).unwrap();
     let page = replica.page(None, 10, None, &[], false).unwrap();
-    assert_eq!(
-        page["rows"][0]["unpersistedToolCallIds"],
-        json!(["repeated"])
-    );
+    assert_eq!(page["rows"].as_array().unwrap().len(), 1);
+    assert_eq!(page["rows"][0]["id"], "work:run:tool:one:completed:1:0");
+    assert_eq!(page["rows"][0]["unpersistedToolCallIds"], json!([]));
 
-    let completion = assigned_part(
+    let completion = completion_part(
         2,
-        vec![json!({"type":"tool-call","callId":"repeated","name":"read_file"})],
-        json!({"ranges":[{"start":0,"end":1,"sectionKey":"section"}],
-            "toolInvocations":[{"item":0,"toolInvocationId":"one"}]}),
+        vec![
+            json!({"type":"tool-call","callId":"repeated","toolInvocationId":"one","name":"read_file"}),
+        ],
     );
     replica.save_parts("thread", &[completion]).unwrap();
     let page = replica.page(None, 10, None, &[], false).unwrap();
+    assert_eq!(page["rows"].as_array().unwrap().len(), 1);
+    assert_eq!(page["rows"][0]["id"], "work:run:completion:run:2:0");
     assert_eq!(page["rows"][0]["toolCounts"], json!({"read_file":1}));
     assert_eq!(page["rows"][0]["unpersistedToolCallIds"], json!([]));
 }
@@ -554,17 +750,22 @@ fn saved_tool_events_identify_live_count_overlap_until_completion_arrives() {
 fn tool_counts_split_one_completion_across_sections() {
     let dir = tempfile::tempdir().unwrap();
     let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
-    let items = (0..4)
-        .map(|n| json!({"type":"tool-call","callId":format!("call-{n}"),"name":"exec_cmd"}))
-        .collect();
-    let completion = assigned_part(
+    let completion = completion_part(
         0,
-        items,
-        json!({"ranges":[{"start":0,"end":1,"sectionKey":"first"},
-            {"start":1,"end":4,"sectionKey":"second"}]}),
+        vec![
+            json!({"type":"tool-call","callId":"call-0","name":"exec_cmd"}),
+            json!({"type":"text","text":"First command finished."}),
+            json!({"type":"tool-call","callId":"call-1","name":"exec_cmd"}),
+            json!({"type":"tool-call","callId":"call-2","name":"exec_cmd"}),
+            json!({"type":"tool-call","callId":"call-3","name":"exec_cmd"}),
+        ],
     );
     replica.save_parts("thread", &[completion]).unwrap();
     let rows = &replica.page(None, 10, None, &[], false).unwrap()["rows"];
+    assert_eq!(rows.as_array().unwrap().len(), 3);
     assert_eq!(rows[0]["toolCounts"], json!({"exec_cmd":1}));
-    assert_eq!(rows[1]["toolCounts"], json!({"exec_cmd":3}));
+    assert_eq!(rows[0]["closed"], true);
+    assert_eq!(rows[2]["id"], "work:run:completion:run:0:2");
+    assert_eq!(rows[2]["toolCounts"], json!({"exec_cmd":3}));
+    assert_eq!(rows[2]["closed"], false);
 }

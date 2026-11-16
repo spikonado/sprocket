@@ -43,6 +43,60 @@ async fn text_only_models_do_not_replay_cached_image_results() {
     assert!(!serialized.contains("imageJson"));
 }
 
+#[tokio::test]
+async fn hydration_uses_each_calls_name_and_keeps_interrupted_results() {
+    use crate::types::{AgentHistoryContent, AgentHistoryToolResultItem};
+    use sprocket_transcript::{TranscriptPart, TranscriptState};
+
+    let completion = |number, invocation, name| {
+        serde_json::from_value(serde_json::json!({
+        "number": number, "sourceKey": format!("completion:{number}"), "kind": "completion", "runId": "run",
+        "completion": {"items": [{"type": "tool-call", "toolInvocationId": invocation, "callId": "repeated", "name": name, "input": {}}]}
+    })).unwrap()
+    };
+    let result = |number, invocation, path| {
+        serde_json::from_value(serde_json::json!({
+        "number": number, "sourceKey": format!("tool:{number}"), "kind": "tool", "runId": "run",
+        "tool": {"toolInvocationId": invocation, "status": "completed", "output": {"outputType": "image", "path": path}}
+    })).unwrap()
+    };
+    let parts: [TranscriptPart; 6] = [
+        completion(0, "inv-1", "parse_file"),
+        completion(1, "inv-2", "scrape_url"),
+        result(2, "inv-1", "/late.png"),
+        result(3, "inv-2", "/current.png"),
+        completion(4, "inv-3", "exec_cmd"),
+        result(5, "inv-3", "/not-an-image-tool.png"),
+    ];
+    let mut history = crate::history::agent_history_from_parts(
+        &TranscriptState::new("user".into(), "thread".into()),
+        &parts,
+        None,
+    );
+    hydrate_tool_history(&mut history, &parts, false, None).await;
+    let texts: Vec<_> = history
+        .iter()
+        .flat_map(|message| &message.contents)
+        .filter_map(|content| {
+            let AgentHistoryContent::ToolResult { items, .. } = content else {
+                return None;
+            };
+            let AgentHistoryToolResultItem::Text { text } = &items[0] else {
+                panic!("expected text result")
+            };
+            Some(text.as_str())
+        })
+        .collect();
+    assert_eq!(texts.len(), 3);
+    assert!(texts[0].contains("interrupted"));
+    assert!(texts[1].starts_with("Image omitted"));
+    assert!(texts[1].contains("/current.png"));
+    assert_eq!(
+        texts[2],
+        r#"{"outputType":"image","path":"/not-an-image-tool.png"}"#
+    );
+}
+
 #[test]
 fn tool_error_preserves_anyhow_context_chain_through_dispatch_normalization() {
     let error =

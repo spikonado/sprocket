@@ -17,7 +17,7 @@ import { GATEWAY_PROTOCOL_VERSION } from '@convex/lib/gatewayProtocol';
 import { modelGatewayOrigin, modelGatewayTokenSecret } from '@convex/lib/gatewayFetch';
 import { gatewayTokenExpiresAt, mintGatewayToken } from '@convex/lib/gatewayToken';
 import { gatewayQuotaStatus } from '@convex/lib/quota';
-import { vCompletionActor, vGetContextResult } from '@convex/lib/docs';
+import { vCompletionActor, vGetContextResult, vTranscriptMutationResult } from '@convex/lib/docs';
 import {
 	contextHandoffKey,
 	existingContextSummaryPartCount,
@@ -58,9 +58,11 @@ import { getUiPreferences } from '@convex/lib/uiPreferences';
 import { enabledProviders, releasedClientProviders } from '@convex/lib/providerOrder';
 import { beginExecutorJob } from '@convex/lib/toolJobs';
 import { sectionOrder, workMembership } from '@convex/lib/workSections';
+import { deriveLegacyCompletionWork } from '@convex/lib/legacyTranscriptWork';
 import {
 	getOrCreateTranscriptState,
 	getPromptPart,
+	hiddenPromptSourceKey,
 	hydratePromptUrls
 } from '@convex/lib/transcriptParts';
 import { runHasBegun, runStartedAt } from '@convex/lib/runs';
@@ -488,9 +490,9 @@ async function recordContextHandoff(
 		handoffCalls?: Infer<typeof vModelCallUsage>[];
 		workspaceContext?: HiddenPrompt[];
 	}
-): Promise<'recorded' | 'stale'> {
+): Promise<Doc<'threadTranscriptParts'>[] | null> {
 	if (!isCurrentCompletionAttempt(run, args.claimId, args.completionAttemptSeq)) {
-		return 'stale';
+		return null;
 	}
 
 	if (!args.summary.trim()) {
@@ -511,20 +513,21 @@ async function recordContextHandoff(
 	const handoffKey = contextHandoffKey(run._id, args.claimId, args.completionAttemptSeq);
 	const existingPartCount = existingContextSummaryPartCount(context);
 
-	if (context.contextSummaryHandoffKey === handoffKey) {
-		if (existingPartCount !== undefined && partCount < existingPartCount) {
-			throw new Error('Invalid context handoff cutoff.');
-		}
+	if (existingPartCount !== undefined && partCount < existingPartCount) {
+		throw new Error('Invalid context handoff cutoff.');
+	}
 
+	if (context.contextSummaryHandoffKey === handoffKey) {
 		if (context.contextSummary !== args.summary) {
 			throw new Error('Conflicting context handoff retry.');
 		}
 
-		return 'recorded';
-	}
-
-	if (existingPartCount !== undefined && partCount < existingPartCount) {
-		throw new Error('Invalid context handoff cutoff.');
+		return await recordHiddenPrompts(ctx, {
+			threadId: thread._id,
+			runId: run._id,
+			idempotencyScope: handoffKey,
+			prompts: args.workspaceContext ?? []
+		});
 	}
 
 	await ctx.db.patch('threadTranscriptStates', state._id, {
@@ -533,7 +536,7 @@ async function recordContextHandoff(
 		contextSummaryHandoffKey: handoffKey
 	});
 
-	await recordHiddenPrompts(ctx, {
+	const parts = await recordHiddenPrompts(ctx, {
 		threadId: thread._id,
 		runId: run._id,
 		idempotencyScope: handoffKey,
@@ -550,7 +553,7 @@ async function recordContextHandoff(
 
 	await setThreadContextTokens(ctx, thread, undefined);
 
-	return 'recorded';
+	return parts;
 }
 
 /** Persist the hidden handoff after all covered visible parts have been finalized. */
@@ -562,22 +565,23 @@ export const saveContextHandoff = mutation({
 		...vHandoffSummary,
 		beforePrompt: v.optional(v.boolean()),
 		processedTokens: v.optional(v.number()),
+		returnParts: v.optional(v.boolean()),
 		/** Shown after the summary; parts before the cutoff no longer reach the model. */
 		workspaceContext: v.optional(v.array(vHiddenPrompt))
 	},
-	returns: v.boolean(),
+	returns: v.union(v.boolean(), vTranscriptMutationResult),
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 
-		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) return false;
+		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) {
+			return args.returnParts ? { accepted: false, parts: [] } : false;
+		}
 
-		return (await recordContextHandoff(ctx, run, args)) === 'recorded';
+		const parts = await recordContextHandoff(ctx, run, args);
+
+		return args.returnParts ? { accepted: parts !== null, parts: parts ?? [] } : parts !== null;
 	}
 });
-
-async function promptAlreadyBegun(ctx: MutationCtx, run: Doc<'runs'>): Promise<boolean> {
-	return runHasBegun(run) && (await getPromptPart(ctx, run.threadId, run._id)) !== null;
-}
 
 /**
  * Writes what the model sees before the run's first call, in model order: an
@@ -589,15 +593,47 @@ export const beginRun = mutation({
 		claimId: v.string(),
 		executionSecret: v.string(),
 		workspaceContext: v.array(vHiddenPrompt),
-		handoff: v.optional(v.object(vHandoffSummary))
+		handoff: v.optional(v.object(vHandoffSummary)),
+		returnParts: v.optional(v.boolean())
 	},
-	returns: v.boolean(),
+	returns: v.union(v.boolean(), vTranscriptMutationResult),
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 
-		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) return false;
+		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) {
+			return args.returnParts ? { accepted: false, parts: [] } : false;
+		}
 
-		if (run.cancellationRequestedAt !== undefined) return await promptAlreadyBegun(ctx, run);
+		const hiddenScope = args.handoff
+			? contextHandoffKey(run._id, args.claimId, args.handoff.completionAttemptSeq)
+			: `${run._id}:${args.claimId}`;
+
+		if (run.cancellationRequestedAt !== undefined) {
+			const prompt = runHasBegun(run) ? await getPromptPart(ctx, run.threadId, run._id) : null;
+			const accepted = prompt !== null;
+
+			if (!args.returnParts) return accepted;
+
+			const hidden = await Promise.all(
+				args.workspaceContext.map((entry) =>
+					ctx.db
+						.query('threadTranscriptParts')
+						.withIndex('by_threadId_and_sourceKey', (query) =>
+							query
+								.eq('threadId', run.threadId)
+								.eq('sourceKey', hiddenPromptSourceKey(hiddenScope, entry.kind))
+						)
+						.unique()
+				)
+			);
+
+			return {
+				accepted,
+				parts: [...hidden.filter((part) => part !== null), ...(prompt ? [prompt] : [])]
+			};
+		}
+
+		let parts: Doc<'threadTranscriptParts'>[];
 
 		if (args.handoff) {
 			const handoff = await recordContextHandoff(ctx, run, {
@@ -606,12 +642,13 @@ export const beginRun = mutation({
 				workspaceContext: args.workspaceContext
 			});
 
-			if (handoff === 'stale') return false;
+			if (handoff === null) return args.returnParts ? { accepted: false, parts: [] } : false;
+			parts = handoff;
 		} else {
-			await recordHiddenPrompts(ctx, {
+			parts = await recordHiddenPrompts(ctx, {
 				threadId: run.threadId,
 				runId: run._id,
-				idempotencyScope: `${run._id}:${args.claimId}`,
+				idempotencyScope: hiddenScope,
 				prompts: args.workspaceContext
 			});
 		}
@@ -626,9 +663,14 @@ export const beginRun = mutation({
 			await ctx.db.patch('runs', run._id, { pendingPrompt: undefined });
 			const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
 			await generateTitleAfterFirstPrompt(ctx, thread, promptPart);
+			parts.push(promptPart);
+		} else {
+			const prompt = await getPromptPart(ctx, run.threadId, run._id);
+
+			if (prompt) parts.push(prompt);
 		}
 
-		return true;
+		return args.returnParts ? { accepted: true, parts } : true;
 	}
 });
 
@@ -776,15 +818,18 @@ export const finalizeCompletionCall = mutation({
 		attemptSeq: v.number(),
 		streamId: v.string(),
 		items: v.array(vTranscriptCompletionItem),
-		work: workMembership,
-		toolInvocations: v.array(
-			v.object({
-				callId: v.string(),
-				toolInvocationId: v.string(),
-				sectionKey: v.optional(v.string())
-			})
+		work: v.optional(workMembership),
+		toolInvocations: v.optional(
+			v.array(
+				v.object({
+					callId: v.string(),
+					toolInvocationId: v.string(),
+					sectionKey: v.optional(v.string())
+				})
+			)
 		),
-		sections: v.array(sectionOrder),
+		sections: v.optional(v.array(sectionOrder)),
+		returnParts: v.optional(v.boolean()),
 		usage: v.optional(
 			v.object({
 				contextTokens: v.number(),
@@ -794,14 +839,31 @@ export const finalizeCompletionCall = mutation({
 		),
 		executionSecret: v.string()
 	},
-	returns: v.union(schema.doc('threadTranscriptParts'), v.null()),
-	handler: async (ctx, args) => {
-		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		assertRunAcceptsWork(run, args.claimId, Date.now());
+	returns: v.union(
+		schema.doc('threadTranscriptParts'),
+		v.null(),
+		v.object({
+			completion: v.union(schema.doc('threadTranscriptParts'), v.null()),
+			parts: v.array(schema.doc('threadTranscriptParts'))
+		})
+	),
+	handler: async (ctx, input) => {
+		const run = await getExecutionRun(ctx, input.runId, input.executionSecret);
+		assertRunAcceptsWork(run, input.claimId, Date.now());
 
-		if (!isCurrentCompletionAttempt(run, args.claimId, args.attemptSeq)) {
-			return null;
+		if (!isCurrentCompletionAttempt(run, input.claimId, input.attemptSeq)) {
+			return input.returnParts ? { completion: null, parts: [] } : null;
 		}
+
+		const assignments =
+			input.work === undefined
+				? await deriveLegacyCompletionWork(ctx, { ...input, threadId: run.threadId })
+				: {
+						work: input.work,
+						toolInvocations: input.toolInvocations ?? []
+					};
+
+		const args = { ...input, ...assignments };
 
 		if (
 			args.work.ranges.length > MAX_COMPLETION_ASSIGNMENTS ||
@@ -838,13 +900,18 @@ export const finalizeCompletionCall = mutation({
 			}
 		}
 
-		const completionCallIds = args.items.flatMap((item) =>
-			item.type === 'tool-call' ? [item.callId] : []
+		const completionToolCalls = args.items.flatMap((item) =>
+			item.type === 'tool-call' ? [item] : []
 		);
 
 		if (
-			completionCallIds.length !== args.toolInvocations.length ||
-			completionCallIds.some((callId, index) => callId !== args.toolInvocations[index]?.callId)
+			completionToolCalls.length !== args.toolInvocations.length ||
+			completionToolCalls.some(
+				(item, index) =>
+					item.callId !== args.toolInvocations[index]?.callId ||
+					(item.toolInvocationId !== undefined &&
+						item.toolInvocationId !== args.toolInvocations[index]?.toolInvocationId)
+			)
 		) {
 			throw new Error('Incomplete tool invocation assignments.');
 		}
@@ -892,10 +959,9 @@ export const finalizeCompletionCall = mutation({
 			toolInvocations: args.toolInvocations
 		});
 
-		await recordSettledToolTranscripts(ctx, {
+		const settledParts = await recordSettledToolTranscripts(ctx, {
 			threadId: run.threadId,
 			runId: run._id,
-			items: args.items,
 			toolInvocations: args.toolInvocations
 		});
 
@@ -912,7 +978,9 @@ export const finalizeCompletionCall = mutation({
 			}
 		}
 
-		return part;
+		return args.returnParts
+			? { completion: part, parts: [...(part ? [part] : []), ...settledParts] }
+			: part;
 	}
 });
 
@@ -1023,8 +1091,8 @@ const beginToolJobArgs = {
 	kind: vCurrentExecutorJobKind,
 	callId: v.optional(v.string()),
 	toolInvocationId: v.string(),
-	sectionKey: v.string(),
-	sectionOrdinal: v.number(),
+	sectionKey: v.optional(v.string()),
+	sectionOrdinal: v.optional(v.number()),
 	attemptSeq: v.number(),
 	streamId: v.string(),
 	payload: vCurrentExecutorJobPayload,
@@ -1056,13 +1124,16 @@ export async function beginToolJobHandler(
 		}
 
 		if (
-			!isExpectedSectionKey(
-				run._id,
-				args.claimId,
-				args.attemptSeq,
-				args.sectionKey,
-				args.sectionOrdinal
-			)
+			(args.sectionKey !== undefined || args.sectionOrdinal !== undefined) &&
+			(args.sectionKey === undefined ||
+				args.sectionOrdinal === undefined ||
+				!isExpectedSectionKey(
+					run._id,
+					args.claimId,
+					args.attemptSeq,
+					args.sectionKey,
+					args.sectionOrdinal
+				))
 		) {
 			throw new Error('Invalid section identity.');
 		}

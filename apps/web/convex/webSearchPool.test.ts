@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { patchRunExecution } from '@convex/lib/runExecution';
-import { internal } from '@convex/_generated/api';
+import { api, internal } from '@convex/_generated/api';
 import { fixtureWorkId, initConvexTest, seedStartedWebJob } from './test.setup';
 
 beforeEach(() => vi.useFakeTimers());
@@ -50,9 +50,29 @@ describe('web search workpool fencing', () => {
 			context: { jobId, runId, claimId },
 			result: { kind: 'success', returnValue: { results: [{ url: 'https://example.com' }] } }
 		});
+
 		const after = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
+
 		expect(after?.status).toBe('completed');
 		expect(after?.result).toMatchObject({ results: [{ url: 'https://example.com' }] });
+
+		const snapshot = await t.query(api.executor.getJob, {
+			runId,
+			jobId,
+			executionSecret: 'webpool-ok-secret'
+		});
+
+		expect(snapshot).toMatchObject({
+			status: 'completed',
+			part: {
+				_id: expect.any(String),
+				tool: {
+					toolInvocationId: after?.toolInvocationId,
+					status: 'completed',
+					output: after?.result
+				}
+			}
+		});
 	});
 });
 

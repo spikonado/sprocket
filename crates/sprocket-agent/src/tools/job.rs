@@ -93,11 +93,6 @@ pub(super) async fn begin_executor_job(
         "toolInvocationId".to_string(),
         assignment.tool_invocation_id.into(),
     );
-    begin_args.insert("sectionKey".to_string(), assignment.section_key.into());
-    begin_args.insert(
-        "sectionOrdinal".to_string(),
-        Value::Float64(assignment.section_ordinal as f64),
-    );
     begin_args.insert(
         "attemptSeq".to_string(),
         Value::Float64(assignment.attempt_seq as f64),

@@ -25,7 +25,7 @@ fn completion_part(number: u32, items: Vec<JsonValue>) -> TranscriptPart {
         "sourceKey": format!("completion:run:{number}"),
         "kind": "completion",
         "runId": "run",
-        "completion": { "streamId": number.to_string(), "items": items }
+        "completion": { "items": items }
     }))
     .unwrap()
 }
@@ -85,6 +85,12 @@ fn patch_call_item(call_id: &str) -> JsonValue {
         "name": "apply_patch",
         "input": { "patch": "*** Begin Patch\n*** End Patch" }
     })
+}
+
+fn patch_call_with_invocation(call_id: &str, invocation: &str) -> JsonValue {
+    let mut item = patch_call_item(call_id);
+    item["toolInvocationId"] = json!(invocation);
+    item
 }
 
 fn open_replica() -> (tempfile::TempDir, WorkReplica) {
@@ -236,11 +242,31 @@ fn excludes_reasoning_other_tools_patch_inputs_and_started_events() {
         )
         .unwrap();
     let page = page(&replica, None, MONITOR_PAGE_CHAR_LIMIT).unwrap();
-    assert!(page.entries.is_empty(), "only a started patch exists");
+    assert!(page.entries.is_empty(), "the patch has no terminal result");
     assert!(!page.has_more);
     let wire = serde_json::to_value(&page).unwrap();
     assert_eq!(wire["entries"], json!([]));
     assert!(!wire.to_string().contains("Begin Patch"));
+}
+
+#[test]
+fn orphan_started_patch_does_not_pin_monitor_progress() {
+    let (_dir, mut replica) = open_replica();
+    replica
+        .save_parts(
+            "thread",
+            &[
+                tool_part(0, Some("inv-c"), "c1", "apply_patch", "started", None),
+                prompt_part(1, "next task"),
+            ],
+        )
+        .unwrap();
+    let first = page(&replica, None, 1000).unwrap();
+    assert_eq!(texts(&first.entries), ["next task"]);
+    assert!(!first.has_more);
+    let second = page(&replica, Some(&first.next_cursor), 1000).unwrap();
+    assert!(second.entries.is_empty());
+    assert!(!second.has_more);
 }
 
 #[test]
@@ -306,19 +332,18 @@ fn legacy_patch_results_without_source_paths_stay_sourceless() {
 }
 
 #[test]
-fn late_patch_completion_blocks_until_result_lands() {
+fn canonical_patch_without_started_event_blocks_until_result_lands() {
     let (_dir, mut replica) = open_replica();
     replica
         .save_parts(
             "thread",
             &[
-                completion_part(0, vec![patch_call_item("c1")]),
-                tool_part(1, Some("inv-c"), "c1", "apply_patch", "started", None),
+                completion_part(0, vec![patch_call_with_invocation("c1", "inv-c")]),
                 completion_part(
-                    2,
+                    1,
                     vec![json!({"type":"reasoning","text":"excluded but advances coverage"})],
                 ),
-                prompt_part(3, "later prompt"),
+                prompt_part(2, "later prompt"),
             ],
         )
         .unwrap();
@@ -334,7 +359,7 @@ fn late_patch_completion_blocks_until_result_lands() {
         .save_parts(
             "thread",
             &[tool_part(
-                4,
+                3,
                 Some("inv-r"),
                 "r1",
                 "read_file",
@@ -351,7 +376,7 @@ fn late_patch_completion_blocks_until_result_lands() {
         .save_parts(
             "thread",
             &[tool_part(
-                5,
+                4,
                 Some("inv-c"),
                 "c1",
                 "apply_patch",
@@ -396,7 +421,7 @@ fn patch_result_pairs_by_canonical_identity_without_started_event() {
                     "completed",
                     Some(json!({"changes":[{"operation":"deleted","path":"gone.txt"}]})),
                 ),
-                completion_part(1, vec![patch_call_item("c1")]),
+                completion_part(1, vec![patch_call_with_invocation("c1", "inv-c")]),
             ],
         )
         .unwrap();
@@ -417,7 +442,11 @@ fn reused_call_ids_pair_within_their_own_run() {
         .save_parts(
             "thread",
             &[
-                completion_part_in_run(0, "run-a", vec![patch_call_item("dup")]),
+                completion_part_in_run(
+                    0,
+                    "run-a",
+                    vec![patch_call_with_invocation("dup", "inv-a")],
+                ),
                 tool_part_in_run(
                     1,
                     "run-a",
@@ -427,7 +456,11 @@ fn reused_call_ids_pair_within_their_own_run() {
                     "completed",
                     Some(json!({"changes":[{"operation":"created","path":"a.txt"}]})),
                 ),
-                completion_part_in_run(2, "run-b", vec![patch_call_item("dup")]),
+                completion_part_in_run(
+                    2,
+                    "run-b",
+                    vec![patch_call_with_invocation("dup", "inv-b")],
+                ),
                 tool_part_in_run(
                     3,
                     "run-b",
@@ -451,62 +484,64 @@ fn reused_call_ids_pair_within_their_own_run() {
 }
 
 #[test]
-fn invocation_assignments_disambiguate_reused_call_ids_in_one_run() {
-    let (_dir, mut replica) = open_replica();
-    let mut first = completion_part(0, vec![patch_call_item("dup")]);
-    first
-        .work
-        .tool_invocations
-        .push(crate::types::WorkInvocation {
-            item: 0,
-            tool_invocation_id: "inv-a".into(),
-        });
-    let mut second = completion_part(2, vec![patch_call_item("dup")]);
-    second
-        .work
-        .tool_invocations
-        .push(crate::types::WorkInvocation {
-            item: 0,
-            tool_invocation_id: "inv-b".into(),
-        });
-    replica
-        .save_parts(
-            "thread",
-            &[
-                first,
-                tool_part(
-                    1,
-                    Some("inv-a"),
-                    "dup",
-                    "apply_patch",
-                    "completed",
-                    Some(json!({"changes":[{"operation":"created","path":"a.txt"}]})),
-                ),
-                second,
-                tool_part(
-                    3,
-                    Some("inv-b"),
-                    "dup",
-                    "apply_patch",
-                    "completed",
-                    Some(json!({"changes":[{"operation":"created","path":"b.txt"}]})),
-                ),
-            ],
-        )
-        .unwrap();
-    let result = page(&replica, None, 1000).unwrap();
-    let paths: Vec<_> = result
-        .entries
-        .iter()
-        .map(|entry| {
-            let MonitorEntry::Patch { changes, .. } = entry else {
-                panic!()
-            };
-            changes[0].path.as_str()
-        })
-        .collect();
-    assert_eq!(paths, ["a.txt", "b.txt"]);
-    assert!(!result.has_more);
+fn invocation_json_disambiguates_reused_call_ids_in_both_download_orders() {
+    let parts = [
+        completion_part(0, vec![patch_call_with_invocation("dup", "inv-a")]),
+        completion_part(1, vec![patch_call_with_invocation("dup", "inv-b")]),
+        tool_part(
+            2,
+            Some("inv-b"),
+            "dup",
+            "apply_patch",
+            "completed",
+            Some(json!({"changes":[{"operation":"created","path":"b.txt"}]})),
+        ),
+        tool_part(
+            3,
+            Some("inv-a"),
+            "dup",
+            "apply_patch",
+            "completed",
+            Some(json!({"changes":[{"operation":"created","path":"a.txt"}]})),
+        ),
+    ];
+    for newest_first in [false, true] {
+        let (_dir, mut replica) = open_replica();
+        let ordered: Vec<_> = if newest_first {
+            parts.iter().rev().collect()
+        } else {
+            parts.iter().collect()
+        };
+        for part in ordered {
+            replica
+                .save_parts("thread", std::slice::from_ref(part))
+                .unwrap();
+            if newest_first && part.number != 0 {
+                let pending = page(&replica, None, 1000).unwrap();
+                assert!(pending.entries.is_empty());
+                assert!(pending.has_more);
+            }
+        }
+        let result = page(&replica, None, 1000).unwrap();
+        let patches: Vec<_> = result
+            .entries
+            .iter()
+            .map(|entry| {
+                let MonitorEntry::Patch { id, changes, .. } = entry else {
+                    panic!()
+                };
+                (id.as_str(), changes[0].path.as_str())
+            })
+            .collect();
+        assert_eq!(
+            patches,
+            [
+                (patch_id_at(0, 0).as_str(), "a.txt"),
+                (patch_id_at(1, 0).as_str(), "b.txt"),
+            ]
+        );
+        assert!(!result.has_more);
+    }
 }
 
 #[test]
@@ -518,7 +553,9 @@ fn committed_completion_text_does_not_require_optional_timing() {
             &[completion_part(
                 0,
                 vec![
+                    json!({"type":"text","text":" \n\t"}),
                     json!({"type":"text","text":"without timing"}),
+                    json!({"type":"reasoning","text":" \t"}),
                     json!({"type":"text","text":"committed","startedAt":10.0,"completedAt":12.0}),
                 ],
             )],
@@ -530,7 +567,7 @@ fn committed_completion_text_does_not_require_optional_timing() {
 }
 
 #[test]
-fn tool_only_patch_events_use_one_stable_source_position() {
+fn tool_only_patch_uses_terminal_source_position_and_ignores_started() {
     let (_dir, mut replica) = open_replica();
     replica
         .save_parts(
@@ -554,7 +591,7 @@ fn tool_only_patch_events_use_one_stable_source_position() {
     let MonitorEntry::Patch { id, ok, changes } = &first.entries[0] else {
         panic!()
     };
-    assert_eq!(id, "patch-0");
+    assert_eq!(id, &patch_id_at(1, 0));
     assert!(*ok);
     assert_eq!(changes[0].path, "a.txt");
     let next = page(&replica, Some(&first.next_cursor), 1000).unwrap();

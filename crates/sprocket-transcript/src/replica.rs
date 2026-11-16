@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use anyhow::Context;
@@ -7,10 +8,10 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use super::read_index::ReadIndex;
-use super::sections::{POSITION_STRIDE, WorkPosition};
+use super::sections::{POSITION_STRIDE, WorkPosition, derive_work_blocks};
 use super::{TranscriptPart, TranscriptStore};
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 const SCHEMA: &str = "CREATE TABLE state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE parts (number INTEGER PRIMARY KEY, source_key TEXT NOT NULL UNIQUE, run TEXT NOT NULL, body TEXT NOT NULL);
@@ -176,59 +177,12 @@ impl WorkReplica {
         key: &str,
         generation: i64,
         details_changed: bool,
+        closed: bool,
     ) -> anyhow::Result<()> {
         let index = ReadIndex(db);
-        let items = index.page(key, -1, i64::MAX, false, u32::MAX)?;
-        if items.is_empty() {
-            return Self::delete_row(db, key, generation);
-        }
-        let first = items
-            .iter()
-            .filter(|item| item.canonical)
-            .map(|item| item.source)
-            .min()
-            .or_else(|| items.iter().map(|item| item.source).min())
-            .context("section has no first item")?;
-        let run_id = items[0].run_id.clone();
-        anyhow::ensure!(
-            items.iter().all(|item| item.run_id == run_id),
-            "section spans runs"
-        );
-        let bodies: Vec<String> = db
-            .prepare("SELECT body FROM parts WHERE run=? ORDER BY number")?
-            .query_map([&run_id], |row| row.get(0))?
-            .collect::<Result<_, _>>()?;
-        let mut closed = false;
-        for body in bodies {
-            if closed {
-                break;
-            }
-            let part: TranscriptPart = serde_json::from_str(&body)?;
-            for range in &part.work_assignment().ranges {
-                let at = WorkPosition {
-                    part: part.number,
-                    item: range.start,
-                };
-                if range.section_key != key && at > first {
-                    closed = true;
-                }
-                if range.section_key == key
-                    && part
-                        .content_items()
-                        .iter()
-                        .skip(range.end as usize)
-                        .any(|item| {
-                            item["type"] == "text"
-                                && item["text"]
-                                    .as_str()
-                                    .is_some_and(|text| !text.trim().is_empty())
-                        })
-                {
-                    closed = true;
-                }
-            }
-        }
-        let row = json!({"id":key,"threadId":thread_id,"runId":run_id,"sequence":first.sequence(),"kind":"work",
+        let items = index.page(key, -1, i64::MAX, false, 1)?;
+        let first = items.first().context("section has no first item")?;
+        let row = json!({"id":key,"threadId":thread_id,"runId":first.run_id,"sequence":first.source.sequence(),"kind":"work",
             "closed":closed,"toolCounts":index.tool_counts(key)?,"unpersistedToolCallIds":index.unpersisted_tool_call_ids(key)?});
         if details_changed || !Self::row_unchanged(db, &row)? {
             Self::put_row(db, row, generation)?;
@@ -236,9 +190,54 @@ impl WorkReplica {
         Ok(())
     }
 
+    fn rebuild_run(
+        db: &Connection,
+        thread_id: &str,
+        run: &str,
+        generation: i64,
+        changed: &[u32],
+    ) -> anyhow::Result<()> {
+        let index = ReadIndex(db);
+        let previous_sections = index.run_sections(run)?;
+        let bodies: Vec<String> = db
+            .prepare("SELECT body FROM parts WHERE run=? ORDER BY number")?
+            .query_map([run], |row| row.get(0))?
+            .collect::<Result<_, _>>()?;
+        let parts: Vec<TranscriptPart> = bodies
+            .iter()
+            .map(|body| serde_json::from_str(body))
+            .collect::<Result<_, _>>()?;
+        let blocks = derive_work_blocks(&parts);
+        let mut details_changed = index.rebuild_run(&parts, &blocks)?;
+        let blocks: BTreeMap<_, _> = blocks
+            .into_iter()
+            .map(|block| (block.id, block.closed))
+            .collect();
+        for number in changed {
+            details_changed.extend(index.affected_sections(*number)?);
+        }
+        let sections = index.run_sections(run)?;
+        // A joined block takes the earlier block's sequence, so remove old rows first.
+        for key in previous_sections.difference(&sections) {
+            Self::delete_row(db, key, generation)?;
+        }
+        for key in sections {
+            Self::rebuild_section(
+                db,
+                thread_id,
+                &key,
+                generation,
+                details_changed.contains(&key),
+                blocks.get(&key).copied().unwrap_or(true),
+            )?;
+        }
+        Ok(())
+    }
+
     pub fn save_parts(&mut self, thread_id: &str, parts: &[TranscriptPart]) -> anyhow::Result<()> {
         let generation = self.generation()? + 1;
         let tx = self.db.transaction()?;
+        let mut changed_runs: BTreeMap<String, Vec<u32>> = BTreeMap::new();
         for part in parts {
             let count = part
                 .completion
@@ -265,18 +264,10 @@ impl WorkReplica {
                 "INSERT INTO parts VALUES (?,?,?,?)",
                 params![part.number, part.source_key, part.run_id, body],
             )?;
-            ReadIndex(&tx).insert_part(part)?;
-            let with_new_details = ReadIndex(&tx).affected_sections(part.number)?;
-            let mut affected = with_new_details.clone();
-            affected.extend(
-                tx.prepare(
-                    "SELECT DISTINCT section FROM source_refs WHERE run=? AND section IS NOT NULL",
-                )?
-                .query_map([&part.run_id], |row| row.get(0))?
-                .collect::<Result<Vec<String>, _>>()?,
-            );
-            affected.sort();
-            affected.dedup();
+            changed_runs
+                .entry(part.run_id.clone())
+                .or_default()
+                .push(part.number);
             let at = WorkPosition {
                 part: part.number,
                 item: 0,
@@ -313,10 +304,9 @@ impl WorkReplica {
                     }
                 }
             }
-            for section in affected {
-                let details_changed = with_new_details.contains(&section);
-                Self::rebuild_section(&tx, thread_id, &section, generation, details_changed)?;
-            }
+        }
+        for (run, changed) in changed_runs {
+            Self::rebuild_run(&tx, thread_id, &run, generation, &changed)?;
         }
         let mut prefix: u32 = read_state(&tx, "downloadedPrefix")?.unwrap_or(0);
         while tx

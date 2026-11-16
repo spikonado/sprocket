@@ -1,5 +1,6 @@
 import { expect, test, vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
+import type { TranscriptCompletionItem } from '@convex/lib/validators';
 import { initConvexTest, insertUser, seedOwnedThread } from '@convex/test.setup';
 import { getOrCreateTranscriptState, getTranscriptState } from '@convex/lib/transcriptParts';
 
@@ -55,6 +56,93 @@ test('run backfills tool invocation IDs from source keys', async () => {
 
 	expect(migrated?.tool?.toolInvocationId).toBe(migratedSourceKey);
 	expect(current?.tool?.toolInvocationId).toBe('invocation-1');
+	vi.useRealTimers();
+});
+
+test('run backfills completion tool invocation IDs by item index and preserves legacy history', async () => {
+	vi.useFakeTimers();
+	const t = initConvexTest();
+	const { threadId } = await seedOwnedThread(t);
+
+	const toolCall = {
+		type: 'tool-call' as const,
+		callId: 'reused-call',
+		name: 'web_search',
+		input: { query: 'transcripts' },
+		providerMetadata: { provider: 'preserved' }
+	};
+
+	const completion = {
+		streamId: 'legacy-stream',
+		items: [
+			{ type: 'text' as const, id: 'text-1', text: 'Searching.' },
+			toolCall,
+			{ type: 'reasoning' as const, id: 'reasoning-1', text: 'Compare results.' },
+			{ ...toolCall, input: { query: 'tool calls' } },
+			{ ...toolCall, toolInvocationId: 'already-present' },
+			{ ...toolCall, callId: 'unassigned-call' }
+		]
+	};
+
+	const work = {
+		ranges: [{ start: 1, end: 6, sectionKey: 'legacy-section' }],
+		toolInvocations: [
+			{ item: 3, toolInvocationId: 'second-invocation' },
+			{ item: 1, toolInvocationId: 'first-invocation' },
+			{ item: 4, toolInvocationId: 'stale-assignment' }
+		]
+	};
+
+	const parts = await t.run(async (ctx) => {
+		const run = await ctx.db
+			.query('runs')
+			.withIndex('by_threadId', (q) => q.eq('threadId', threadId))
+			.unique();
+
+		if (!run) throw new Error('Missing fixture run.');
+
+		const bodies = [
+			{ completion, work },
+			{ completion: { items: [toolCall] }, work: { ranges: [] } }
+		];
+
+		return Promise.all(
+			bodies.map(async (body, number) => {
+				const id = await ctx.db.insert('threadTranscriptParts', {
+					threadId,
+					runId: run._id,
+					kind: 'completion',
+					number,
+					sourceKey: `completion:legacy:${number}`,
+					...body
+				});
+
+				return ctx.db.get('threadTranscriptParts', id);
+			})
+		);
+	});
+
+	await t.mutation(internal.migrations.run, {});
+	await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+	const migrated = await t.run((ctx) =>
+		ctx.db
+			.query('threadTranscriptParts')
+			.withIndex('by_threadId_and_number', (q) => q.eq('threadId', threadId))
+			.collect()
+	);
+
+	const items: TranscriptCompletionItem[] = [...completion.items];
+	items[1] = { ...toolCall, toolInvocationId: 'first-invocation' };
+	items[3] = { ...toolCall, input: { query: 'tool calls' }, toolInvocationId: 'second-invocation' };
+	expect(migrated).toEqual([{ ...parts[0], completion: { ...completion, items } }, parts[1]]);
+
+	await t.mutation(internal.migrations.backfillCompletionToolInvocationIds, {
+		cursor: null,
+		oneBatchOnly: true,
+		dryRun: false
+	});
+	expect(await t.run((ctx) => ctx.db.query('threadTranscriptParts').collect())).toEqual(migrated);
 	vi.useRealTimers();
 });
 

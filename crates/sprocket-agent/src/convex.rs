@@ -431,7 +431,6 @@ impl RuntimeClient {
         claim_id: &str,
         attempt_seq: u64,
         items: Vec<serde_json::Value>,
-        assignments: crate::hooks::CompletionAssignments,
         context_tokens: Option<u64>,
     ) -> anyhow::Result<()> {
         let empty_completion = items.is_empty();
@@ -444,18 +443,6 @@ impl RuntimeClient {
         args.insert(
             "items".to_string(),
             Value::try_from(serde_json::Value::Array(items))?,
-        );
-        args.insert(
-            "work".to_string(),
-            Value::try_from(serde_json::to_value(assignments.work)?)?,
-        );
-        args.insert(
-            "toolInvocations".to_string(),
-            Value::try_from(serde_json::to_value(assignments.tool_invocations)?)?,
-        );
-        args.insert(
-            "sections".to_string(),
-            Value::try_from(serde_json::to_value(assignments.sections)?)?,
         );
         if let Some(tokens) = context_tokens {
             args.insert(

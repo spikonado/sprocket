@@ -5,7 +5,7 @@ import type { MutationCtx } from '@convex/_generated/server';
 import type { TableNames } from '@convex/_generated/dataModel';
 import { getUserBySubject } from '@convex/lib/auth';
 import { transcriptContext } from '@convex/lib/contextHandoff';
-import { getOrCreateTranscriptState } from '@convex/lib/transcriptParts';
+import { getOrCreateTranscriptState, withToolInvocationIds } from '@convex/lib/transcriptParts';
 import schema from '@convex/schema';
 
 export const migrations = new Migrations(components.migrations, { schema, internalMutation });
@@ -59,6 +59,21 @@ export const backfillToolInvocationIds = migrations.define({
 		if (!part.tool || part.tool.toolInvocationId !== undefined) return;
 
 		return { tool: { ...part.tool, toolInvocationId: part.sourceKey } };
+	}
+});
+
+export const backfillCompletionToolInvocationIds = migrations.define({
+	table: 'threadTranscriptParts',
+	migrateOne: (_ctx, part) => {
+		const { completion, work } = part;
+
+		if (!completion || !work.toolInvocations?.length) return;
+
+		const items = withToolInvocationIds(completion.items, work.toolInvocations);
+
+		if (items.some((item, index) => item !== completion.items[index])) {
+			return { completion: { ...completion, items } };
+		}
 	}
 });
 
@@ -171,6 +186,7 @@ export const backfillRunCompletionProviders = migrations.define({
 
 export const run = migrations.runner([
 	internal.migrations.backfillToolInvocationIds,
+	internal.migrations.backfillCompletionToolInvocationIds,
 	internal.migrations.removeArtifactTypes,
 	internal.migrations.moveTranscriptContext,
 	internal.migrations.dropQuestionAnsweredAt,

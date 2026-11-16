@@ -83,9 +83,11 @@ export async function recordHiddenPrompts(
 		idempotencyScope: string;
 		prompts: HiddenPrompt[];
 	}
-): Promise<void> {
+): Promise<Doc<'threadTranscriptParts'>[]> {
+	const parts: Doc<'threadTranscriptParts'>[] = [];
+
 	for (const prompt of args.prompts) {
-		await appendTranscriptPart(ctx, {
+		const result = await appendTranscriptPart(ctx, {
 			threadId: args.threadId,
 			sourceKey: hiddenPromptSourceKey(args.idempotencyScope, prompt.kind),
 			kind: 'prompt',
@@ -93,7 +95,11 @@ export async function recordHiddenPrompts(
 			prompt: { text: prompt.text, imageUploads: [], hidden: prompt.kind },
 			work: { ranges: [] }
 		});
+
+		parts.push(result.part);
 	}
+
+	return parts;
 }
 
 export async function recordCompletionTranscript(
@@ -127,7 +133,7 @@ export async function recordCompletionTranscript(
 		sourceKey: completionSourceKey(args.runId, args.streamId),
 		kind: 'completion',
 		runId: args.runId,
-		completion: { streamId: args.streamId, items: args.items },
+		completion: { items: args.items },
 		work: { ...args.work, toolInvocations }
 	});
 
@@ -160,9 +166,9 @@ export async function recordToolTranscript(
 		job: TranscriptToolJob;
 		preserveExistingDisplay?: boolean;
 	}
-): Promise<void> {
+): Promise<Doc<'threadTranscriptParts'> | null> {
 	if (!isSettledExecutorJobStatus(args.job.status)) {
-		return;
+		return null;
 	}
 
 	const sourceKey = toolSourceKey(args.job.toolInvocationId, 'finished');
@@ -185,7 +191,7 @@ export async function recordToolTranscript(
 		if (existing && args.job.sectionKey === undefined) work = existing.work;
 	}
 
-	await appendTranscriptPart(ctx, {
+	const result = await appendTranscriptPart(ctx, {
 		threadId: args.threadId,
 		sourceKey,
 		kind: 'tool',
@@ -193,6 +199,8 @@ export async function recordToolTranscript(
 		tool,
 		work
 	});
+
+	return result.part;
 }
 
 export async function recordSettledToolTranscripts(
@@ -200,38 +208,31 @@ export async function recordSettledToolTranscripts(
 	args: {
 		threadId: Id<'threadRecords'>;
 		runId: Id<'runs'>;
-		items: TranscriptCompletionItem[];
-		toolInvocations?: { callId: string; toolInvocationId: string }[];
+		toolInvocations: { toolInvocationId: string }[];
 	}
-): Promise<void> {
-	const callIds = args.items.flatMap((item) => (item.type === 'tool-call' ? [item.callId] : []));
+): Promise<Doc<'threadTranscriptParts'>[]> {
+	const parts: Doc<'threadTranscriptParts'>[] = [];
 
-	for (const [index, callId] of callIds.entries()) {
-		const invocation = args.toolInvocations?.[index];
-
-		const job = invocation
-			? await ctx.db
-					.query('executorJobs')
-					.withIndex('by_runId_and_toolInvocationId', (query) =>
-						query.eq('runId', args.runId).eq('toolInvocationId', invocation.toolInvocationId)
-					)
-					.unique()
-			: await ctx.db
-					.query('executorJobs')
-					.withIndex('by_runId_and_callId', (query) =>
-						query.eq('runId', args.runId).eq('callId', callId)
-					)
-					.order('desc')
-					.first();
+	for (const { toolInvocationId } of args.toolInvocations) {
+		const job = await ctx.db
+			.query('executorJobs')
+			.withIndex('by_runId_and_toolInvocationId', (query) =>
+				query.eq('runId', args.runId).eq('toolInvocationId', toolInvocationId)
+			)
+			.unique();
 
 		if (job) {
-			await recordToolTranscript(ctx, {
+			const part = await recordToolTranscript(ctx, {
 				threadId: args.threadId,
 				runId: args.runId,
 				job
 			});
+
+			if (part) parts.push(part);
 		}
 	}
+
+	return parts;
 }
 
 function progressToolBody(

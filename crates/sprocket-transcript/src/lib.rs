@@ -23,6 +23,7 @@ pub use live::{
     LiveCompletionSubscription, LiveCompletionWatchEvent, join_assistant_text_parts,
 };
 pub use replica::WorkReplica;
+pub use sections::{WorkBlock, derive_work_blocks};
 pub use store::TranscriptStore;
 pub use sync::{
     RemoteTranscriptState, apply_remote_state, deserialize_remote_prompt, parse_remote_page,

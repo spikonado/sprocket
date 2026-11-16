@@ -4,21 +4,40 @@ import { getExecutionRun, getExecutionRunRecord } from '@convex/lib/auth';
 import { applyExecutorJobFailure, applyExecutorJobSuccess } from '@convex/lib/executorJobs';
 import { vExecutorJobResult, vExecutorJobStatus } from '@convex/lib/validators';
 import { toAgentToolConvexError } from '@convex/lib/agentErrors';
-import type { Id } from '@convex/_generated/dataModel';
+import { isSettledExecutorJobStatus } from '@convex/lib/runs';
+import { toolSourceKey } from '@convex/lib/transcriptParts';
+import { vTranscriptMutationResult } from '@convex/lib/docs';
+import schema from '@convex/schema';
+import type { Doc, Id } from '@convex/_generated/dataModel';
 
 type ExecutorJobSnapshot = {
 	jobId: Id<'executorJobs'>;
 	status: Infer<typeof vExecutorJobStatus>;
 	result?: Infer<typeof vExecutorJobResult>;
 	error?: string;
+	part: Doc<'threadTranscriptParts'> | null;
 };
+
+const settlementResult = v.union(v.boolean(), vTranscriptMutationResult);
+
+async function getJobPart(ctx: QueryCtx | MutationCtx, job: Doc<'executorJobs'>) {
+	return await ctx.db
+		.query('threadTranscriptParts')
+		.withIndex('by_threadId_and_sourceKey', (query) =>
+			query
+				.eq('threadId', job.threadId)
+				.eq('sourceKey', toolSourceKey(job.toolInvocationId, 'finished'))
+		)
+		.unique();
+}
 
 const completeArgs = {
 	jobId: v.id('executorJobs'),
 	result: vExecutorJobResult,
 	runId: v.id('runs'),
 	claimId: v.string(),
-	executionSecret: v.string()
+	executionSecret: v.string(),
+	returnParts: v.optional(v.boolean())
 };
 
 export async function completeHandler(ctx: MutationCtx, args: ObjectType<typeof completeArgs>) {
@@ -28,12 +47,17 @@ export async function completeHandler(ctx: MutationCtx, args: ObjectType<typeof 
 		if (!job || job.runId !== args.runId) throw new Error('Executor job not found.');
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 
-		return await applyExecutorJobSuccess(ctx, {
+		const accepted = await applyExecutorJobSuccess(ctx, {
 			job,
 			run,
 			result: args.result,
 			claimId: args.claimId
 		});
+
+		if (!args.returnParts) return accepted;
+		const part = await getJobPart(ctx, job);
+
+		return { accepted, parts: part ? [part] : [] };
 	} catch (error) {
 		throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 	}
@@ -41,7 +65,7 @@ export async function completeHandler(ctx: MutationCtx, args: ObjectType<typeof 
 
 export const complete = mutation({
 	args: completeArgs,
-	returns: v.boolean(),
+	returns: settlementResult,
 	handler: completeHandler
 });
 
@@ -50,7 +74,8 @@ const failArgs = {
 	error: v.string(),
 	runId: v.id('runs'),
 	claimId: v.string(),
-	executionSecret: v.string()
+	executionSecret: v.string(),
+	returnParts: v.optional(v.boolean())
 };
 
 export async function failHandler(ctx: MutationCtx, args: ObjectType<typeof failArgs>) {
@@ -60,12 +85,17 @@ export async function failHandler(ctx: MutationCtx, args: ObjectType<typeof fail
 		if (!job || job.runId !== args.runId) throw new Error('Executor job not found.');
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 
-		return await applyExecutorJobFailure(ctx, {
+		const accepted = await applyExecutorJobFailure(ctx, {
 			job,
 			run,
 			error: args.error,
 			claimId: args.claimId
 		});
+
+		if (!args.returnParts) return accepted;
+		const part = await getJobPart(ctx, job);
+
+		return { accepted, parts: part ? [part] : [] };
 	} catch (error) {
 		throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 	}
@@ -73,7 +103,7 @@ export async function failHandler(ctx: MutationCtx, args: ObjectType<typeof fail
 
 export const fail = mutation({
 	args: failArgs,
-	returns: v.boolean(),
+	returns: settlementResult,
 	handler: failHandler
 });
 
@@ -93,7 +123,8 @@ export async function getJobHandler(ctx: QueryCtx, args: ObjectType<typeof getJo
 
 	const snapshot: ExecutorJobSnapshot = {
 		jobId: job._id,
-		status: job.status
+		status: job.status,
+		part: isSettledExecutorJobStatus(job.status) ? await getJobPart(ctx, job) : null
 	};
 
 	if (job.result !== undefined) snapshot.result = job.result;
@@ -111,7 +142,8 @@ export const getJob = query({
 			jobId: v.id('executorJobs'),
 			status: vExecutorJobStatus,
 			result: v.optional(vExecutorJobResult),
-			error: v.optional(v.string())
+			error: v.optional(v.string()),
+			part: v.union(schema.doc('threadTranscriptParts'), v.null())
 		})
 	),
 	handler: getJobHandler

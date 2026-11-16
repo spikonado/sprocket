@@ -28,6 +28,14 @@ Each data directory is a separate profile with its own sign-in. Set `SPROCKET_DA
 | `desktop-executable` | Where the desktop app is, saved each time it starts      |
 | `cli-server.log`     | Log of the temporary server the CLI starts               |
 
+### Transcript parts
+
+<Snippet file="unreleased.mdx" />
+
+Transcript parts record prompts, model completions, and tool results. A completion's tool-call item contains the tool's name, input, and `toolInvocationId`. Its result has the same invocation ID, a terminal status (`completed`, `failed`, or `cancelled`), and output. A call without a result is still running. Reasoning and tool calls form work blocks until the next non-empty text item.
+
+Transcripts also contain `started` tool parts, `work` section data, and tool names and inputs copied onto results. Older Sprocket versions read these. Current versions skip `started` parts and read names and inputs from the call item.
+
 ## Credentials
 
 Sprocket stores your sign-in in the OS keyring when one is available. Otherwise it falls back to an unencrypted file in the data directory that only your user can read, and `sprocket login` tells you so.
