@@ -244,7 +244,7 @@ impl Drop for TranscriptRunSession {
 
 impl TranscriptWatchSession {
     pub fn stale(&self) -> bool {
-        *self.state.status.borrow() != TranscriptSyncStatus::Ready
+        *self.state.status.borrow() == TranscriptSyncStatus::Unavailable
     }
 
     pub fn receiver(&mut self) -> &mut broadcast::Receiver<TranscriptWatchEvent> {

@@ -104,6 +104,7 @@ async fn cloud_status_changes_notify_existing_sessions_without_part_writes() {
     let changes = start.store.watch_changes();
     let forwarding = tokio::spawn(async move { forward_changes(&start, changes).await });
     tokio::task::yield_now().await;
+    assert!(!tab.stale());
     for status in [
         TranscriptSyncStatus::Ready,
         TranscriptSyncStatus::Unavailable,
@@ -114,7 +115,7 @@ async fn cloud_status_changes_notify_existing_sessions_without_part_writes() {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(tab.stale(), status != TranscriptSyncStatus::Ready);
+        assert_eq!(tab.stale(), status == TranscriptSyncStatus::Unavailable);
     }
     forwarding.abort();
     assert!(forwarding.await.unwrap_err().is_cancelled());
