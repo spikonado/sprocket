@@ -20,6 +20,7 @@ impl AppState {
                 Arc::clone(&auth),
                 false,
             )),
+            thread_rows: Arc::default(),
             host,
             auth,
             chatgpt_oauth,

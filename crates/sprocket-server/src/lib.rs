@@ -70,6 +70,7 @@ impl StartupInfo {
 pub struct AppState {
     pub host: Host,
     pub(crate) cli_sessions: Arc<cli_sessions::CliSessions>,
+    pub(crate) thread_rows: Arc<routes::transcript_rows::ThreadRowsRegistry>,
     pub auth: Arc<auth::AuthState>,
     pub(crate) chatgpt_oauth: Arc<chatgpt_oauth::PendingLogins>,
     pub http_base_url: String,
@@ -170,6 +171,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<Se
     let state = AppState {
         host: host.clone(),
         cli_sessions: Arc::clone(&cli_sessions),
+        thread_rows: Arc::default(),
         auth,
         chatgpt_oauth: Arc::clone(&pending_chatgpt_oauth),
         http_base_url: http_base_url.clone(),

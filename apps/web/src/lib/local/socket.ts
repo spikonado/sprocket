@@ -3,6 +3,7 @@ import type {
 	SubscriptionHandlers,
 	TranscriptRowRequest,
 	TranscriptScopeRequest,
+	TranscriptWorkRequest,
 	WorkspaceFileTarget
 } from '$lib/types/sprocket';
 import { z } from 'zod';
@@ -10,7 +11,7 @@ import { LocalResponseError } from './transport';
 
 export type LocalTopic =
 	| { kind: 'transcript'; params: TranscriptScopeRequest & { before?: number } }
-	| { kind: 'transcriptWork'; params: TranscriptRowRequest }
+	| { kind: 'transcriptWork'; params: TranscriptWorkRequest }
 	| { kind: 'transcriptItem'; params: TranscriptRowRequest }
 	| { kind: 'artifactSync'; params: ArtifactsWatchRequest }
 	| { kind: 'commands'; params: TranscriptScopeRequest }

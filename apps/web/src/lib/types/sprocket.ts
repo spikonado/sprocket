@@ -135,6 +135,8 @@ export type TranscriptRowsRequest = TranscriptScopeRequest & {
 
 export type TranscriptRowRequest = TranscriptScopeRequest & { rowId: string };
 
+export type TranscriptWorkRequest = TranscriptRowRequest & { before?: number };
+
 export type FilesystemBrowseEntry = {
 	name: string;
 	fullPath: string;
@@ -393,7 +395,7 @@ export type LocalApi = {
 		handlers: WatchHandlers<TranscriptEvent>
 	) => Promise<void>;
 	watchTranscriptWork: (
-		request: TranscriptRowRequest,
+		request: TranscriptWorkRequest,
 		handlers: WatchHandlers<TranscriptEvent>
 	) => Promise<void>;
 	watchTranscriptItem: (

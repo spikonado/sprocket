@@ -400,20 +400,20 @@ fn command_aliases_and_fallbacks() {
     );
 }
 
-#[tokio::test]
-async fn session_command_comes_from_local_history() {
+#[test]
+fn session_command_comes_from_local_history() {
     let directory = tempfile::tempdir().unwrap();
     let sessions = directory.path().join("command-logs/sessions");
-    tokio::fs::create_dir_all(&sessions).await.unwrap();
+    std::fs::create_dir_all(&sessions).unwrap();
     let id = uuid::Uuid::new_v4();
-    tokio::fs::write(
+    std::fs::write(
         sessions.join(format!("{id}.json")),
         br#"{"command":"bun run build","result":{"output":"private"}}"#,
     )
-    .await
     .unwrap();
     let input = json!({"sessionId": id});
     let output = json!({"command": "older output command"});
+    let mut commands = SessionCommands::new(directory.path().to_owned());
     for name in [
         "poll_cmd",
         "control_cmd",
@@ -422,19 +422,13 @@ async fn session_command_comes_from_local_history() {
         "write_stdin",
     ] {
         let tool = ToolDisplayInput::new(name, &input, Some(&output), ToolStatus::Completed);
-        let command = load_session_command(directory.path(), id).await;
-        assert_eq!(tool.display(command.as_deref()).summary, "bun run build");
+        let command = commands.get(tool.session_id().unwrap());
+        assert_eq!(tool.display(command).summary, "bun run build");
     }
     let missing = json!({"sessionId": uuid::Uuid::new_v4()});
     let tool = ToolDisplayInput::new("poll_cmd", &missing, Some(&output), ToolStatus::Completed);
-    assert_eq!(
-        load_session_command(
-            directory.path(),
-            uuid::Uuid::parse_str(tool.session_id().unwrap()).unwrap()
-        )
-        .await,
-        None
-    );
+    assert_eq!(commands.get(tool.session_id().unwrap()), None);
+    assert_eq!(commands.get("not-a-uuid"), None);
     assert_eq!(tool.display(None).summary, "older output command");
 }
 

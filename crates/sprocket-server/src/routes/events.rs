@@ -309,15 +309,9 @@ pub(crate) async fn open(
 ) -> Result<BoxStream<'static, serde_json::Value>, ApiError> {
     let Authorized(topic) = authorize(state, headers, topic).await?;
     Ok(match topic {
-        Topic::Transcript(scope) => {
-            json(transcript_rows::watch_rows(state, Authorized(scope)).await?)
-        }
-        Topic::TranscriptWork(scope) => {
-            json(transcript_rows::watch_work(state, Authorized(scope)).await?)
-        }
-        Topic::TranscriptItem(scope) => {
-            json(transcript_rows::watch_item(state, Authorized(scope)).await?)
-        }
+        Topic::Transcript(scope) => json(transcript_rows::watch_rows(state, Authorized(scope))),
+        Topic::TranscriptWork(scope) => json(transcript_rows::watch_work(state, Authorized(scope))),
+        Topic::TranscriptItem(scope) => json(transcript_rows::watch_item(state, Authorized(scope))),
         Topic::ArtifactSync(request) => artifacts::watch_events(state, Authorized(request))
             .await?
             .map(|_| serde_json::Value::Null)

@@ -188,6 +188,12 @@ pub struct TranscriptToolBody {
 }
 
 impl TranscriptPart {
+    pub fn content_items(&self) -> &[JsonValue] {
+        self.completion
+            .as_ref()
+            .map_or(&[], |completion| completion.items.as_slice())
+    }
+
     pub fn without_ephemeral_urls(&self) -> Self {
         let mut part = self.clone();
         if let Some(prompt) = part.prompt.as_mut() {
