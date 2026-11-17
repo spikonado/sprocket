@@ -28,9 +28,6 @@ async fn capture_failure_terminates_the_command_and_reports_failure() {
         .unwrap();
     let history_path = history_path(&root.join("logs"), &uuid::Uuid::new_v4().to_string()).unwrap();
     let history = CommandHistory {
-        user_id: String::new(),
-        thread_id: String::new(),
-        machine_id: String::new(),
         command: command.into(),
         workdir: root.to_string_lossy().into_owned(),
         max_output_chars: 100,

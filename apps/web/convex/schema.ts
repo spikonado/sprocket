@@ -3,7 +3,6 @@ import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
 import { vCreditPackExpiry, vPackPrice, vPrice } from '@convex/lib/pricingValidators';
 import { workMembership } from '@convex/lib/workSections';
-import { commandSnapshot } from '@convex/lib/commandSessions';
 import { vProviderOrderEntry } from '@convex/lib/providerOrder';
 import {
 	vAgentQuestionStatus,
@@ -296,18 +295,8 @@ export default defineSchema({
 		lifecycleGeneration: v.optional(v.number()),
 		terminalJobsReconciled: v.optional(v.boolean())
 	}).index('by_runId', ['runId']),
-	commandSessions: defineTable({
-		threadId: v.id('threadRecords'),
-		userId: v.string(),
-		sessionId: v.string(),
-		...commandSnapshot.fields,
-		eventsBytes: v.number()
-	}).index('by_threadId_and_sessionId', ['threadId', 'sessionId']),
-	commandLogChunks: defineTable({
-		commandId: v.id('commandSessions'),
-		offset: v.number(),
-		bytes: v.bytes()
-	}).index('by_commandId_offset', ['commandId', 'offset']),
+	commandSessions: defineTable(v.any()),
+	commandLogChunks: defineTable(v.any()),
 	// Kept off threadRecords so appends don't invalidate thread list subscriptions.
 	threadTranscriptStates: defineTable({
 		threadId: v.id('threadRecords'),

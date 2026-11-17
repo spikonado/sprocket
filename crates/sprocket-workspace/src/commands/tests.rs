@@ -61,7 +61,7 @@ impl StubSession {
     async fn archive(&self) {
         let preview = self.output.lock().await.full_preview();
         let mut history = self.history.clone();
-        history.result = super::completion_output(&completed_ok(), preview);
+        history.result = super::process::completion_output(&completed_ok(), preview);
         history.save(&self.history_path).await.unwrap();
         self.completion
             .send(Some(CommandCompletion {
@@ -118,15 +118,15 @@ async fn stub_session(root: &Path) -> StubSession {
         .unwrap();
     let id = uuid::Uuid::new_v4().to_string();
     let history = super::CommandHistory {
-        user_id: String::new(),
-        thread_id: String::new(),
-        machine_id: String::new(),
         command: "test".into(),
         workdir: root.to_string_lossy().into_owned(),
         max_output_chars: 20_000,
         result: CommandOutput {
             running: true,
-            ..super::completion_output(&CommandCompletion::default(), output.preview_metadata())
+            ..super::process::completion_output(
+                &CommandCompletion::default(),
+                output.preview_metadata(),
+            )
         },
     };
     let (completion, completion_rx) = watch::channel(None);
@@ -1299,160 +1299,6 @@ async fn later_runs_get_only_unreturned_output_after_cleanup_and_server_restart(
             .await
             .is_err()
     );
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[tokio::test]
-async fn history_snapshot_recovers_the_archive_after_a_running_session_is_pruned() {
-    let root = temp_workspace();
-    let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
-    let (id, _) = exec_running(&sessions, "read value; printf '%s' \"$value\"").await;
-    let mut history = serde_json::from_slice(
-        &tokio::fs::read(super::history_path(&root.join("logs"), &id).unwrap())
-            .await
-            .unwrap(),
-    )
-    .unwrap();
-    sessions.history_snapshot(&id, &mut history).await.unwrap();
-    assert!(history.result.running);
-
-    write(&sessions, &id, "done\n", 0).await;
-    await_completion(&sessions, &id).await;
-    sessions.prune_completed().await;
-    sessions.history_snapshot(&id, &mut history).await.unwrap();
-    assert!(history.result.success);
-    assert!(!history.result.running);
-    assert_eq!(history.result.exit_code, Some(0));
-    assert_eq!(history.result.output, "done");
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[tokio::test]
-async fn another_machine_resolves_the_same_session_and_keeps_a_local_replica() {
-    let origin = temp_workspace();
-    let sessions = CommandSessionManager::new(origin.clone(), origin.join("logs"))
-        .with_history_scope("user".into(), "thread".into(), "origin".into());
-    let result = sessions
-        .exec_command(
-            WorkspaceCancellation::new(),
-            "printf shared",
-            ".",
-            &default_command_shell(),
-            None,
-            5_000,
-        )
-        .await
-        .unwrap();
-    let id = result.session_id.unwrap();
-    let mut history = serde_json::from_slice(
-        &tokio::fs::read(super::history_path(&origin.join("logs"), &id).unwrap())
-            .await
-            .unwrap(),
-    )
-    .unwrap();
-    sessions.history_snapshot(&id, &mut history).await.unwrap();
-    let destination = temp_workspace();
-    let expected_id = id.clone();
-    let remote = CommandSessionManager::new(destination.clone(), destination.join("logs"))
-        .with_history_scope("user".into(), "thread".into(), "destination".into())
-        .with_history_resolver(move |id, directory| {
-            let expected_id = expected_id.clone();
-            let mut history = history.clone();
-            async move {
-                assert_eq!(id, expected_id);
-                tokio::fs::create_dir_all(&directory).await?;
-                let log = directory.join("output.log");
-                let events = directory.join("events.jsonl");
-                tokio::fs::copy(&history.result.complete_log_path, &log).await?;
-                tokio::fs::copy(&history.result.events_path, &events).await?;
-                history.result.complete_log_path = log.to_string_lossy().into_owned();
-                history.result.events_path = events.to_string_lossy().into_owned();
-                history.save(&super::history_path(&directory, &id)?).await?;
-                Ok(Some(history))
-            }
-        });
-    let replay = poll(&remote, &id, 0).await;
-    assert_eq!(replay.output, "shared");
-    assert!(std::path::Path::new(&replay.complete_log_path).starts_with(&destination));
-    drop(remote);
-    let offline = CommandSessionManager::new(destination.clone(), destination.join("logs"));
-    let cached = poll(&offline, &id, 0).await;
-    assert!(cached.success);
-    assert_eq!(cached.output, "");
-    fs::remove_dir_all(origin).unwrap();
-    fs::remove_dir_all(destination).unwrap();
-}
-
-#[tokio::test]
-async fn cached_history_stays_available_during_failed_or_stalled_remote_fetches() {
-    let root = temp_workspace();
-    let sessions = CommandSessionManager::new(root.clone(), root.join("logs")).with_history_scope(
-        "user".into(),
-        "thread".into(),
-        "destination".into(),
-    );
-    let completed = sessions
-        .exec_command(
-            WorkspaceCancellation::new(),
-            "printf cached",
-            ".",
-            &default_command_shell(),
-            None,
-            5_000,
-        )
-        .await
-        .unwrap();
-    assert!(completed.result.success);
-    let completed_id = completed.session_id.unwrap();
-    sessions.prune_completed().await;
-    let mut remote: super::CommandHistory = serde_json::from_slice(
-        &tokio::fs::read(super::history_path(&root.join("logs"), &completed_id).unwrap())
-            .await
-            .unwrap(),
-    )
-    .unwrap();
-    remote.machine_id = "origin".into();
-    remote.result.running = true;
-    remote.result.success = false;
-    remote.result.exit_code = None;
-    remote.result.error = Some("last synced output, not a live process observation".into());
-    let remote_id = uuid::Uuid::new_v4().to_string();
-    remote
-        .save(&super::history_path(&root.join("logs"), &remote_id).unwrap())
-        .await
-        .unwrap();
-
-    let sessions = sessions.with_history_resolver(|_, _| std::future::pending());
-    let manager = sessions.clone();
-    let id = remote_id.clone();
-    tokio::time::pause();
-    let fetching = tokio::spawn(async move { poll(&manager, &id, 0).await });
-    while sessions.history_fetch_lock.try_lock().is_ok() {
-        tokio::task::yield_now().await;
-    }
-    assert_eq!(poll(&sessions, &completed_id, 0).await.exit_code, Some(0));
-    tokio::time::advance(Duration::from_secs(10)).await;
-    let cached = fetching.await.unwrap();
-    assert!(cached.running);
-    assert_eq!(cached.output, "cached");
-    assert!(cached.error.unwrap().contains("last synced"));
-    let unknown = uuid::Uuid::new_v4().to_string();
-    let timed_out = sessions
-        .poll_command(
-            WorkspaceCancellation::new(),
-            &unknown,
-            &PollWindow::after_ms(0),
-            0,
-        )
-        .await
-        .unwrap_err();
-    assert!(timed_out.to_string().contains("timed out"));
-    tokio::time::resume();
-
-    let sessions = sessions.with_history_resolver(|_, _| async { anyhow::bail!("offline") });
-    let cached = poll(&sessions, &remote_id, 0).await;
-    assert!(cached.running);
-    assert_eq!(cached.output, "");
     fs::remove_dir_all(root).unwrap();
 }
 

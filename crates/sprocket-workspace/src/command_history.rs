@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
@@ -11,37 +11,15 @@ const INTERRUPTED_ERROR: &str =
     "command session was interrupted before its final status was saved; output may be incomplete";
 
 #[derive(Clone, Deserialize, Serialize)]
-pub struct CommandHistory {
-    pub user_id: String,
-    pub thread_id: String,
-    pub machine_id: String,
+pub(crate) struct CommandHistory {
     pub command: String,
     pub workdir: String,
     pub max_output_chars: usize,
     pub result: CommandOutput,
 }
 
-#[cfg(test)]
-mod tests;
-
 impl CommandHistory {
-    pub async fn recover_if_running(
-        &mut self,
-        log_directory: &Path,
-        session_id: &str,
-    ) -> Result<()> {
-        if self.result.running {
-            let Some(mut saved) = Self::read(&history_path(log_directory, session_id)?).await?
-            else {
-                bail!("unknown command session: {session_id}");
-            };
-            saved.mark_interrupted().await?;
-            self.result = saved.result;
-        }
-        Ok(())
-    }
-
-    pub async fn save(&self, path: &Path) -> Result<()> {
+    pub(crate) async fn save(&self, path: &Path) -> Result<()> {
         let parent = path.parent().context("command history has no directory")?;
         tokio::fs::create_dir_all(parent).await?;
         let temporary = tempfile::NamedTempFile::new_in(parent)?;
@@ -65,10 +43,6 @@ impl CommandHistory {
         }
     }
 
-    pub(crate) fn is_orphaned_on(&self, machine_id: &str) -> bool {
-        self.machine_id == machine_id && self.result.running
-    }
-
     pub(crate) async fn mark_interrupted(&mut self) -> Result<()> {
         if self.result.running {
             self.result.running = false;
@@ -90,7 +64,7 @@ impl CommandHistory {
     }
 }
 
-pub fn history_path(log_directory: &Path, session_id: &str) -> Result<PathBuf> {
+pub(crate) fn history_path(log_directory: &Path, session_id: &str) -> Result<PathBuf> {
     let id = uuid::Uuid::parse_str(session_id)
         .map_err(|_| anyhow::anyhow!("unknown command session: {session_id}"))?;
     Ok(log_directory.join("sessions").join(format!("{id}.json")))

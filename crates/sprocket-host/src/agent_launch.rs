@@ -235,8 +235,6 @@ async fn launch_agent_inner(
     let cleanup_request = request.clone();
     let command_sessions = Arc::clone(&host.command_sessions);
     let command_lifetime = Arc::clone(&host.lifetime);
-    let command_machine_id = host.machine_identity.installation_id.clone();
-    let command_convex = Arc::clone(&host.convex);
     let kicad = Arc::clone(&host.kicad);
     let live = Arc::clone(&host.live_completions);
     let transcript = Arc::clone(&host.transcript);
@@ -309,29 +307,9 @@ async fn launch_agent_inner(
                             .into_iter()
                             .chain(thread_tool_sessions(&thread_id)),
                     )
-                    .with_history_scope(user_id.clone(), thread_id.clone(), command_machine_id)
                     .with_command_environment(move || {
                         let kicad = Arc::clone(&kicad);
                         async move { command_environment(&kicad).await }
-                    })
-                    .with_history_resolver({
-                        let user_id = user_id.clone();
-                        let thread_id = thread_id.clone();
-                        move |session_id, directory| {
-                            let convex = Arc::clone(&command_convex);
-                            let user_id = user_id.clone();
-                            let thread_id = thread_id.clone();
-                            async move {
-                                crate::command_sync::fetch(
-                                    &convex,
-                                    &user_id,
-                                    &thread_id,
-                                    &session_id,
-                                    &directory,
-                                )
-                                .await
-                            }
-                        }
                     })
                     .with_lifetime_guard_factory(move || command_lifetime.run_guard());
                 let artifact_watch = if artifact_repository_key.is_empty() {

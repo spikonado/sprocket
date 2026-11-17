@@ -7,7 +7,6 @@ pub mod chatgpt_credentials;
 pub mod claude_code_cli;
 mod cli_install;
 pub mod command_sessions;
-pub mod command_sync;
 pub mod convex_clients;
 mod desktop_install;
 pub mod device_sign_in;
@@ -358,7 +357,6 @@ impl Host {
             }
         });
         HostTasks {
-            command_sync: command_sync::spawn(self.clone()),
             recovery: run_recovery::spawn(self.clone()),
             host: self.clone(),
             attachment_cleanup,
@@ -371,7 +369,6 @@ pub struct HostTasks {
     host: Host,
     attachment_cleanup: JoinHandle<()>,
     command_cleanup: JoinHandle<()>,
-    command_sync: JoinHandle<()>,
     recovery: JoinHandle<()>,
 }
 
@@ -384,15 +381,6 @@ impl HostTasks {
         }
         host.command_sessions.stop_all().await;
         host.browsers.shutdown().await;
-        self.command_sync.abort();
-        let _ = self.command_sync.await;
-        if let Err(error) =
-            tokio::time::timeout(Duration::from_secs(10), command_sync::flush(&host))
-                .await
-                .unwrap_or_else(|error| Err(error.into()))
-        {
-            tracing::warn!("command sync remains pending on disk after shutdown: {error:#}");
-        }
         host.machines.shutdown().await;
     }
 }
