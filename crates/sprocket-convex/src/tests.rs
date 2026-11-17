@@ -122,26 +122,6 @@ async fn terminal_sign_out_does_not_retry() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn clear_cancels_a_hung_sdk_token_fetch() {
-    let auth = AuthState::new();
-    let generation = auth
-        .install(Arc::new(|_| Box::pin(std::future::pending())))
-        .await;
-    let callback = sdk_fetcher(Arc::downgrade(&auth), generation);
-    let pending = tokio::spawn(callback(false));
-    tokio::task::yield_now().await;
-
-    auth.clear().await;
-
-    let error = time::timeout(Duration::from_secs(1), pending)
-        .await
-        .expect("clear must unblock the SDK worker")
-        .expect("join")
-        .expect_err("stale callback");
-    assert!(!error.is::<AuthSignedOut>());
-}
-
-#[tokio::test(start_paused = true)]
 async fn retries_back_off_and_cap_the_delay() {
     let auth = AuthState::new();
     let mut outcomes: Vec<_> = (0..7)
@@ -255,8 +235,6 @@ async fn persistent_auth_failure_closes_the_connection_and_fails_all_pending_ope
         .await
         .expect_err("closed connection must reject new work");
     assert_eq!(start.elapsed(), Duration::ZERO);
-    client.clear_auth().await;
-    assert!(client.inner.convex.lock().await.is_none());
     client
         .set_auth_token_fetcher(Arc::new(|_| Box::pin(async { Ok("new-token".into()) })))
         .await
@@ -285,12 +263,11 @@ async fn auth_deadline_never_releases_the_sdk_to_send_anonymous_requests() {
         })
         .await
         .expect("auth failure deadline");
-        client.clear_auth().await;
         assert!(
             time::timeout(Duration::from_secs(1), authenticate)
                 .await
                 .is_err(),
-            "clearing failed auth must not release queued requests"
+            "failed auth must not release queued requests"
         );
         error
     };

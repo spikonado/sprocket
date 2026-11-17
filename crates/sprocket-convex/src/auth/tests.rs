@@ -151,32 +151,6 @@ async fn scheduled_refresh_fetches_with_force_refresh() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn clear_cancels_scheduled_refresh() {
-    let auth = AuthState::new();
-    let fetches = Arc::new(Mutex::new(Vec::new()));
-    let token = token_with_refresh_delay(Duration::from_secs(60));
-    let generation = auth
-        .install(counting_fetcher(Arc::clone(&fetches), token.clone()))
-        .await;
-    let applied = Arc::new(AtomicUsize::new(0));
-    let applied_count = Arc::clone(&applied);
-    auth.set_on_apply(Arc::new(move |_| {
-        let applied_count = Arc::clone(&applied_count);
-        Box::pin(async move {
-            applied_count.fetch_add(1, Ordering::SeqCst);
-        })
-    }));
-
-    auth.arm(generation, &token).await;
-    auth.clear().await;
-    time::advance(Duration::from_secs(90)).await;
-    tokio::task::yield_now().await;
-
-    assert!(fetches.lock().await.is_empty());
-    assert_eq!(applied.load(Ordering::SeqCst), 0);
-}
-
-#[tokio::test(start_paused = true)]
 async fn scheduled_refresh_retries_failure_without_waiting_for_token_expiry() {
     let auth = AuthState::new();
     let attempts = Arc::new(AtomicUsize::new(0));
@@ -368,29 +342,4 @@ async fn resolve_preserves_forced_refresh_and_uses_pending_for_callback_apply() 
         token
     );
     assert_eq!(*fetches.lock().await, vec![true, false]);
-}
-
-#[tokio::test]
-async fn resolve_does_not_apply_after_clear() {
-    let auth = AuthState::new();
-    let (continue_tx, continue_rx) = oneshot::channel();
-    let continue_rx = Arc::new(Mutex::new(Some(continue_rx)));
-    let fetcher: AuthTokenFetcher = Arc::new(move |force_refresh| {
-        let continue_rx = Arc::clone(&continue_rx);
-        Box::pin(async move {
-            if let Some(continue_rx) = continue_rx.lock().await.take() {
-                continue_rx.await.expect("continue");
-            }
-            Ok(format!("token-{force_refresh}"))
-        })
-    });
-    let generation = auth.install(fetcher).await;
-    let resolve = {
-        let auth = Arc::clone(&auth);
-        tokio::spawn(async move { auth.resolve(generation, true).await })
-    };
-    tokio::task::yield_now().await;
-    auth.clear().await;
-    continue_tx.send(()).expect("unblock fetch");
-    assert!(resolve.await.expect("join").is_err());
 }

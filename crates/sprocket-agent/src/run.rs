@@ -479,12 +479,7 @@ pub async fn start_agent_run(request: RunAgentRequest) -> anyhow::Result<AgentRu
         None
     };
     let claim_id = Uuid::new_v4().to_string();
-    let runtime = timeout(
-        SUBMISSION_ATTEMPT_TIMEOUT,
-        RuntimeClient::from_request(&request),
-    )
-    .await
-    .context("timed out initializing agent submission")??;
+    let runtime = RuntimeClient::from_request(&request);
     let workspace_root = resolve_workspace_root(&request.workspace_path)?;
 
     let created_run = loop {
@@ -498,8 +493,8 @@ pub async fn start_agent_run(request: RunAgentRequest) -> anyhow::Result<AgentRu
             Ok(created) => break created,
             Err(error) if submission_is_waiting(&error) && !request.thread_id.is_empty() => {
                 wait_until_ready(&request.cancellation, || async {
-                    let result = runtime
-                        .client
+                    let result = request
+                        .user_convex
                         .mutation(
                             "agentRuntime:prepareSubmission",
                             std::collections::BTreeMap::from([(
@@ -520,7 +515,6 @@ pub async fn start_agent_run(request: RunAgentRequest) -> anyhow::Result<AgentRu
     };
     let mut request = request;
     request.thread_id = created_run.thread_id.clone();
-    runtime.client.clear_auth().await;
     if created_run.created {
         eprintln!("sprocket-agent: created run {}", created_run.run_id);
     } else {
@@ -560,8 +554,7 @@ pub async fn finalize_failed_start(
         return Ok(());
     }
     let startup_error = format!("{startup_error:#}");
-    let runtime = RuntimeClient::from_request(&request).await?;
-    runtime.client.clear_auth().await;
+    let runtime = RuntimeClient::from_request(&request);
     let deadline = Instant::now() + START_FAILURE_RECONCILE_TIMEOUT;
     loop {
         let result = timeout(

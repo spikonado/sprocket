@@ -58,6 +58,10 @@ impl UserConvexClient {
         self.client.is_closed().await
     }
 
+    pub(crate) fn into_rpc_client(self) -> ConvexClient {
+        self.client
+    }
+
     pub async fn subscribe_artifact_state(
         &self,
         repository_key: &str,

@@ -10,7 +10,7 @@ use rig::message::{
     ToolName, ToolResult, ToolResultContent, UserContent,
 };
 use serde::{Deserialize, Serialize};
-use sprocket_convex::{AuthTokenFetcher, deserialize_convex_u64};
+use sprocket_convex::deserialize_convex_u64;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -186,7 +186,10 @@ pub struct RunAgentRequest {
     pub allow_interaction: bool,
     pub cancellation: sprocket_workspace::WorkspaceCancellation,
     pub deployment_url: String,
-    pub auth_token_fetcher: AuthTokenFetcher,
+    /// Signed in as the user. Only submitting the run needs it.
+    pub user_convex: sprocket_convex::Client,
+    /// Signed out. Everything after submission authenticates with `execution_secret`.
+    pub run_convex: sprocket_convex::Client,
     pub execution_secret: String,
     pub submission_id: String,
     pub thread_id: String,

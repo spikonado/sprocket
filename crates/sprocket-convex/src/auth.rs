@@ -118,13 +118,6 @@ impl AuthState {
         generation
     }
 
-    pub(crate) async fn clear(&self) {
-        self.shutdown();
-        let mut slots = self.slots.lock().await;
-        slots.fetcher = None;
-        slots.pending_user_token = None;
-    }
-
     pub(crate) async fn resolve(
         self: &Arc<Self>,
         generation: u64,
@@ -159,7 +152,7 @@ impl AuthState {
                 if let Some(on_failure) = self.on_failure.get()
                     && on_failure(generation, error).await
                 {
-                    // Only aborting the closed SDK worker may release this callback, even after clear_auth.
+                    // Only aborting the closed SDK worker may release this callback.
                     std::future::pending().await
                 } else {
                     anyhow::bail!("stale auth callback");
