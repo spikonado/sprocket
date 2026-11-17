@@ -2,10 +2,12 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Weak};
+use std::task::{Context as TaskContext, Poll, ready};
 use std::time::Duration;
 
 use anyhow::Context;
 use convex::{AuthenticationToken, ConvexClient, FunctionResult, QuerySubscription, Value};
+use futures::{Stream, StreamExt};
 use rustls::crypto::ring::default_provider;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
@@ -39,6 +41,44 @@ impl std::fmt::Display for AuthSignedOut {
 }
 
 impl std::error::Error for AuthSignedOut {}
+
+/// The SDK wakes every subscription on a client whenever any of its queries changes, so
+/// this skips repeats of the subscription's own last result.
+#[derive(Debug)]
+pub struct Distinct<S> {
+    results: S,
+    last: Option<FunctionResult>,
+}
+
+pub type Subscription = Distinct<QuerySubscription>;
+
+impl<S> Distinct<S> {
+    pub fn new(results: S) -> Self {
+        Self {
+            results,
+            last: None,
+        }
+    }
+}
+
+impl<S: Stream<Item = FunctionResult> + Unpin> Stream for Distinct<S> {
+    type Item = FunctionResult;
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+    ) -> Poll<Option<FunctionResult>> {
+        loop {
+            let Some(result) = ready!(self.results.poll_next_unpin(cx)) else {
+                return Poll::Ready(None);
+            };
+            if self.last.as_ref() != Some(&result) {
+                self.last = Some(result.clone());
+                return Poll::Ready(Some(result));
+            }
+        }
+    }
+}
 
 struct Inner {
     convex: Mutex<Option<ConvexClient>>,
@@ -125,18 +165,20 @@ impl Client {
         &self,
         function: &str,
         args: BTreeMap<String, Value>,
-    ) -> anyhow::Result<QuerySubscription> {
+    ) -> anyhow::Result<Subscription> {
         self.with_auth_failure(async {
             let mut convex = self.connected_client().await?;
             timeout(CONVEX_RPC_TIMEOUT, convex.subscribe(function, args))
                 .await
                 .with_context(|| format!("subscription timed out for {function}"))?
+                .map(Distinct::new)
         })
         .await
     }
 
-    pub async fn watch_all(&self) -> anyhow::Result<convex::QuerySetSubscription> {
-        Ok(self.connected_client().await?.watch_all())
+    /// A closed client rejects all work, so callers that share one must replace it.
+    pub async fn is_closed(&self) -> bool {
+        self.inner.convex.lock().await.is_none()
     }
 
     pub async fn mutation(

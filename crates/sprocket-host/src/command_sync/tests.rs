@@ -237,7 +237,7 @@ async fn pending_batches_and_failed_uploads_retry_until_acknowledged() {
 #[tokio::test]
 async fn malformed_records_wait_for_retry_and_foreign_records_settle() {
     let directory = tempfile::tempdir().unwrap();
-    let auth = NativeAuthManager::configured_for_test(
+    let auth = crate::native_auth::NativeAuthManager::configured_for_test(
         crate::native_auth::NativeAuthConfig {
             workos_client_id: "test".into(),
         },

@@ -139,7 +139,7 @@ async fn last_consumer_releases_shared_watch() {
         "http://127.0.0.1/callback".into(),
     );
     let watchers = ArtifactWatchers::new(
-        "https://example.convex.cloud".into(),
+        ConvexClients::new("https://example.convex.cloud".into(), Arc::clone(&auth)),
         auth,
         dir.path().into(),
     );

@@ -199,7 +199,7 @@ async fn launch_agent_inner(
         muse: host.muse.clone(),
         allow_interaction,
         cancellation,
-        deployment_url: host.convex_deployment_url.clone(),
+        deployment_url: host.convex.deployment_url().to_owned(),
         auth_token_fetcher: auth_token_fetcher.clone(),
         execution_secret: saved
             .request
@@ -227,8 +227,7 @@ async fn launch_agent_inner(
     let command_sessions = Arc::clone(&host.command_sessions);
     let command_lifetime = Arc::clone(&host.lifetime);
     let command_machine_id = host.machine_identity.installation_id.clone();
-    let command_auth = Arc::clone(&host.native_auth);
-    let command_deployment = host.convex_deployment_url.clone();
+    let command_convex = Arc::clone(&host.convex);
     let kicad = Arc::clone(&host.kicad);
     let live = Arc::clone(&host.live_completions);
     let transcript = Arc::clone(&host.transcript);
@@ -312,14 +311,12 @@ async fn launch_agent_inner(
                         let user_id = user_id.clone();
                         let thread_id = thread_id.clone();
                         move |session_id, directory| {
-                            let auth = Arc::clone(&command_auth);
-                            let deployment = command_deployment.clone();
+                            let convex = Arc::clone(&command_convex);
                             let user_id = user_id.clone();
                             let thread_id = thread_id.clone();
                             async move {
                                 crate::command_sync::fetch(
-                                    &deployment,
-                                    &auth,
+                                    &convex,
                                     &user_id,
                                     &thread_id,
                                     &session_id,

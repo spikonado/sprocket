@@ -9400,6 +9400,7 @@ dependencies = [
  "anyhow",
  "base64 0.23.1",
  "convex",
+ "futures",
  "rustls",
  "serde",
  "serde_json",

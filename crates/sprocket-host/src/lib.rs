@@ -8,6 +8,7 @@ pub mod claude_code_cli;
 mod cli_install;
 pub mod command_sessions;
 pub mod command_sync;
+pub mod convex_clients;
 mod desktop_install;
 pub mod device_sign_in;
 mod gh_install;
@@ -48,6 +49,7 @@ use crate::browser::BrowserManager;
 use crate::chatgpt_credentials::ChatGptService;
 use crate::claude_code_cli::ClaudeCodeCli;
 use crate::command_sessions::ThreadCommandSessions;
+use crate::convex_clients::ConvexClients;
 use crate::github_connector::GitHubConnector;
 use crate::kicad_connector::KiCadConnector;
 use crate::kicad_scenes::KiCadScenes;
@@ -104,7 +106,7 @@ pub struct Host {
     pub machines: Arc<MachineManager>,
     pub live_completions: Arc<LiveCompletionHub>,
     pub command_sessions: Arc<ThreadCommandSessions>,
-    pub convex_deployment_url: String,
+    pub convex: Arc<ConvexClients>,
     pub machine_identity: Arc<MachineIdentity>,
     pub run_recovery: Arc<RunRecovery>,
     pub package_updates: Arc<PackageUpdateManager>,
@@ -154,6 +156,7 @@ impl Host {
         let muse_cli = Arc::new(MuseCli::new());
         let gh = Arc::new(gh_install::installer(data_dir)?);
         sprocket_workspace::github::use_pinned_gh(gh_install::executable(&gh));
+        let convex = ConvexClients::new(convex_deployment_url, Arc::clone(&native_auth));
         Ok(Self {
             lifetime: HostLifetime::new(),
             chatgpt_credentials,
@@ -161,26 +164,21 @@ impl Host {
             vercel: Arc::new(VercelConnector::new(data_dir)?),
             project_attachments: ProjectAttachmentStore::new(data_dir.to_path_buf()),
             transcript_watchers: TranscriptWatchers::new(
-                convex_deployment_url.clone(),
+                Arc::clone(&convex),
                 Arc::clone(&transcript),
-                Arc::clone(&native_auth),
             ),
             artifact_watchers: ArtifactWatchers::new(
-                convex_deployment_url.clone(),
+                Arc::clone(&convex),
                 Arc::clone(&native_auth),
                 data_dir.join("artifact-bindings"),
             ),
             transcript,
             workspace_search: Arc::new(WorkspaceSearchIndex::new()),
-            machines: MachineManager::new(
-                convex_deployment_url.clone(),
-                Arc::clone(&native_auth),
-                Arc::clone(&machine_identity),
-            ),
+            machines: MachineManager::new(Arc::clone(&convex), Arc::clone(&machine_identity)),
             native_auth,
             live_completions: Arc::new(LiveCompletionHub::new()),
             command_sessions: Arc::new(ThreadCommandSessions::new()),
-            convex_deployment_url,
+            convex,
             machine_identity,
             run_recovery: RunRecovery::load(data_dir)?,
             package_updates,
@@ -268,12 +266,7 @@ impl Host {
     }
 
     pub async fn convex_client_for(&self, user_id: &str) -> anyhow::Result<UserConvexClient> {
-        UserConvexClient::connect_with_fetcher(
-            &self.convex_deployment_url,
-            self.native_auth
-                .auth_token_fetcher_for_user(user_id.to_string()),
-        )
-        .await
+        self.convex.client_for(user_id).await
     }
 
     pub fn spawn_repository_key_moves(&self, projects: &[ProjectAttachmentRecord]) {

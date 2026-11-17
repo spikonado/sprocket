@@ -6,8 +6,8 @@ use tokio::sync::broadcast::{self, error::RecvError};
 use tokio::sync::{OnceCell, watch};
 use tokio::task::JoinHandle;
 
-use crate::native_auth::NativeAuthManager;
-use crate::transcript_client::{UserConvexClient, retry_after_failure};
+use crate::convex_clients::ConvexClients;
+use crate::transcript_client::retry_after_failure;
 use crate::watch_registry::{WatchRegistry, WatchSession};
 use crate::work_sync::{RunStart, SyncMode};
 
@@ -41,9 +41,8 @@ struct WatchKey {
 type WatchStarter = Arc<dyn Fn(WatchStart) -> JoinHandle<()> + Send + Sync>;
 
 struct WatchStart {
-    deployment_url: String,
+    convex: Arc<ConvexClients>,
     store: Arc<TranscriptStore>,
-    native_auth: Arc<NativeAuthManager>,
     user_id: String,
     thread_id: String,
     events: broadcast::Sender<TranscriptWatchEvent>,
@@ -86,9 +85,8 @@ type Registry = WatchRegistry<WatchKey, TranscriptWatchEvent, Arc<SessionState>>
 type Session = WatchSession<WatchKey, TranscriptWatchEvent, Arc<SessionState>>;
 
 pub struct TranscriptWatchers {
-    deployment_url: String,
+    convex: Arc<ConvexClients>,
     store: Arc<TranscriptStore>,
-    native_auth: Arc<NativeAuthManager>,
     registry: Arc<Registry>,
     start: WatchStarter,
 }
@@ -107,29 +105,18 @@ pub struct TranscriptRunSession {
 }
 
 impl TranscriptWatchers {
-    pub fn new(
-        deployment_url: String,
-        store: Arc<TranscriptStore>,
-        native_auth: Arc<NativeAuthManager>,
-    ) -> Arc<Self> {
-        Self::with_starter(
-            deployment_url,
-            store,
-            native_auth,
-            Arc::new(spawn_convex_watch),
-        )
+    pub fn new(convex: Arc<ConvexClients>, store: Arc<TranscriptStore>) -> Arc<Self> {
+        Self::with_starter(convex, store, Arc::new(spawn_convex_watch))
     }
 
     fn with_starter(
-        deployment_url: String,
+        convex: Arc<ConvexClients>,
         store: Arc<TranscriptStore>,
-        native_auth: Arc<NativeAuthManager>,
         start: WatchStarter,
     ) -> Arc<Self> {
         Arc::new(Self {
-            deployment_url,
+            convex,
             store,
-            native_auth,
             registry: WatchRegistry::new(),
             start,
         })
@@ -157,9 +144,8 @@ impl TranscriptWatchers {
             },
             |events, state| {
                 (self.start)(WatchStart {
-                    deployment_url: self.deployment_url.clone(),
+                    convex: Arc::clone(&self.convex),
                     store: Arc::clone(&self.store),
-                    native_auth: Arc::clone(&self.native_auth),
                     user_id: key.user_id.clone(),
                     thread_id: key.thread_id.clone(),
                     events,
@@ -193,21 +179,14 @@ impl TranscriptWatchers {
         }
         run.start
             .initialize(thread_id, || async {
-                self.client(user_id)
+                self.convex
+                    .client_for(user_id)
                     .await?
                     .transcript_total_parts(thread_id)
                     .await
             })
             .await;
         run
-    }
-
-    async fn client(&self, user_id: &str) -> anyhow::Result<UserConvexClient> {
-        UserConvexClient::connect_with_fetcher(
-            &self.deployment_url,
-            self.native_auth.auth_token_fetcher_for_user(user_id.into()),
-        )
-        .await
     }
 }
 
@@ -225,7 +204,7 @@ impl TranscriptRunSession {
         let from = self.start.total.get().copied().flatten().unwrap_or(0);
         let WatchKey { user_id, thread_id } = &self.key;
         let reconcile = async {
-            let client = self.watchers.client(user_id).await?;
+            let client = self.watchers.convex.client_for(user_id).await?;
             crate::work_sync::reconcile(&client, &self.watchers.store, user_id, thread_id, from)
                 .await
         };
@@ -308,13 +287,7 @@ async fn forward_changes(start: &WatchStart, mut changes: broadcast::Receiver<(S
 }
 
 async fn run_watch_loop(start: &WatchStart, mode: &SyncMode) -> anyhow::Result<()> {
-    let client = UserConvexClient::connect_with_fetcher(
-        &start.deployment_url,
-        start
-            .native_auth
-            .auth_token_fetcher_for_user(start.user_id.clone()),
-    )
-    .await?;
+    let client = start.convex.client_for(&start.user_id).await?;
     crate::work_sync::synchronize(
         &client,
         &start.store,
