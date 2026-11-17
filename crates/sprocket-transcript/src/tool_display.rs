@@ -373,7 +373,7 @@ pub fn is_session_command(name: &str) -> bool {
 /// session's file can appear after its first call.
 pub struct SessionCommands {
     transcript_dir: PathBuf,
-    found: HashMap<String, String>,
+    found: HashMap<String, Option<String>>,
 }
 
 impl SessionCommands {
@@ -386,16 +386,20 @@ impl SessionCommands {
 
     pub fn get(&mut self, session: &str) -> Option<&str> {
         if !self.found.contains_key(session) {
-            let id = uuid::Uuid::parse_str(session).ok()?;
-            let path = self
-                .transcript_dir
-                .join("command-logs/sessions")
-                .join(format!("{id}.json"));
-            let history: Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
-            let command = string(&history, "command")?.to_owned();
+            let command = self.read(session);
             self.found.insert(session.to_owned(), command);
         }
-        self.found.get(session).map(String::as_str)
+        self.found.get(session)?.as_deref()
+    }
+
+    fn read(&self, session: &str) -> Option<String> {
+        let id = uuid::Uuid::parse_str(session).ok()?;
+        let path = self
+            .transcript_dir
+            .join("command-logs/sessions")
+            .join(format!("{id}.json"));
+        let history: Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+        Some(string(&history, "command")?.to_owned())
     }
 }
 

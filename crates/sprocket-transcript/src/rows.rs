@@ -495,10 +495,12 @@ impl RunTally {
                     });
                 }
                 "reasoning" => {
-                    let work = self
-                        .open_block(item_id("work", part, offset), part.number, changes)
-                        .id
-                        .clone();
+                    let opened = self.block.is_none();
+                    let block = self.open_block(item_id("work", part, offset), part.number);
+                    let work = block.id.clone();
+                    if opened {
+                        changes.push(block.clone());
+                    }
                     changes.push(Row {
                         id: item_id(kind, part, offset),
                         run_id: self.id.clone(),
@@ -576,7 +578,7 @@ impl RunTally {
     }
 
     fn call(&mut self, call: Call<'_>, commands: &mut SessionCommands, changes: &mut Vec<Row>) {
-        let block = self.open_block(call.work, call.part, changes);
+        let block = self.open_block(call.work, call.part);
         if let RowBody::Work { tool_counts, .. } = &mut block.body {
             *tool_counts.entry(call.name.to_owned()).or_insert(0) += 1;
         }
@@ -606,19 +608,15 @@ impl RunTally {
         changes.push(row);
     }
 
-    fn open_block(&mut self, id: String, part: u32, changes: &mut Vec<Row>) -> &mut Row {
-        self.block.get_or_insert_with(|| {
-            let row = Row {
-                id,
-                run_id: self.id.clone(),
-                part,
-                body: RowBody::Work {
-                    tool_counts: BTreeMap::new(),
-                    running: true,
-                },
-            };
-            changes.push(row.clone());
-            row
+    fn open_block(&mut self, id: String, part: u32) -> &mut Row {
+        self.block.get_or_insert_with(|| Row {
+            id,
+            run_id: self.id.clone(),
+            part,
+            body: RowBody::Work {
+                tool_counts: BTreeMap::new(),
+                running: true,
+            },
         })
     }
 

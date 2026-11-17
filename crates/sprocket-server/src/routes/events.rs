@@ -41,7 +41,7 @@ enum ClientMessage {
 #[serde(tag = "kind", content = "params", rename_all = "camelCase")]
 pub(crate) enum Topic {
     Transcript(transcript_rows::TranscriptRowsScope),
-    TranscriptWork(transcript_rows::TranscriptRowScope),
+    TranscriptWork(transcript_rows::TranscriptWorkScope),
     TranscriptItem(transcript_rows::TranscriptRowScope),
     ArtifactSync(artifacts::ArtifactWatchRequest),
     Commands(agent::CommandsRequest),
@@ -56,7 +56,8 @@ impl Topic {
     fn user_id(&self) -> Option<&str> {
         match self {
             Self::Transcript(scope) => Some(scope.user_id()),
-            Self::TranscriptWork(scope) | Self::TranscriptItem(scope) => Some(scope.user_id()),
+            Self::TranscriptWork(scope) => Some(scope.user_id()),
+            Self::TranscriptItem(scope) => Some(scope.user_id()),
             Self::ArtifactSync(request) => Some(request.user_id()),
             Self::Commands(request) => Some(request.user_id()),
             Self::AuthChanges

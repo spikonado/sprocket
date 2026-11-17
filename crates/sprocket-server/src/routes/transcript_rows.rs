@@ -40,6 +40,16 @@ pub(crate) struct TranscriptRowScope {
     pub(crate) thread_id: String,
     #[serde(deserialize_with = "deserialize_row_id")]
     pub(crate) row_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct TranscriptWorkScope {
+    pub(crate) user_id: String,
+    #[serde(deserialize_with = "deserialize_path_safe_id")]
+    pub(crate) thread_id: String,
+    #[serde(deserialize_with = "deserialize_row_id")]
+    pub(crate) row_id: String,
     pub(crate) before: Option<u32>,
 }
 
@@ -50,6 +60,12 @@ impl UserScoped for TranscriptRowsScope {
 }
 
 impl UserScoped for TranscriptRowScope {
+    fn user_id(&self) -> &str {
+        &self.user_id
+    }
+}
+
+impl UserScoped for TranscriptWorkScope {
     fn user_id(&self) -> &str {
         &self.user_id
     }
@@ -417,7 +433,7 @@ pub(crate) fn watch_rows(
 
 pub(crate) fn watch_work(
     state: &AppState,
-    scope: Authorized<TranscriptRowScope>,
+    scope: Authorized<TranscriptWorkScope>,
 ) -> BoxStream<'static, TranscriptRowsEvent> {
     let scope = scope.into_inner();
     let request = Request::Work {
