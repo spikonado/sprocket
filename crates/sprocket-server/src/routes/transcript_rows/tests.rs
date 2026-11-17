@@ -691,6 +691,34 @@ async fn interleaved_thread_blocks_each_get_their_own_canonical_prefix() {
     )
     .await;
     assert_eq!(projected, after);
+    let mut extended = reloaded;
+    let added: Vec<_> = (450..460).map(part).collect();
+    store.append_parts("user", "thread", &added).await.unwrap();
+    let full = load_store_window(
+        store,
+        "user",
+        "thread",
+        &ProjectionScope::Thread,
+        None,
+        Some(saved.window.start),
+        |_, _| async { panic!("new parts are cached") },
+    )
+    .await
+    .unwrap();
+    assert!(
+        extend_store_window(
+            store,
+            "user",
+            "thread",
+            &ProjectionScope::Thread,
+            &mut extended,
+            |_, _| async { panic!("new parts are cached") },
+        )
+        .await
+        .unwrap()
+    );
+    assert_eq!(extended.window, full.window);
+    assert_eq!(extended.parts, full.parts);
 }
 
 #[tokio::test]

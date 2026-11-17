@@ -120,17 +120,90 @@ async fn load_window(
         scope,
         before,
         fixed_start,
-        |start, end| async move {
+        |start, end| {
             on_download();
-            state
-                .host
-                .convex_client_for(user)
-                .await?
-                .transcript_parts_page(thread, start, end)
-                .await
+            fetch_parts(state, user, thread, start, end)
         },
     )
     .await
+}
+
+async fn fetch_parts(
+    state: &AppState,
+    user: &str,
+    thread: &str,
+    start: u32,
+    end: u32,
+) -> anyhow::Result<Vec<TranscriptPart>> {
+    state
+        .host
+        .convex_client_for(user)
+        .await?
+        .transcript_parts_page(thread, start, end)
+        .await
+}
+
+/// Saved parts never change, so a reload of an anchored window reads only the parts saved after it.
+async fn reload_window(
+    state: &AppState,
+    user: &str,
+    thread: &str,
+    scope: &ProjectionScope,
+    window_start: Option<u32>,
+    saved: &mut SavedWindow,
+) -> anyhow::Result<()> {
+    let fetch = |start, end| fetch_parts(state, user, thread, start, end);
+    if window_start != Some(saved.window.start)
+        || !extend_store_window(&state.host.transcript, user, thread, scope, saved, fetch).await?
+    {
+        *saved = load_window(state, user, thread, scope, None, window_start, &|| {}).await?;
+    }
+    Ok(())
+}
+
+/// Returns false, leaving `saved` unchanged, when only a full load gives the right window.
+async fn extend_store_window<F, Fut>(
+    store: &TranscriptStore,
+    user: &str,
+    thread: &str,
+    scope: &ProjectionScope,
+    saved: &mut SavedWindow,
+    fetch: F,
+) -> anyhow::Result<bool>
+where
+    F: FnMut(u32, u32) -> Fut,
+    Fut: Future<Output = anyhow::Result<Vec<TranscriptPart>>>,
+{
+    let _lease = store.open_thread(user, thread).await?;
+    let numbers = store.part_numbers(user, thread).await?;
+    let start = saved.window.end;
+    let end = numbers.last().map_or(0, |number| number.saturating_add(1));
+    if scope.run_id().is_some()
+        || saved.window.is_empty()
+        || end < start
+        || uncached(&numbers, start..end) > PAGE_PARTS as usize
+    {
+        return Ok(false);
+    }
+    store.ensure_parts(user, thread, start, end, fetch).await?;
+    let added = store.read_parts_range(user, thread, start, end).await?;
+    let saved_len = saved.parts.len();
+    let contiguous = added.len() == (end - start) as usize;
+    saved.parts.extend(added);
+    // The earlier load already walked back past each saved hidden prompt.
+    if !contiguous || !pending_runs(&saved.parts, scope, true).is_empty() {
+        saved.parts.truncate(saved_len);
+        return Ok(false);
+    }
+    saved.window.end = end;
+    Ok(true)
+}
+
+fn uncached(numbers: &[u32], range: Range<u32>) -> usize {
+    let cached = numbers
+        .partition_point(|number| *number < range.end)
+        .saturating_sub(numbers.partition_point(|number| *number < range.start));
+    range.len() - cached
 }
 
 /// An empty cache has no highwater to page back from, so its newest page starts at Convex's total.
@@ -208,10 +281,8 @@ where
     }
     let end = before.unwrap_or(highwater);
     // A tail page that lands past a wide gap moves the window instead of downloading the gap first.
-    let fixed_start = fixed_start.filter(|start| {
-        let cached = numbers.len() - numbers.partition_point(|number| number < start);
-        (end.saturating_sub(*start) as usize).saturating_sub(cached) <= PAGE_PARTS as usize
-    });
+    let fixed_start =
+        fixed_start.filter(|start| uncached(&numbers, *start..end) <= PAGE_PARTS as usize);
     let mut start = fixed_start
         .unwrap_or(end.saturating_sub(PAGE_PARTS))
         .min(end);
@@ -510,6 +581,50 @@ fn starts_with_text(part: &TranscriptPart) -> bool {
     false
 }
 
+fn finished_tool_runs(parts: &[TranscriptPart]) -> HashSet<String> {
+    parts
+        .iter()
+        .filter(|part| {
+            part.tool
+                .as_ref()
+                .is_some_and(|tool| tool.status != "started")
+        })
+        .map(|part| part.run_id.clone())
+        .collect()
+}
+
+fn is_run_boundary(
+    part: &TranscriptPart,
+    scope: &ProjectionScope,
+    result_runs: &HashSet<String>,
+) -> bool {
+    is_run_origin(part)
+        || matches!(scope, ProjectionScope::Thread)
+            && !result_runs.contains(&part.run_id)
+            && starts_with_text(part)
+}
+
+/// Runs whose first part in `parts` needs earlier history.
+fn pending_runs(
+    parts: &[TranscriptPart],
+    scope: &ProjectionScope,
+    mut after_turn: bool,
+) -> HashSet<String> {
+    let result_runs = finished_tool_runs(parts);
+    let mut seen = HashSet::new();
+    let mut pending = HashSet::new();
+    for part in parts {
+        if seen.insert(&part.run_id)
+            && !is_run_boundary(part, scope, &result_runs)
+            && !(after_turn && is_hidden_prompt(part))
+        {
+            pending.insert(part.run_id.clone());
+        }
+        after_turn |= part.tool.is_none();
+    }
+    pending
+}
+
 async fn complete_prefix<F, Fut>(
     store: &TranscriptStore,
     user: &str,
@@ -522,33 +637,11 @@ where
     F: FnMut(u32, u32) -> Fut,
     Fut: Future<Output = anyhow::Result<Vec<TranscriptPart>>>,
 {
-    let result_runs: HashSet<_> = parts
-        .iter()
-        .filter(|part| {
-            part.tool
-                .as_ref()
-                .is_some_and(|tool| tool.status != "started")
-        })
-        .map(|part| part.run_id.clone())
-        .collect();
-    let boundary = |part: &TranscriptPart| {
-        is_run_origin(part)
-            || matches!(scope, ProjectionScope::Thread)
-                && !result_runs.contains(&part.run_id)
-                && starts_with_text(part)
-    };
-    let mut seen = HashSet::new();
-    let mut pending = HashSet::new();
-    let mut after_turn = false;
-    for part in &parts {
-        if seen.insert(&part.run_id) && !boundary(part) && !(after_turn && is_hidden_prompt(part)) {
-            pending.insert(part.run_id.clone());
-        }
-        after_turn |= part.tool.is_none();
-    }
+    let mut pending = pending_runs(&parts, scope, false);
     if pending.is_empty() {
         return Ok(parts);
     }
+    let result_runs = finished_tool_runs(&parts);
     // Runs in a thread never overlap; only late tool results land after the next run starts.
     // So a hidden prompt right after another run's prompt or completion begins a continuation run.
     let mut hidden_starts = HashSet::new();
@@ -574,7 +667,7 @@ where
             if !pending.contains(&part.run_id) {
                 continue;
             }
-            if boundary(&part) {
+            if is_run_boundary(&part, scope, &result_runs) {
                 pending.remove(&part.run_id);
             }
             note_turn(&mut hidden_starts, &part);
@@ -873,14 +966,13 @@ async fn next_event(mut watch: Watch) -> Option<(TranscriptRowsEvent, Watch)> {
             }
             _ = tokio::time::sleep_until(watch.next_send), if !matches!(refresh, Refresh::Idle) => {
                 if matches!(refresh, Refresh::Reload) {
-                    match load_window(&watch.state, &watch.user, &watch.thread, &watch.scope, None,
-                        watch.window_start, &|| {}).await {
-                        Ok(mut saved) => {
-                            saved.stale = watch.session.stale();
-                            if saved.window.end > 0 {
-                                watch.window_start = Some(saved.window.start);
+                    match reload_window(&watch.state, &watch.user, &watch.thread, &watch.scope,
+                        watch.window_start, &mut watch.saved).await {
+                        Ok(()) => {
+                            watch.saved.stale = watch.session.stale();
+                            if watch.saved.window.end > 0 {
+                                watch.window_start = Some(watch.saved.window.start);
                             }
-                            watch.saved = saved;
                         },
                         Err(error) => {
                             tracing::warn!(thread = %watch.thread, "could not project transcript rows: {error:#}");
