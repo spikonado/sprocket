@@ -6,7 +6,8 @@ import type {
 	TranscriptEvent,
 	TranscriptRow,
 	TranscriptSnapshot,
-	TranscriptScopeRequest
+	TranscriptScopeRequest,
+	TranscriptWorkRequest
 } from '$lib/types/sprocket';
 
 export type TranscriptStoreApi = Pick<
@@ -31,6 +32,8 @@ type Interest = {
 	users: number;
 	rows: Map<string, TranscriptRow>;
 	abort: AbortController | null;
+	nextBefore: number | null;
+	before?: number;
 };
 
 type Target = 'thread' | Interest;
@@ -88,6 +91,7 @@ export class TranscriptStore implements Store<number> {
 		this.#workRows.get(rowId);
 
 	getWorkIds = (rowId: string) => this.#workIds.get(rowId) ?? NO_ROWS;
+	hasEarlierWork = (rowId: string) => this.#interests.get(`work:${rowId}`)?.nextBefore != null;
 	isExpanded = (rowId: string, defaultValue = false) => this.#expanded.get(rowId) ?? defaultValue;
 
 	setExpanded(rowId: string, expanded: boolean) {
@@ -142,6 +146,18 @@ export class TranscriptStore implements Store<number> {
 
 	openWork = (rowId: string) => this.#open('work', rowId);
 	openItem = (rowId: string) => this.#open('item', rowId);
+
+	loadEarlierWork(rowId: string) {
+		const connection = this.#connection;
+		const interest = this.#interests.get(`work:${rowId}`);
+
+		if (!connection || !interest?.abort || interest.nextBefore === null) return;
+		interest.before = interest.nextBefore;
+		interest.abort.abort();
+		const abort = new AbortController();
+		interest.abort = abort;
+		void this.#watchTarget(connection, interest, abort);
+	}
 
 	async loadOlder() {
 		const connection = this.#connection;
@@ -224,13 +240,17 @@ export class TranscriptStore implements Store<number> {
 					if (before !== undefined) request.before = before;
 
 					await connection.api.watchTranscript(request, { signal, onEvent });
-				} else {
-					const watch =
-						target.kind === 'work'
-							? connection.api.watchTranscriptWork
-							: connection.api.watchTranscriptItem;
+				} else if (target.kind === 'work') {
+					const request: TranscriptWorkRequest = { ...connection.scope, rowId: target.rowId };
 
-					await watch({ ...connection.scope, rowId: target.rowId }, { signal, onEvent });
+					if (target.before !== undefined) request.before = target.before;
+
+					await connection.api.watchTranscriptWork(request, { signal, onEvent });
+				} else {
+					await connection.api.watchTranscriptItem(
+						{ ...connection.scope, rowId: target.rowId },
+						{ signal, onEvent }
+					);
 				}
 			} catch {}
 
@@ -269,6 +289,7 @@ export class TranscriptStore implements Store<number> {
 			this.#emit();
 		} else {
 			const previousIds = [...target.rows.keys()];
+			target.nextBefore = snapshot.nextBefore;
 
 			if (target.kind === 'work') {
 				for (const id of previousIds) this.#workRows.delete(id);
@@ -456,7 +477,7 @@ export class TranscriptStore implements Store<number> {
 		let interest = this.#interests.get(key);
 
 		if (!interest) {
-			interest = { kind, rowId, users: 0, rows: new Map(), abort: null };
+			interest = { kind, rowId, users: 0, rows: new Map(), abort: null, nextBefore: null };
 			this.#interests.set(key, interest);
 		}
 
@@ -543,6 +564,13 @@ export function useTranscriptWork(store: TranscriptStore, rowId: string) {
 	return useSyncExternalStore(
 		useCallback((listener) => store.subscribeWork(rowId, listener), [store, rowId]),
 		useCallback(() => store.getWorkIds(rowId), [store, rowId])
+	);
+}
+
+export function useTranscriptWorkHasEarlier(store: TranscriptStore, rowId: string) {
+	return useSyncExternalStore(
+		useCallback((listener) => store.subscribeWork(rowId, listener), [store, rowId]),
+		useCallback(() => store.hasEarlierWork(rowId), [store, rowId])
 	);
 }
 

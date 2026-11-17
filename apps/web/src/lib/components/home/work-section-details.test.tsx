@@ -101,6 +101,24 @@ it('replaces and reorders work whenever another snapshot arrives', () => {
 	expect(view.getAllByText(/^echo /)).toEqual([view.getByText('echo 3'), second]);
 });
 
+it('rewatches work from the next cursor when earlier work is requested', () => {
+	const view = renderWork();
+	act(() => view.onEvent({ ...snapshot([tool(6)]), nextBefore: 5 }));
+	fireEvent.click(view.getByRole('button', { name: 'Show earlier' }));
+	expect(view.signal.aborted).toBe(true);
+	expect(view.api.watchTranscriptWork).toHaveBeenLastCalledWith(
+		{ userId: 'user', threadId: view.threadId, rowId: view.rowId, before: 5 },
+		{ signal: expect.any(AbortSignal), onEvent: expect.any(Function) }
+	);
+	const { onEvent } = view.api.watchTranscriptWork.mock.calls[1][1];
+	act(() => onEvent(snapshot([tool(5), tool(6)])));
+	expect(view.getAllByText(/^echo /).map((element) => element.textContent)).toEqual([
+		'echo 5',
+		'echo 6'
+	]);
+	expect(view.queryByRole('button', { name: 'Show earlier' })).toBeNull();
+});
+
 it('keeps reasoning expanded when a work batch adds another item', () => {
 	const view = renderWork();
 

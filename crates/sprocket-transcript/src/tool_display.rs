@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::PathBuf;
 
 use serde::Serialize;
 use serde_json::Value;
@@ -368,12 +369,38 @@ pub fn is_session_command(name: &str) -> bool {
     )
 }
 
-pub async fn load_session_command(transcript_dir: &Path, id: uuid::Uuid) -> Option<String> {
-    let path = transcript_dir
-        .join("command-logs/sessions")
-        .join(format!("{id}.json"));
-    let history: Value = serde_json::from_slice(&tokio::fs::read(path).await.ok()?).ok()?;
-    string(&history, "command").map(str::to_owned)
+/// Reads session commands from `command-logs/sessions`. Misses are read again, since a
+/// session's file can appear after its first call.
+pub struct SessionCommands {
+    transcript_dir: PathBuf,
+    found: HashMap<String, Option<String>>,
+}
+
+impl SessionCommands {
+    pub fn new(transcript_dir: PathBuf) -> Self {
+        Self {
+            transcript_dir,
+            found: HashMap::new(),
+        }
+    }
+
+    pub fn get(&mut self, session: &str) -> Option<&str> {
+        if !self.found.contains_key(session) {
+            let command = self.read(session);
+            self.found.insert(session.to_owned(), command);
+        }
+        self.found.get(session)?.as_deref()
+    }
+
+    fn read(&self, session: &str) -> Option<String> {
+        let id = uuid::Uuid::parse_str(session).ok()?;
+        let path = self
+            .transcript_dir
+            .join("command-logs/sessions")
+            .join(format!("{id}.json"));
+        let history: Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+        Some(string(&history, "command")?.to_owned())
+    }
 }
 
 fn string<'a>(value: &'a Value, key: &str) -> Option<&'a str> {

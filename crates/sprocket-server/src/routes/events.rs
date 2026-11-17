@@ -41,7 +41,7 @@ enum ClientMessage {
 #[serde(tag = "kind", content = "params", rename_all = "camelCase")]
 pub(crate) enum Topic {
     Transcript(transcript_rows::TranscriptRowsScope),
-    TranscriptWork(transcript_rows::TranscriptRowScope),
+    TranscriptWork(transcript_rows::TranscriptWorkScope),
     TranscriptItem(transcript_rows::TranscriptRowScope),
     ArtifactSync(artifacts::ArtifactWatchRequest),
     Commands(agent::CommandsRequest),
@@ -56,7 +56,8 @@ impl Topic {
     fn user_id(&self) -> Option<&str> {
         match self {
             Self::Transcript(scope) => Some(scope.user_id()),
-            Self::TranscriptWork(scope) | Self::TranscriptItem(scope) => Some(scope.user_id()),
+            Self::TranscriptWork(scope) => Some(scope.user_id()),
+            Self::TranscriptItem(scope) => Some(scope.user_id()),
             Self::ArtifactSync(request) => Some(request.user_id()),
             Self::Commands(request) => Some(request.user_id()),
             Self::AuthChanges
@@ -309,15 +310,9 @@ pub(crate) async fn open(
 ) -> Result<BoxStream<'static, serde_json::Value>, ApiError> {
     let Authorized(topic) = authorize(state, headers, topic).await?;
     Ok(match topic {
-        Topic::Transcript(scope) => {
-            json(transcript_rows::watch_rows(state, Authorized(scope)).await?)
-        }
-        Topic::TranscriptWork(scope) => {
-            json(transcript_rows::watch_work(state, Authorized(scope)).await?)
-        }
-        Topic::TranscriptItem(scope) => {
-            json(transcript_rows::watch_item(state, Authorized(scope)).await?)
-        }
+        Topic::Transcript(scope) => json(transcript_rows::watch_rows(state, Authorized(scope))),
+        Topic::TranscriptWork(scope) => json(transcript_rows::watch_work(state, Authorized(scope))),
+        Topic::TranscriptItem(scope) => json(transcript_rows::watch_item(state, Authorized(scope))),
         Topic::ArtifactSync(request) => artifacts::watch_events(state, Authorized(request))
             .await?
             .map(|_| serde_json::Value::Null)

@@ -2,10 +2,11 @@ import { memo, useEffect } from 'react';
 import {
 	useTranscriptRow,
 	useTranscriptWork,
+	useTranscriptWorkHasEarlier,
 	type TranscriptStore
 } from '$lib/home/transcript-store';
 import ReasoningDisclosure from '$lib/components/home/reasoning-disclosure';
-import WorkTools from '$lib/components/home/work-tools';
+import WorkTools, { workRowClass } from '$lib/components/home/work-tools';
 
 type Props = {
 	store: TranscriptStore;
@@ -14,10 +15,20 @@ type Props = {
 
 export default function WorkSectionDetails({ store, rowId }: Props) {
 	const itemIds = useTranscriptWork(store, rowId);
+	const hasEarlier = useTranscriptWorkHasEarlier(store, rowId);
 	useEffect(() => store.openWork(rowId), [store, rowId]);
 
 	return (
 		<div className="space-y-2">
+			{hasEarlier && (
+				<button
+					type="button"
+					className={`${workRowClass} text-muted-foreground text-[13px] leading-6`}
+					onClick={() => store.loadEarlierWork(rowId)}
+				>
+					Show earlier
+				</button>
+			)}
 			{itemIds.map((itemId) => (
 				<WorkItem key={itemId} store={store} rowId={itemId} />
 			))}

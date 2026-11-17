@@ -1,22 +1,13 @@
 use std::collections::HashSet;
-use std::future::Future;
-use std::ops::Range;
-use std::time::Duration;
+use std::sync::Arc;
 
 use futures::future::BoxFuture;
 use futures::stream::{BoxStream, unfold};
 use futures::{FutureExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use sprocket_host::transcript_watch::TranscriptWatchSession;
-use sprocket_transcript::rows::{
-    ProjectionScope, ToolResults, TranscriptRow, completion_source_key, project_rows,
-    saved_work_blocks,
-};
-use sprocket_transcript::{
-    LiveCompletionOverlay, LiveCompletionWatchEvent, TranscriptPart, TranscriptStore,
-};
+use sprocket_transcript::rows::{Row, RowBody, RowScope, TranscriptRow, row_source};
 use tokio::sync::broadcast;
-use tokio::time::Instant;
+use tokio::sync::broadcast::error::RecvError;
 
 use crate::AppState;
 use crate::routes::api_error::ApiError;
@@ -24,8 +15,13 @@ use crate::routes::events::Authorized;
 use crate::routes::session::UserScoped;
 use crate::routes::transcript::{deserialize_path_safe_id, deserialize_row_id};
 
-const PAGE_PARTS: u32 = 200;
-const UPDATE_INTERVAL: Duration = Duration::from_millis(100);
+mod thread_rows;
+
+pub(crate) use thread_rows::ThreadRowsRegistry;
+use thread_rows::{Change, Shared, ThreadRowsLease, Update};
+
+/// Work blocks list their newest items first, then older pages on request.
+const WORK_PAGE_ITEMS: usize = 200;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -46,6 +42,17 @@ pub(crate) struct TranscriptRowScope {
     pub(crate) row_id: String,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct TranscriptWorkScope {
+    pub(crate) user_id: String,
+    #[serde(deserialize_with = "deserialize_path_safe_id")]
+    pub(crate) thread_id: String,
+    #[serde(deserialize_with = "deserialize_row_id")]
+    pub(crate) row_id: String,
+    pub(crate) before: Option<u32>,
+}
+
 impl UserScoped for TranscriptRowsScope {
     fn user_id(&self) -> &str {
         &self.user_id
@@ -53,6 +60,12 @@ impl UserScoped for TranscriptRowsScope {
 }
 
 impl UserScoped for TranscriptRowScope {
+    fn user_id(&self) -> &str {
+        &self.user_id
+    }
+}
+
+impl UserScoped for TranscriptWorkScope {
     fn user_id(&self) -> &str {
         &self.user_id
     }
@@ -97,753 +110,183 @@ pub(crate) enum TranscriptRowUpdate {
     },
 }
 
-struct SavedWindow {
-    parts: Vec<TranscriptPart>,
-    window: Range<u32>,
-    next_before: Option<u32>,
-    stale: bool,
+/// What a watch shows. `before` keeps the start of rows a browser already loaded.
+#[derive(Clone, Debug)]
+enum Request {
+    Thread { before: Option<u32> },
+    Work { id: String, before: Option<u32> },
+    Item { id: String },
 }
 
-async fn load_window(
-    state: &AppState,
-    user: &str,
-    thread: &str,
-    scope: &ProjectionScope,
-    before: Option<u32>,
-    fixed_start: Option<u32>,
-    on_download: &(dyn Fn() + Sync),
-) -> anyhow::Result<SavedWindow> {
-    load_store_window(
-        &state.host.transcript,
-        user,
-        thread,
-        scope,
-        before,
-        fixed_start,
-        |start, end| {
-            on_download();
-            fetch_parts(state, user, thread, start, end)
-        },
-    )
-    .await
-}
-
-async fn fetch_parts(
-    state: &AppState,
-    user: &str,
-    thread: &str,
-    start: u32,
-    end: u32,
-) -> anyhow::Result<Vec<TranscriptPart>> {
-    state
-        .host
-        .convex_client_for(user)
-        .await?
-        .transcript_parts_page(thread, start, end)
-        .await
-}
-
-/// Saved parts never change, so a reload of an anchored window reads only the parts saved after it.
-async fn reload_window(
-    state: &AppState,
-    user: &str,
-    thread: &str,
-    scope: &ProjectionScope,
-    window_start: Option<u32>,
-    saved: &mut SavedWindow,
-) -> anyhow::Result<()> {
-    let fetch = |start, end| fetch_parts(state, user, thread, start, end);
-    if window_start != Some(saved.window.start)
-        || !extend_store_window(&state.host.transcript, user, thread, scope, saved, fetch).await?
-    {
-        *saved = load_window(state, user, thread, scope, None, window_start, &|| {}).await?;
-    }
-    Ok(())
-}
-
-/// Returns false, leaving `saved` unchanged, when only a full load gives the right window.
-async fn extend_store_window<F, Fut>(
-    store: &TranscriptStore,
-    user: &str,
-    thread: &str,
-    scope: &ProjectionScope,
-    saved: &mut SavedWindow,
-    fetch: F,
-) -> anyhow::Result<bool>
-where
-    F: FnMut(u32, u32) -> Fut,
-    Fut: Future<Output = anyhow::Result<Vec<TranscriptPart>>>,
-{
-    let _lease = store.open_thread(user, thread).await?;
-    let numbers = store.part_numbers(user, thread).await?;
-    let start = saved.window.end;
-    let end = numbers.last().map_or(0, |number| number.saturating_add(1));
-    if scope.run_id().is_some()
-        || saved.window.is_empty()
-        || end < start
-        || uncached(&numbers, start..end) > PAGE_PARTS as usize
-    {
-        return Ok(false);
-    }
-    store.ensure_parts(user, thread, start, end, fetch).await?;
-    let added = store.read_parts_range(user, thread, start, end).await?;
-    let saved_len = saved.parts.len();
-    let contiguous = added.len() == (end - start) as usize;
-    saved.parts.extend(added);
-    // The earlier load already walked back past each saved hidden prompt.
-    if !contiguous || !pending_runs(&saved.parts, scope, true).is_empty() {
-        saved.parts.truncate(saved_len);
-        return Ok(false);
-    }
-    saved.window.end = end;
-    Ok(true)
-}
-
-fn uncached(numbers: &[u32], range: Range<u32>) -> usize {
-    let cached = numbers
-        .partition_point(|number| *number < range.end)
-        .saturating_sub(numbers.partition_point(|number| *number < range.start));
-    range.len() - cached
-}
-
-/// An empty cache has no highwater to page back from, so its newest page starts at Convex's total.
-async fn download_newest_page_if_uncached(
-    state: &AppState,
-    user: &str,
-    thread: &str,
-    session: &mut TranscriptWatchSession,
-    on_download: &(dyn Fn() + Sync),
-) -> anyhow::Result<()> {
-    let store = &state.host.transcript;
-    if !store.part_numbers(user, thread).await?.is_empty() {
-        return Ok(());
-    }
-    let lookup = async {
-        let client = state.host.convex_client_for(user).await?;
-        let total = client.transcript_total_parts(thread).await?;
-        anyhow::Ok((client, total))
-    };
-    tokio::pin!(lookup);
-    // A local run or the background watcher can save parts first, which makes the lookup moot.
-    let (client, total) = loop {
-        tokio::select! {
-            result = &mut lookup => break result?,
-            event = session.receiver().recv() => {
-                if matches!(event, Err(broadcast::error::RecvError::Closed))
-                    || !store.part_numbers(user, thread).await?.is_empty()
-                {
-                    return Ok(());
-                }
-            }
-        }
-    };
-    if total == 0 || !store.part_numbers(user, thread).await?.is_empty() {
-        return Ok(());
-    }
-    on_download();
-    store
-        .ensure_parts(
-            user,
-            thread,
-            total.saturating_sub(PAGE_PARTS),
-            total,
-            |start, end| client.transcript_parts_page(thread, start, end),
-        )
-        .await
-}
-
-async fn load_store_window<F, Fut>(
-    store: &TranscriptStore,
-    user: &str,
-    thread: &str,
-    scope: &ProjectionScope,
-    before: Option<u32>,
-    fixed_start: Option<u32>,
-    mut fetch: F,
-) -> anyhow::Result<SavedWindow>
-where
-    F: FnMut(u32, u32) -> Fut,
-    Fut: Future<Output = anyhow::Result<Vec<TranscriptPart>>>,
-{
-    let _lease = store.open_thread(user, thread).await?;
-    let numbers = store.part_numbers(user, thread).await?;
-    let highwater = numbers.last().map_or(0, |number| number.saturating_add(1));
-    if scope.run_id().is_some() {
-        let parts = load_detail(store, user, thread, scope, highwater, &mut fetch).await?;
-        let window = parts.first().map_or(0, |part| part.number)
-            ..parts.last().map_or(0, |part| part.number.saturating_add(1));
-        return Ok(SavedWindow {
-            parts,
-            window,
-            next_before: None,
-            stale: false,
-        });
-    }
-    let end = before.unwrap_or(highwater);
-    // A tail page that lands past a wide gap moves the window instead of downloading the gap first.
-    let fixed_start =
-        fixed_start.filter(|start| uncached(&numbers, *start..end) <= PAGE_PARTS as usize);
-    let mut start = fixed_start
-        .unwrap_or(end.saturating_sub(PAGE_PARTS))
-        .min(end);
-    store
-        .ensure_parts(user, thread, start, end, &mut fetch)
-        .await?;
-    let mut parts = store.read_parts_range(user, thread, start, end).await?;
-    if fixed_start.is_none()
-        && let Some(last) = parts.iter().rev().find(|part| {
-            part.prompt
-                .as_ref()
-                .is_some_and(|prompt| prompt.hidden.is_none())
-                || part
-                    .tool
-                    .as_ref()
-                    .is_some_and(|tool| tool.status != "started")
-                || part.content_items().iter().any(|item| {
-                    item["type"] == "tool-call"
-                        || matches!(item["type"].as_str(), Some("text" | "reasoning"))
-                            && item["text"]
-                                .as_str()
-                                .is_some_and(|text| !text.trim().is_empty())
-                })
-        })
-        && let Some(boundary) = parts
-            .iter()
-            .position(|part| part.run_id == last.run_id && is_run_origin(part))
-    {
-        start = parts[boundary].number;
-        parts.drain(..boundary);
-    }
-    let parts = complete_prefix(store, user, thread, parts, scope, &mut fetch).await?;
-    Ok(SavedWindow {
-        parts,
-        window: start..end,
-        next_before: (start > 0).then_some(start),
-        stale: false,
-    })
-}
-
-async fn load_detail<F, Fut>(
-    store: &TranscriptStore,
-    user: &str,
-    thread: &str,
-    scope: &ProjectionScope,
-    highwater: u32,
-    fetch: &mut F,
-) -> anyhow::Result<Vec<TranscriptPart>>
-where
-    F: FnMut(u32, u32) -> Fut,
-    Fut: Future<Output = anyhow::Result<Vec<TranscriptPart>>>,
-{
-    let source = scope
-        .source_key()
-        .ok_or_else(|| anyhow::anyhow!("invalid transcript row ID"))?;
-    let run = scope.run_id().unwrap();
-    let target = scope.row_id().unwrap();
-    // Row IDs come from cached parts or the live completion, so an uncached source is unsaved.
-    let Some(number) = store.source_number(user, thread, source).await? else {
-        return Ok(Vec::new());
-    };
-    let mut parts = store.read_parts(user, thread, &[number]).await?;
-    if target.starts_with("work:") {
-        let mut start = number.saturating_add(1);
-        while start < highwater
-            && !saved_work_blocks(&parts)
-                .iter()
-                .any(|block| block.id == target && block.closed)
-        {
-            let end = start.saturating_add(PAGE_PARTS).min(highwater);
-            let cached = store.read_parts_range(user, thread, start, end).await?;
-            let mut contiguous_end = start;
-            for part in cached {
-                if part.number != contiguous_end {
-                    break;
-                }
-                contiguous_end += 1;
-                if part.run_id == run {
-                    parts.push(part);
-                }
-            }
-            if saved_work_blocks(&parts)
-                .iter()
-                .any(|block| block.id == target && block.closed)
-            {
-                break;
-            }
-            store
-                .ensure_parts(user, thread, contiguous_end, end, &mut *fetch)
-                .await?;
-            parts.extend(
-                store
-                    .read_parts_range(user, thread, contiguous_end, end)
-                    .await?
-                    .into_iter()
-                    .filter(|part| part.run_id == run),
-            );
-            start = end;
-        }
-        let blocks = saved_work_blocks(&parts);
-        let Some(block) = blocks.iter().find(|block| block.id == target) else {
-            return Ok(parts);
-        };
-        let mut wanted: HashSet<_> = block.items.iter().map(|position| position.part).collect();
-        if block.closed
-            && let Some(last) = block.items.last()
-            && let Some(closing) = parts.iter().find(|part| {
-                part.number >= last.part
-                    && starts_with_closing_text(part, last.part, last.item as usize)
-            })
-        {
-            wanted.insert(closing.number);
-        }
-        let results = ToolResults::new(&parts);
-        for position in &block.items {
-            let part = parts
-                .iter()
-                .find(|part| part.number == position.part)
-                .unwrap();
-            if let Some(item) = part.content_items().get(position.item as usize)
-                && let Some(result) = results.get(part, item, true)
-            {
-                wanted.insert(result.number);
-            }
-        }
-        parts.retain(|part| wanted.contains(&part.number));
-    }
-    let calls: Vec<_> = if target.starts_with("work:") {
-        saved_work_blocks(&parts)
-            .into_iter()
-            .find(|block| block.id == target)
-            .into_iter()
-            .flat_map(|block| block.items)
-            .filter_map(|position| {
-                let part = parts.iter().find(|part| part.number == position.part)?;
-                (part.content_items().get(position.item as usize)?["type"] == "tool-call")
-                    .then_some((position.part, position.item as usize))
-            })
-            .collect()
-    } else {
-        parts
-            .iter()
-            .flat_map(|part| {
-                part.content_items()
-                    .iter()
-                    .enumerate()
-                    .filter(move |(offset, item)| {
-                        item["type"] == "tool-call"
-                            && sprocket_transcript::work_blocks::item_id("tool", part, *offset)
-                                == target
-                    })
-                    .map(move |(offset, _)| (part.number, offset))
-            })
-            .collect()
-    };
-    let invocations: Vec<_> = calls
-        .iter()
-        .filter_map(|(number, offset)| {
-            parts
-                .iter()
-                .find(|part| part.number == *number)?
-                .content_items()[*offset]["toolInvocationId"]
-                .as_str()
-                .map(str::to_owned)
-        })
-        .collect();
-    for invocation in invocations {
-        if let Some(result) = store
-            .source_number(user, thread, &format!("tool:{invocation}:finished"))
-            .await?
-            && !parts.iter().any(|part| part.number == result)
-        {
-            parts.extend(store.read_parts(user, thread, &[result]).await?);
+impl Request {
+    fn scope(&self) -> RowScope {
+        match self {
+            Self::Thread { .. } => RowScope::Thread,
+            Self::Work { .. } => RowScope::Work,
+            Self::Item { .. } => RowScope::Item,
         }
     }
-    let unresolved = |parts: &[TranscriptPart], earlier: bool| {
-        let results = ToolResults::new(parts);
-        calls.iter().any(|(number, offset)| {
-            let part = parts.iter().find(|part| part.number == *number).unwrap();
-            let item = &part.content_items()[*offset];
-            (!earlier || item["toolInvocationId"].as_str().is_none() && item["callId"].is_string())
-                && results.get(part, item, true).is_none()
-        })
-    };
-    let retained: HashSet<_> = parts.iter().map(|part| part.number).collect();
-    let origin = store
-        .source_number(user, thread, &format!("prompt:{run}"))
-        .await?
-        .unwrap_or(0);
-    let mut after = number.saturating_add(1);
-    let mut before = number;
-    while unresolved(&parts, false)
-        && (after < highwater || before > origin && unresolved(&parts, true))
-    {
-        let earlier = after >= highwater;
-        let (start, end) = if after < highwater {
-            let start = after;
-            after = start.saturating_add(PAGE_PARTS).min(highwater);
-            (start, after)
-        } else {
-            let end = before;
-            before = end.saturating_sub(PAGE_PARTS).max(origin);
-            (before, end)
-        };
-        store
-            .ensure_parts(user, thread, start, end, &mut *fetch)
-            .await?;
-        let mut page = store.read_parts_range(user, thread, start, end).await?;
-        if earlier
-            && let Some(boundary) = page
-                .iter()
-                .rposition(|part| part.run_id == run && is_run_origin(part))
-        {
-            page.drain(..boundary);
-            before = origin;
-        }
-        let page = page
-            .into_iter()
-            .filter(|part| {
-                part.run_id == run
-                    && part
-                        .tool
-                        .as_ref()
-                        .is_some_and(|tool| tool.status != "started")
-                    && !parts.iter().any(|saved| saved.number == part.number)
-            })
-            .collect::<Vec<_>>();
-        parts.extend(page);
-        let results = ToolResults::new(&parts);
-        let wanted: HashSet<_> = calls
-            .iter()
-            .filter_map(|(number, offset)| {
-                let part = parts.iter().find(|part| part.number == *number).unwrap();
-                results
-                    .get(part, &part.content_items()[*offset], true)
-                    .map(|result| result.number)
-            })
-            .collect();
-        parts.retain(|part| retained.contains(&part.number) || wanted.contains(&part.number));
-    }
-    parts.sort_by_key(|part| part.number);
-    Ok(parts)
-}
 
-fn starts_with_closing_text(part: &TranscriptPart, last_part: u32, last_item: usize) -> bool {
-    part.content_items()
-        .iter()
-        .enumerate()
-        .any(|(offset, item)| {
-            (part.number > last_part || offset > last_item)
-                && item["type"] == "text"
-                && item["text"]
-                    .as_str()
-                    .is_some_and(|text| !text.trim().is_empty())
-        })
-}
-
-fn is_run_origin(part: &TranscriptPart) -> bool {
-    part.prompt
-        .as_ref()
-        .is_some_and(|prompt| prompt.hidden.is_none())
-}
-
-fn is_hidden_prompt(part: &TranscriptPart) -> bool {
-    part.prompt
-        .as_ref()
-        .is_some_and(|prompt| prompt.hidden.is_some())
-}
-
-/// Tracks runs whose earliest loaded prompt or completion is a hidden prompt.
-fn note_turn(hidden_starts: &mut HashSet<String>, part: &TranscriptPart) {
-    if part.tool.is_some() {
-        return;
-    }
-    if is_hidden_prompt(part) {
-        hidden_starts.insert(part.run_id.clone());
-    } else {
-        hidden_starts.remove(&part.run_id);
-    }
-}
-
-fn starts_with_text(part: &TranscriptPart) -> bool {
-    for item in part.content_items() {
-        match item["type"].as_str() {
-            Some("text" | "reasoning")
-                if item["text"]
-                    .as_str()
-                    .is_some_and(|text| !text.trim().is_empty()) =>
-            {
-                return item["type"] == "text";
-            }
-            Some("tool-call") => return false,
-            _ => {}
+    /// Whether a row added after the snapshot belongs to this watch.
+    fn adds(&self, row: &Row) -> bool {
+        match self {
+            Self::Thread { .. } => true,
+            Self::Work { id, .. } => row.work() == Some(id.as_str()),
+            Self::Item { id } => row.id == *id,
         }
     }
-    false
 }
 
-fn finished_tool_runs(parts: &[TranscriptPart]) -> HashSet<String> {
-    parts
-        .iter()
-        .filter(|part| {
-            part.tool
-                .as_ref()
-                .is_some_and(|tool| tool.status != "started")
-        })
-        .map(|part| part.run_id.clone())
-        .collect()
+/// The rows a watch sent, so later changes reach only those and rows added after them.
+struct Filter {
+    request: Request,
+    known: HashSet<String>,
 }
 
-fn is_run_boundary(
-    part: &TranscriptPart,
-    scope: &ProjectionScope,
-    result_runs: &HashSet<String>,
-) -> bool {
-    is_run_origin(part)
-        || matches!(scope, ProjectionScope::Thread)
-            && !result_runs.contains(&part.run_id)
-            && starts_with_text(part)
-}
-
-/// Runs whose first part in `parts` needs earlier history.
-fn pending_runs(
-    parts: &[TranscriptPart],
-    scope: &ProjectionScope,
-    mut after_turn: bool,
-) -> HashSet<String> {
-    let result_runs = finished_tool_runs(parts);
-    let mut seen = HashSet::new();
-    let mut pending = HashSet::new();
-    for part in parts {
-        if seen.insert(&part.run_id)
-            && !is_run_boundary(part, scope, &result_runs)
-            && !(after_turn && is_hidden_prompt(part))
-        {
-            pending.insert(part.run_id.clone());
+impl Filter {
+    fn new(request: Request, rows: &[TranscriptRow]) -> Self {
+        Self {
+            request,
+            known: rows.iter().map(|row| row.id.clone()).collect(),
         }
-        after_turn |= part.tool.is_none();
     }
-    pending
-}
 
-async fn complete_prefix<F, Fut>(
-    store: &TranscriptStore,
-    user: &str,
-    thread: &str,
-    parts: Vec<TranscriptPart>,
-    scope: &ProjectionScope,
-    fetch: &mut F,
-) -> anyhow::Result<Vec<TranscriptPart>>
-where
-    F: FnMut(u32, u32) -> Fut,
-    Fut: Future<Output = anyhow::Result<Vec<TranscriptPart>>>,
-{
-    let mut pending = pending_runs(&parts, scope, false);
-    if pending.is_empty() {
-        return Ok(parts);
-    }
-    let result_runs = finished_tool_runs(&parts);
-    // Runs in a thread never overlap; only late tool results land after the next run starts.
-    // So a hidden prompt right after another run's prompt or completion begins a continuation run.
-    let mut hidden_starts = HashSet::new();
-    for part in parts.iter().rev() {
-        note_turn(&mut hidden_starts, part);
-    }
-    let mut prefix = Vec::new();
-    let mut end = parts.first().map_or(0, |part| part.number);
-    while !pending.is_empty() && end > 0 {
-        let start = end.saturating_sub(PAGE_PARTS);
-        store
-            .ensure_parts(user, thread, start, end, &mut *fetch)
-            .await?;
-        for part in store
-            .read_parts_range(user, thread, start, end)
-            .await?
-            .into_iter()
-            .rev()
-        {
-            if part.tool.is_none() {
-                pending.retain(|run| *run == part.run_id || !hidden_starts.contains(run));
-            }
-            if !pending.contains(&part.run_id) {
-                continue;
-            }
-            if is_run_boundary(&part, scope, &result_runs) {
-                pending.remove(&part.run_id);
-            }
-            note_turn(&mut hidden_starts, &part);
-            prefix.push(part);
-        }
-        end = start;
-    }
-    prefix.reverse();
-    prefix.extend(parts);
-    Ok(prefix)
-}
-
-async fn project_window(
-    state: &AppState,
-    user: &str,
-    thread: &str,
-    scope: &ProjectionScope,
-    saved: &SavedWindow,
-    live: &[LiveCompletionOverlay],
-) -> TranscriptSnapshot {
-    TranscriptSnapshot {
-        rows: project_rows(
-            &saved.parts,
-            live,
-            scope,
-            saved.window.clone(),
-            &state.host.transcript.thread_dir(user, thread),
-        )
-        .await,
-        next_before: saved.next_before,
-        stale: saved.stale,
-    }
-}
-
-pub(crate) async fn project(
-    state: &AppState,
-    user: &str,
-    thread: &str,
-    scope: ProjectionScope,
-    before: Option<u32>,
-) -> Result<TranscriptSnapshot, ApiError> {
-    let saved = load_window(state, user, thread, &scope, before, None, &|| {})
-        .await
-        .map_err(ApiError::internal)?;
-    let live = if before.is_none() {
-        state
-            .host
-            .live_completions
-            .snapshot(thread)
-            .into_iter()
-            .collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
-    Ok(project_window(state, user, thread, &scope, &saved, &live).await)
-}
-
-pub(crate) async fn watch_rows(
-    state: &AppState,
-    scope: Authorized<TranscriptRowsScope>,
-) -> Result<BoxStream<'static, TranscriptRowsEvent>, ApiError> {
-    let scope = scope.into_inner();
-    watch(
-        state,
-        scope.user_id,
-        scope.thread_id,
-        ProjectionScope::Thread,
-        scope.before,
-    )
-    .await
-}
-
-pub(crate) async fn watch_work(
-    state: &AppState,
-    scope: Authorized<TranscriptRowScope>,
-) -> Result<BoxStream<'static, TranscriptRowsEvent>, ApiError> {
-    let scope = scope.into_inner();
-    watch(
-        state,
-        scope.user_id,
-        scope.thread_id,
-        ProjectionScope::Work(scope.row_id),
-        None,
-    )
-    .await
-}
-
-pub(crate) async fn watch_item(
-    state: &AppState,
-    scope: Authorized<TranscriptRowScope>,
-) -> Result<BoxStream<'static, TranscriptRowsEvent>, ApiError> {
-    let scope = scope.into_inner();
-    watch(
-        state,
-        scope.user_id,
-        scope.thread_id,
-        ProjectionScope::Item(scope.row_id),
-        None,
-    )
-    .await
-}
-
-#[derive(Default)]
-struct LiveWindow {
-    overlays: Vec<LiveCompletionOverlay>,
-    phase: LivePhase,
-}
-
-#[derive(Default)]
-enum LivePhase {
-    #[default]
-    Streaming,
-    Cleared,
-}
-
-impl LiveWindow {
-    fn update(&mut self, event: LiveCompletionWatchEvent) {
-        match event {
-            LiveCompletionWatchEvent::Updated { live } => {
-                if matches!(self.phase, LivePhase::Cleared)
-                    && self
-                        .overlays
-                        .last()
-                        .is_some_and(|previous| previous.run_id == live.run_id)
-                {
-                    self.overlays.pop();
-                }
-                self.phase = LivePhase::Streaming;
-                if let Some(previous) = self
-                    .overlays
-                    .iter_mut()
-                    .find(|previous| previous.stream_id == live.stream_id)
-                {
-                    *previous = live;
-                } else {
-                    for previous in &mut self.overlays {
-                        previous.run_status = sprocket_convex::RunStatus::Completed;
+    /// The updates to send, or `None` when the watch needs a new snapshot instead.
+    fn apply(&mut self, updates: &[Update]) -> Option<Vec<TranscriptRowUpdate>> {
+        let scope = self.request.scope();
+        let mut sent = Vec::new();
+        for update in updates {
+            match update {
+                Update::Added(row) if self.request.adds(row) => {
+                    if let Some(row) = row.render(scope) {
+                        self.known.insert(row.id.clone());
+                        sent.push(TranscriptRowUpdate::Row { row });
                     }
-                    self.overlays.push(live);
                 }
+                Update::Changed(row) if self.known.contains(&row.id) => {
+                    sent.extend(
+                        row.render(scope)
+                            .map(|row| TranscriptRowUpdate::Row { row }),
+                    );
+                }
+                // A late result can show a block from before this watch's first row.
+                Update::Changed(row)
+                    if scope == RowScope::Thread
+                        && row.work().is_some_and(|work| !self.known.contains(work)) =>
+                {
+                    return None;
+                }
+                // Work rows label reasoning without its text.
+                Update::Append { id, offset, text }
+                    if scope != RowScope::Work && self.known.contains(id) =>
+                {
+                    sent.push(TranscriptRowUpdate::Append {
+                        row_id: id.clone(),
+                        offset: *offset,
+                        text: text.clone(),
+                    });
+                }
+                _ => {}
             }
-            LiveCompletionWatchEvent::Cleared => {
-                self.phase = LivePhase::Cleared;
-                for previous in &mut self.overlays {
-                    previous.run_status = sprocket_convex::RunStatus::Completed;
-                }
+        }
+        Some(sent)
+    }
+}
+
+/// Prompts and replies from `start`, and work blocks with an item or result there.
+fn thread_snapshot(shared: &Shared, start: u32, before: Option<u32>) -> TranscriptSnapshot {
+    let shown = |part: u32| part >= start && before.is_none_or(|before| part < before);
+    let touched: HashSet<String> = shared
+        .rows()
+        .filter(|row| row.parts().any(shown))
+        .filter_map(|row| row.work().map(str::to_owned))
+        .collect();
+    let rows = shared
+        .rows()
+        .filter(|row| match row.body {
+            RowBody::Work { .. } => touched.contains(&row.id) || shown(row.part),
+            _ => shown(row.part),
+        })
+        .filter_map(|row| row.render(RowScope::Thread))
+        .collect();
+    TranscriptSnapshot {
+        rows,
+        next_before: (start > 0).then_some(start),
+        stale: shared.stale,
+    }
+}
+
+/// A work block's items from one page before `before` onward, cut where a part starts.
+fn work_snapshot(shared: &Shared, work: &str, before: Option<u32>) -> TranscriptSnapshot {
+    let items: Vec<_> = shared
+        .rows()
+        .filter(|row| row.work() == Some(work))
+        .collect();
+    let older = items
+        .iter()
+        .take_while(|row| before.is_none_or(|before| row.part < before))
+        .count();
+    let start = older
+        .checked_sub(WORK_PAGE_ITEMS)
+        .filter(|cut| *cut > 0)
+        .map_or(0, |cut| items[cut].part);
+    TranscriptSnapshot {
+        rows: items
+            .iter()
+            .filter(|row| row.part >= start)
+            .filter_map(|row| row.render(RowScope::Work))
+            .collect(),
+        next_before: items.iter().any(|row| row.part < start).then_some(start),
+        stale: shared.stale,
+    }
+}
+
+fn item_snapshot(shared: &Shared, id: &str) -> TranscriptSnapshot {
+    TranscriptSnapshot {
+        rows: shared
+            .row(id)
+            .and_then(|row| row.render(RowScope::Item))
+            .into_iter()
+            .collect(),
+        next_before: None,
+        stale: shared.stale,
+    }
+}
+
+/// Adds the rows a request needs, then takes its snapshot and subscribes to later changes.
+async fn open(
+    rows: &ThreadRowsLease,
+    request: &Request,
+) -> anyhow::Result<(TranscriptSnapshot, Filter, broadcast::Receiver<Arc<Change>>)> {
+    match request {
+        Request::Thread {
+            before: Some(before),
+        } => rows.extend_to_boundary(*before).await?,
+        Request::Thread { before: None } => {}
+        Request::Work { id, .. } | Request::Item { id } => {
+            if let Some(source) = row_source(id) {
+                rows.extend_to_source(source).await?;
             }
         }
     }
-
-    fn remove_saved(&mut self, parts: &[TranscriptPart]) {
-        let sources: HashSet<_> = parts.iter().map(|part| part.source_key.as_str()).collect();
-        self.overlays.retain(|live| {
-            !live.run_status.is_final() || !sources.contains(completion_source_key(live).as_str())
-        });
-    }
+    let (snapshot, receiver) = rows.read(|shared| match request {
+        Request::Thread { before } => {
+            let start = before
+                .filter(|before| *before >= shared.start)
+                .unwrap_or(shared.newest);
+            thread_snapshot(shared, start, None)
+        }
+        Request::Work { id, before } => work_snapshot(shared, id, *before),
+        Request::Item { id } => item_snapshot(shared, id),
+    });
+    let filter = Filter::new(request.clone(), &snapshot.rows);
+    Ok((snapshot, filter, receiver))
 }
 
 struct Watch {
-    state: AppState,
-    user: String,
-    thread: String,
-    scope: ProjectionScope,
-    session: TranscriptWatchSession,
-    live_events: broadcast::Receiver<LiveCompletionWatchEvent>,
-    saved: SavedWindow,
-    window_start: Option<u32>,
-    live: LiveWindow,
-    previous: TranscriptSnapshot,
-    next_send: Instant,
-}
-
-enum Refresh {
-    Idle,
-    Project,
-    Reload,
+    rows: ThreadRowsLease,
+    filter: Filter,
+    receiver: broadcast::Receiver<Arc<Change>>,
 }
 
 enum Phase {
@@ -854,51 +297,24 @@ enum Phase {
     Watching(Box<Watch>),
 }
 
-async fn watch(
+fn watch(
     state: &AppState,
-    user: String,
-    thread: String,
-    scope: ProjectionScope,
-    boundary: Option<u32>,
-) -> Result<BoxStream<'static, TranscriptRowsEvent>, ApiError> {
+    user: &str,
+    thread: &str,
+    request: Request,
+) -> BoxStream<'static, TranscriptRowsEvent> {
+    let rows = state.thread_rows.open(state, user, thread);
     let (downloads, downloading) = tokio::sync::watch::channel(false);
-    let state = state.clone();
     let load = async move {
         let on_download = || {
             downloads.send_if_modified(|downloading| !std::mem::replace(downloading, true));
         };
-        let _lease = state.host.transcript.open_thread(&user, &thread).await?;
-        let mut session = state.host.transcript_watchers.open(&user, &thread).await;
-        let subscription = state.host.live_completions.subscribe(&thread);
-        if matches!(scope, ProjectionScope::Thread)
-            && let Err(error) =
-                download_newest_page_if_uncached(&state, &user, &thread, &mut session, &on_download)
-                    .await
-        {
-            tracing::warn!(%thread, "could not download the newest transcript page: {error:#}");
-        }
-        let mut saved =
-            load_window(&state, &user, &thread, &scope, None, boundary, &on_download).await?;
-        saved.stale = session.stale();
-        let window_start =
-            boundary.or_else(|| (saved.window.end > 0).then_some(saved.window.start));
-        let live = LiveWindow {
-            overlays: subscription.snapshot.into_iter().collect(),
-            ..LiveWindow::default()
-        };
-        let snapshot = project_window(&state, &user, &thread, &scope, &saved, &live.overlays).await;
+        rows.ready(&on_download).await?;
+        let (snapshot, filter, receiver) = open(&rows, &request).await?;
         let watch = Watch {
-            state,
-            user,
-            thread,
-            scope,
-            session,
-            live_events: subscription.receiver,
-            saved,
-            window_start,
-            live,
-            previous: snapshot.clone(),
-            next_send: Instant::now() + UPDATE_INTERVAL,
+            rows,
+            filter,
+            receiver,
         };
         Ok((snapshot, watch))
     };
@@ -906,7 +322,7 @@ async fn watch(
         load: load.boxed(),
         downloading,
     };
-    Ok(unfold(phase, |phase| async move {
+    unfold(phase, |phase| async move {
         match phase {
             Phase::Loading {
                 mut load,
@@ -933,109 +349,110 @@ async fn watch(
                 .map(|(event, watch)| (event, Phase::Watching(Box::new(watch)))),
         }
     })
-    .boxed())
+    .boxed()
 }
 
 async fn next_event(mut watch: Watch) -> Option<(TranscriptRowsEvent, Watch)> {
-    let mut refresh = Refresh::Idle;
     loop {
-        tokio::select! {
-            event = watch.session.receiver().recv() => {
-                if matches!(event, Err(broadcast::error::RecvError::Closed)) { return None; }
-                refresh = Refresh::Reload;
+        let change = match watch.receiver.recv().await {
+            Ok(change) => change,
+            Err(RecvError::Lagged(_)) => Arc::new(Change::Reset),
+            Err(RecvError::Closed) => return None,
+        };
+        if let Change::Rows(updates) = &*change
+            && let Some(updates) = watch.filter.apply(updates)
+        {
+            if !updates.is_empty() {
+                return Some((TranscriptRowsEvent::Batch { updates }, watch));
             }
-            event = watch.live_events.recv() => {
-                let event = match event {
-                    Ok(event) => event,
-                    Err(broadcast::error::RecvError::Lagged(_)) => {
-                        let subscription = watch.state.host.live_completions.subscribe(&watch.thread);
-                        watch.live_events = subscription.receiver;
-                        refresh = Refresh::Reload;
-                        subscription.snapshot.map_or(LiveCompletionWatchEvent::Cleared,
-                            |live| LiveCompletionWatchEvent::Updated { live })
-                    }
-                    Err(broadcast::error::RecvError::Closed) => return None,
-                };
-                if matches!(&event, LiveCompletionWatchEvent::Updated { live }
-                    if watch.live.overlays.last().is_none_or(|previous| previous.stream_id != live.stream_id)) {
-                    refresh = Refresh::Reload;
-                } else if matches!(refresh, Refresh::Idle) {
-                    refresh = Refresh::Project;
-                }
-                watch.live.update(event);
-            }
-            _ = tokio::time::sleep_until(watch.next_send), if !matches!(refresh, Refresh::Idle) => {
-                if matches!(refresh, Refresh::Reload) {
-                    match reload_window(&watch.state, &watch.user, &watch.thread, &watch.scope,
-                        watch.window_start, &mut watch.saved).await {
-                        Ok(()) => {
-                            watch.saved.stale = watch.session.stale();
-                            if watch.saved.window.end > 0 {
-                                watch.window_start = Some(watch.saved.window.start);
-                            }
-                        },
-                        Err(error) => {
-                            tracing::warn!(thread = %watch.thread, "could not project transcript rows: {error:#}");
-                            watch.previous.stale = true;
-                            watch.saved.stale = true;
-                            watch.next_send = Instant::now() + UPDATE_INTERVAL;
-                            let snapshot = watch.previous.clone();
-                            return Some((TranscriptRowsEvent::Snapshot { snapshot }, watch));
-                        }
-                    }
-                }
-                watch.live.remove_saved(&watch.saved.parts);
-                let snapshot = project_window(&watch.state, &watch.user, &watch.thread, &watch.scope,
-                    &watch.saved, &watch.live.overlays).await;
-                let event = diff(&watch.previous, &snapshot);
-                watch.previous = snapshot;
-                watch.next_send = Instant::now() + UPDATE_INTERVAL;
-                if let Some(event) = event { return Some((event, watch)); }
-                refresh = Refresh::Idle;
-            }
+            continue;
         }
+        let (snapshot, filter, receiver) = open(&watch.rows, &watch.filter.request)
+            .await
+            .inspect_err(|error| {
+                tracing::warn!("could not reload transcript rows: {error:#}");
+            })
+            .ok()?;
+        watch.filter = filter;
+        watch.receiver = receiver;
+        return Some((TranscriptRowsEvent::Snapshot { snapshot }, watch));
     }
 }
 
-fn diff(previous: &TranscriptSnapshot, next: &TranscriptSnapshot) -> Option<TranscriptRowsEvent> {
-    if previous.stale != next.stale
-        || previous.next_before != next.next_before
-        || previous.rows.len() > next.rows.len()
-        || previous
-            .rows
-            .iter()
-            .zip(&next.rows)
-            .any(|(previous, next)| previous.id != next.id)
-    {
-        return Some(TranscriptRowsEvent::Snapshot {
-            snapshot: next.clone(),
-        });
-    }
-    let mut updates = Vec::new();
-    for (index, row) in next.rows.iter().enumerate() {
-        if let Some(previous) = previous.rows.get(index) {
-            if previous == row {
-                continue;
-            }
-            if let (Some(before), Some(after)) = (previous.text(), row.text())
-                && let Some(text) = after.strip_prefix(before)
-            {
-                let mut metadata = row.clone();
-                metadata.set_text(before.to_owned());
-                if metadata == *previous {
-                    updates.push(TranscriptRowUpdate::Append {
-                        row_id: row.id.clone(),
-                        offset: before.encode_utf16().count(),
-                        text: text.to_owned(),
-                    });
-                    continue;
-                }
-            }
-        }
-        updates.push(TranscriptRowUpdate::Row { row: row.clone() });
-    }
-    (!updates.is_empty()).then_some(TranscriptRowsEvent::Batch { updates })
+async fn ready_rows(state: &AppState, user: &str, thread: &str) -> anyhow::Result<ThreadRowsLease> {
+    let rows = state.thread_rows.open(state, user, thread);
+    rows.ready(&|| {}).await?;
+    Ok(rows)
 }
 
+/// The newest window, or the page of history before `before`.
+pub(crate) async fn page(
+    state: &AppState,
+    user: &str,
+    thread: &str,
+    before: Option<u32>,
+) -> Result<TranscriptSnapshot, ApiError> {
+    let rows = ready_rows(state, user, thread)
+        .await
+        .map_err(ApiError::internal)?;
+    let start = match before {
+        Some(before) => Some(rows.page_before(before).await.map_err(ApiError::internal)?),
+        None => None,
+    };
+    Ok(rows
+        .read(|shared| thread_snapshot(shared, start.unwrap_or(shared.newest), before))
+        .0)
+}
+
+/// A row with its full text or tool summary.
+pub(crate) async fn row(
+    state: &AppState,
+    user: &str,
+    thread: &str,
+    id: String,
+) -> Result<Option<TranscriptRow>, ApiError> {
+    let rows = ready_rows(state, user, thread)
+        .await
+        .map_err(ApiError::internal)?;
+    let (snapshot, ..) = open(&rows, &Request::Item { id })
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(snapshot.rows.into_iter().next())
+}
+
+pub(crate) fn watch_rows(
+    state: &AppState,
+    scope: Authorized<TranscriptRowsScope>,
+) -> BoxStream<'static, TranscriptRowsEvent> {
+    let scope = scope.into_inner();
+    let request = Request::Thread {
+        before: scope.before,
+    };
+    watch(state, &scope.user_id, &scope.thread_id, request)
+}
+
+pub(crate) fn watch_work(
+    state: &AppState,
+    scope: Authorized<TranscriptWorkScope>,
+) -> BoxStream<'static, TranscriptRowsEvent> {
+    let scope = scope.into_inner();
+    let request = Request::Work {
+        id: scope.row_id,
+        before: scope.before,
+    };
+    watch(state, &scope.user_id, &scope.thread_id, request)
+}
+
+pub(crate) fn watch_item(
+    state: &AppState,
+    scope: Authorized<TranscriptRowScope>,
+) -> BoxStream<'static, TranscriptRowsEvent> {
+    let scope = scope.into_inner();
+    let request = Request::Item { id: scope.row_id };
+    watch(state, &scope.user_id, &scope.thread_id, request)
+}
+
+#[cfg(test)]
+mod test_support;
 #[cfg(test)]
 mod tests;

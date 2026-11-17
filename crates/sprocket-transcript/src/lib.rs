@@ -8,7 +8,6 @@ mod store;
 mod sync;
 pub mod tool_display;
 mod types;
-pub mod work_blocks;
 
 pub use attachments::{
     AttachmentUnavailable, cache_attachment, cache_attachments, cache_prompt_attachments,
@@ -24,4 +23,3 @@ pub use types::{
     TranscriptCompletionBody, TranscriptPart, TranscriptPartKind, TranscriptPromptBody,
     TranscriptState, TranscriptToolBody,
 };
-pub use work_blocks::{WorkBlock, derive_work_blocks};

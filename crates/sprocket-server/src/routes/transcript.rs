@@ -6,7 +6,7 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use serde::{Deserialize, Serialize};
-use sprocket_transcript::rows::{ProjectionScope, TranscriptRow};
+use sprocket_transcript::rows::TranscriptRow;
 use sprocket_transcript::{AttachmentUnavailable, TranscriptAttachmentMeta, cache_attachment};
 use tokio_util::io::ReaderStream;
 
@@ -77,14 +77,8 @@ async fn rows_handler(
     State(state): State<AppState>,
     AuthorizedJson(payload): AuthorizedJson<TranscriptRowsScope>,
 ) -> Result<Json<TranscriptRowsEvent>, ApiError> {
-    let snapshot = transcript_rows::project(
-        &state,
-        &payload.user_id,
-        &payload.thread_id,
-        ProjectionScope::Thread,
-        payload.before,
-    )
-    .await?;
+    let snapshot =
+        transcript_rows::page(&state, &payload.user_id, &payload.thread_id, payload.before).await?;
     Ok(Json(TranscriptRowsEvent::Snapshot { snapshot }))
 }
 
@@ -97,17 +91,11 @@ async fn row_handler(
     State(state): State<AppState>,
     AuthorizedJson(payload): AuthorizedJson<TranscriptRowScope>,
 ) -> Result<Json<RowResponse>, ApiError> {
-    let snapshot = transcript_rows::project(
-        &state,
-        &payload.user_id,
-        &payload.thread_id,
-        ProjectionScope::Row(payload.row_id),
-        None,
-    )
-    .await?;
-    let row = snapshot.rows.into_iter().next().ok_or_else(|| {
-        ApiError::with_status(StatusCode::NOT_FOUND, anyhow!("transcript row not found"))
-    })?;
+    let row = transcript_rows::row(&state, &payload.user_id, &payload.thread_id, payload.row_id)
+        .await?
+        .ok_or_else(|| {
+            ApiError::with_status(StatusCode::NOT_FOUND, anyhow!("transcript row not found"))
+        })?;
     Ok(Json(RowResponse { row }))
 }
 

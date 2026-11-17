@@ -1,20 +1,18 @@
-use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::ops::Range;
-use std::path::Path;
+use std::collections::{BTreeMap, HashSet};
 
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::tool_display::{
-    ToolDisplay, ToolDisplayInput, ToolStatus, is_session_command, load_session_command,
-    polled_targets,
+    SessionCommands, ToolDisplay, ToolDisplayInput, ToolStatus, is_session_command, polled_targets,
 };
-use crate::work_blocks::{item_id, item_index};
 use crate::{
     LiveCompletionOverlay, TranscriptAttachmentMeta, TranscriptCompletionBody, TranscriptPart,
-    TranscriptPartKind, WorkBlock, derive_work_blocks,
+    TranscriptPartKind, TranscriptToolBody,
 };
+
+/// The part number of rows from a live completion, which sorts after every saved part.
+pub const LIVE_PART: u32 = u32::MAX;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -58,111 +56,145 @@ pub enum TranscriptRowBody {
     },
 }
 
-#[derive(Clone, Debug)]
-pub enum ProjectionScope {
+/// What a browser asked to see. Thread rows summarize work blocks, work rows list a block's
+/// items, and item rows carry the full text or tool summary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowScope {
     Thread,
-    Work(String),
-    Item(String),
-    Row(String),
+    Work,
+    Item,
 }
 
-impl ProjectionScope {
-    pub fn row_id(&self) -> Option<&str> {
-        match self {
-            Self::Thread => None,
-            Self::Work(id) | Self::Item(id) | Self::Row(id) => Some(id),
-        }
-    }
-
-    pub fn source_key(&self) -> Option<&str> {
-        self.row_id()?
-            .splitn(3, ':')
-            .nth(2)?
-            .rsplit_once(':')
-            .map(|(source, _)| source)
-    }
-
-    pub fn run_id(&self) -> Option<&str> {
-        self.row_id()?.split(':').nth(1)
-    }
+/// A row with everything any scope shows, positioned by the part it came from.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Row {
+    pub id: String,
+    pub run_id: String,
+    pub part: u32,
+    pub body: RowBody,
 }
 
-impl TranscriptRow {
-    pub fn text(&self) -> Option<&str> {
+#[derive(Clone, Debug, PartialEq)]
+pub enum RowBody {
+    Prompt {
+        text: String,
+        attachments: Vec<TranscriptAttachmentMeta>,
+    },
+    Text {
+        text: String,
+        running: bool,
+    },
+    Work {
+        tool_counts: BTreeMap<String, u32>,
+        running: bool,
+    },
+    Reasoning {
+        work: String,
+        text: String,
+        running: bool,
+    },
+    Tool {
+        work: String,
+        name: String,
+        display: ToolDisplay,
+        result: Option<u32>,
+    },
+}
+
+impl Row {
+    pub fn work(&self) -> Option<&str> {
         match &self.body {
-            TranscriptRowBody::Text { text, .. }
-            | TranscriptRowBody::Reasoning {
-                text: Some(text), ..
-            } => Some(text),
+            RowBody::Reasoning { work, .. } | RowBody::Tool { work, .. } => Some(work),
             _ => None,
         }
     }
 
-    pub fn set_text(&mut self, value: String) {
-        match &mut self.body {
-            TranscriptRowBody::Text { text, .. }
-            | TranscriptRowBody::Reasoning {
-                text: Some(text), ..
-            } => *text = value,
-            _ => {}
-        }
-    }
-}
-
-pub fn completion_source_key(live: &LiveCompletionOverlay) -> String {
-    format!("completion:{}:{}", live.run_id, live.stream_id)
-}
-
-fn merge_live<'a>(
-    saved: &'a [TranscriptPart],
-    live: &[LiveCompletionOverlay],
-) -> (Vec<Cow<'a, TranscriptPart>>, LiveActivity) {
-    let mut parts: Vec<_> = saved.iter().map(Cow::Borrowed).collect();
-    parts.sort_by_key(|part| part.number);
-    let mut sources = HashSet::new();
-    parts.retain(|part| sources.insert(part.source_key.clone()));
-    let mut activity = LiveActivity::default();
-    let mut number = parts.last().map_or(0, |part| part.number.saturating_add(1));
-    for overlay in live {
-        let source_key = completion_source_key(overlay);
-        let mut items: Vec<Value> = overlay
-            .parts
-            .iter()
-            .map(|item| serde_json::to_value(item).expect("live assistant parts serialize"))
-            .collect();
-        items.sort_by_key(|item| item_index(item, usize::MAX));
-        let part = TranscriptPart {
-            number,
-            source_key,
-            kind: TranscriptPartKind::Completion,
-            run_id: overlay.run_id.clone(),
-            created_at: None,
-            prompt: None,
-            completion: Some(TranscriptCompletionBody { items }),
-            tool: None,
+    /// The parts that show this row's item: its own and its tool result's.
+    pub fn parts(&self) -> impl Iterator<Item = u32> {
+        let result = match &self.body {
+            RowBody::Tool { result, .. } => *result,
+            _ => None,
         };
-        if !overlay.run_status.is_final()
-            && let Some(item) = part.content_items().last()
-            && let Some(kind @ ("text" | "reasoning")) = item["type"].as_str()
-        {
-            activity
-                .streaming
-                .insert(item_id(kind, &part, part.content_items().len() - 1));
-        }
-        if !sources.insert(part.source_key.clone()) {
-            continue;
-        }
-        activity.unsaved.insert(part.source_key.clone());
-        parts.push(Cow::Owned(part));
-        number = number.saturating_add(1);
+        std::iter::once(self.part).chain(result)
     }
-    (parts, activity)
-}
 
-#[derive(Default)]
-struct LiveActivity {
-    streaming: HashSet<String>,
-    unsaved: HashSet<String>,
+    pub fn text(&self) -> Option<&str> {
+        match &self.body {
+            RowBody::Text { text, .. } | RowBody::Reasoning { text, .. } => Some(text),
+            _ => None,
+        }
+    }
+
+    /// Whether `next` is this row with only its text changed.
+    pub fn differs_only_in_text(&self, next: &Self) -> bool {
+        let mut copy = next.clone();
+        if let RowBody::Text { text, .. } | RowBody::Reasoning { text, .. } = &mut copy.body
+            && let Some(previous) = self.text()
+        {
+            previous.clone_into(text);
+            return copy == *self;
+        }
+        false
+    }
+
+    pub fn set_streaming(&mut self) {
+        if let RowBody::Text { running, .. } | RowBody::Reasoning { running, .. } = &mut self.body {
+            *running = true;
+        }
+    }
+
+    pub fn render(&self, scope: RowScope) -> Option<TranscriptRow> {
+        let body = match (&self.body, scope) {
+            (RowBody::Prompt { text, attachments }, RowScope::Thread | RowScope::Item) => {
+                TranscriptRowBody::Prompt {
+                    text: text.clone(),
+                    attachments: attachments.clone(),
+                }
+            }
+            (RowBody::Text { text, running }, RowScope::Thread | RowScope::Item) => {
+                TranscriptRowBody::Text {
+                    text: text.clone(),
+                    running: *running,
+                }
+            }
+            (
+                RowBody::Work {
+                    tool_counts,
+                    running,
+                },
+                RowScope::Thread | RowScope::Item,
+            ) => TranscriptRowBody::Work {
+                tool_counts: tool_counts.clone(),
+                running: *running,
+            },
+            (RowBody::Reasoning { text, running, .. }, RowScope::Work | RowScope::Item) => {
+                TranscriptRowBody::Reasoning {
+                    label: if *running {
+                        "Thinking".to_owned()
+                    } else {
+                        reasoning_label(text)
+                    },
+                    running: *running,
+                    text: (scope == RowScope::Item).then(|| text.clone()),
+                }
+            }
+            (RowBody::Tool { name, display, .. }, RowScope::Work | RowScope::Item) => {
+                let mut display = display.clone();
+                let has_more = scope == RowScope::Work && display.shorten();
+                TranscriptRowBody::Tool {
+                    name: name.clone(),
+                    display,
+                    has_more,
+                }
+            }
+            _ => return None,
+        };
+        Some(TranscriptRow {
+            id: self.id.clone(),
+            run_id: self.run_id.clone(),
+            body,
+        })
+    }
 }
 
 fn reasoning_label(text: &str) -> String {
@@ -181,318 +213,461 @@ fn reasoning_label(text: &str) -> String {
     }
 }
 
-pub struct ToolResults<'a> {
-    invocations: HashMap<(&'a str, &'a str), &'a TranscriptPart>,
-    calls: HashMap<(&'a str, &'a str), &'a TranscriptPart>,
-    sources: HashMap<&'a str, &'a TranscriptPart>,
+fn item_index(item: &Value, offset: usize) -> usize {
+    item.get("id")
+        .or_else(|| item.get("partId"))
+        .and_then(Value::as_str)
+        .and_then(|id| id.rsplit(':').next())
+        .and_then(|index| index.parse().ok())
+        .unwrap_or(offset)
 }
 
-impl<'a> ToolResults<'a> {
-    pub fn new(saved: &'a [TranscriptPart]) -> Self {
-        let mut results = Self {
-            invocations: HashMap::new(),
-            calls: HashMap::new(),
-            sources: HashMap::new(),
-        };
-        for part in saved {
-            if let Some(tool) = &part.tool
-                && tool.status != "started"
-            {
-                results.sources.insert(part.source_key.as_str(), part);
-                if let Some(invocation) = tool.tool_invocation_id.as_deref() {
-                    results
-                        .invocations
-                        .entry((part.run_id.as_str(), invocation))
-                        .or_insert(part);
-                }
-                if !tool.call_id.is_empty() {
-                    results
-                        .calls
-                        .entry((part.run_id.as_str(), tool.call_id.as_str()))
-                        .or_insert(part);
-                }
-            }
-        }
-        results
-    }
-
-    pub fn get(
-        &self,
-        part: &TranscriptPart,
-        item: &Value,
-        saved: bool,
-    ) -> Option<&'a TranscriptPart> {
-        if let Some(source) = item["resultSourceKey"].as_str() {
-            self.sources.get(source).copied()
-        } else if let Some(invocation) = item["toolInvocationId"].as_str() {
-            self.invocations
-                .get(&(part.run_id.as_str(), invocation))
-                .copied()
-        } else if saved {
-            item["callId"]
-                .as_str()
-                .and_then(|call| self.calls.get(&(part.run_id.as_str(), call)))
-                .copied()
-        } else {
-            None
-        }
-    }
+/// Row IDs come from the part's source key, so a live row keeps its ID once saved.
+fn item_id(kind: &str, part: &TranscriptPart, offset: usize) -> String {
+    let index = part
+        .content_items()
+        .get(offset)
+        .map_or(offset, |item| item_index(item, offset));
+    format!("{kind}:{}:{}:{index}", part.run_id, part.source_key)
 }
 
-fn projection_parts<'a>(
-    saved: &'a [TranscriptPart],
-    live: &[LiveCompletionOverlay],
-    results: &ToolResults<'a>,
-) -> (Vec<Cow<'a, TranscriptPart>>, LiveActivity) {
-    let (mut parts, activity) = merge_live(saved, live);
-    let result_for = |part: &TranscriptPart, item: &Value| {
-        results
-            .get(part, item, !activity.unsaved.contains(&part.source_key))
-            .map(|part| (part.number, part.tool.as_ref().unwrap()))
+/// The source key of the part a row came from.
+pub fn row_source(row_id: &str) -> Option<&str> {
+    row_id
+        .splitn(3, ':')
+        .nth(2)?
+        .rsplit_once(':')
+        .map(|(source, _)| source)
+}
+
+pub fn completion_source_key(live: &LiveCompletionOverlay) -> String {
+    format!("completion:{}:{}", live.run_id, live.stream_id)
+}
+
+pub fn is_visible_prompt(part: &TranscriptPart) -> bool {
+    part.prompt
+        .as_ref()
+        .is_some_and(|prompt| prompt.hidden.is_none())
+}
+
+fn has_text(item: &Value) -> bool {
+    item["text"]
+        .as_str()
+        .is_some_and(|text| !text.trim().is_empty())
+}
+
+/// Where a page of history that starts at `start` shows from: the visible prompt of its newest
+/// run with rows, when the page has it.
+pub fn page_start(page: &[TranscriptPart], start: u32) -> u32 {
+    let shows_rows = |part: &TranscriptPart| {
+        is_visible_prompt(part)
+            || part
+                .tool
+                .as_ref()
+                .is_some_and(|tool| tool.status != "started")
+            || part.content_items().iter().any(|item| {
+                item["type"] == "tool-call"
+                    || matches!(item["type"].as_str(), Some("text" | "reasoning")) && has_text(item)
+            })
     };
-    let matched: HashSet<_> = parts
-        .iter()
-        .flat_map(|part| {
-            part.content_items()
-                .iter()
-                .filter_map(|item| result_for(part, item).map(|(number, _)| number))
+    page.iter()
+        .rev()
+        .find(|part| shows_rows(part))
+        .and_then(|last| {
+            page.iter()
+                .find(|part| part.run_id == last.run_id && is_visible_prompt(part))
         })
-        .collect();
-    let mut fallback_ids = HashSet::new();
-    for part in &mut parts {
-        let Some(tool) = &part.tool else { continue };
-        if tool.status == "started" {
-            continue;
-        }
-        let identity = tool
-            .tool_invocation_id
-            .as_deref()
-            .or_else(|| (!tool.call_id.is_empty()).then_some(tool.call_id.as_str()))
-            .or(tool.job_id.as_deref())
-            .unwrap_or(&part.source_key);
-        if !fallback_ids.insert((part.run_id.clone(), identity.to_owned()))
-            || matched.contains(&part.number)
-        {
-            continue;
-        }
-        let fallback = TranscriptPart {
-            number: part.number,
-            source_key: part.source_key.clone(),
-            run_id: part.run_id.clone(),
-            kind: TranscriptPartKind::Completion,
-            created_at: part.created_at,
-            prompt: None,
-            completion: Some(TranscriptCompletionBody {
-                items: vec![json!({"type":"tool-call", "name":tool.name,
-                    "input":tool.input, "resultSourceKey":part.source_key})],
-            }),
-            tool: None,
-        };
-        *part = Cow::Owned(fallback);
-    }
-    (parts, activity)
+        .map_or(start, |part| part.number)
 }
 
-pub fn saved_work_blocks(saved: &[TranscriptPart]) -> Vec<WorkBlock> {
-    let (parts, _) = projection_parts(saved, &[], &ToolResults::new(saved));
-    derive_work_blocks(parts.iter().map(AsRef::as_ref))
+/// Folds parts, in transcript order, into rows. Each part yields the rows it adds or changes.
+///
+/// Runs never interleave, so the state is the current run's. Work blocks follow the agent's
+/// rule: non-empty reasoning or a tool call opens or continues the run's block and non-empty
+/// text closes it. A tool result updates its call's row. Results with no earlier call wait
+/// until the next non-tool part, because older agents saved some results before their calls;
+/// unmatched ones then become rows of their own.
+#[derive(Clone, Debug, Default)]
+pub struct RowTally {
+    run: Option<RunTally>,
 }
 
-pub async fn project_rows(
-    saved: &[TranscriptPart],
-    live: &[LiveCompletionOverlay],
-    scope: &ProjectionScope,
-    window: Range<u32>,
-    transcript_dir: &Path,
-) -> Vec<TranscriptRow> {
-    let results = ToolResults::new(saved);
-    let (parts, activity) = projection_parts(saved, live, &results);
-    let result_for = |part: &TranscriptPart, item: &Value| {
-        results
-            .get(part, item, !activity.unsaved.contains(&part.source_key))
-            .map(|part| (part.number, part.tool.as_ref().unwrap()))
-    };
-    let by_number: HashMap<_, _> = parts
-        .iter()
-        .map(|part| (part.number, part.as_ref()))
-        .collect();
-    let visible = |part: &TranscriptPart| {
-        window.contains(&part.number) || activity.unsaved.contains(&part.source_key)
-    };
-    let mut work_at = HashMap::new();
-    let mut selected_items = HashSet::new();
-    for block in derive_work_blocks(parts.iter().map(AsRef::as_ref)) {
-        let Some(first) = block.items.first() else {
-            continue;
-        };
-        let id = block.id;
-        if matches!(scope, ProjectionScope::Work(target) if *target == id) {
-            selected_items.extend(
-                block
-                    .items
-                    .iter()
-                    .map(|position| (position.part, position.item)),
-            );
+#[derive(Clone, Debug)]
+struct RunTally {
+    id: String,
+    block: Option<Row>,
+    calls: Vec<WaitingCall>,
+    results: Vec<TranscriptPart>,
+}
+
+#[derive(Clone, Debug)]
+struct WaitingCall {
+    row: Row,
+    input: Value,
+    key: CallKey,
+}
+
+#[derive(Clone, Debug)]
+enum CallKey {
+    Invocation(String),
+    /// Calls saved before tool invocation IDs existed match their result's provider call ID.
+    Provider(String),
+}
+
+impl CallKey {
+    fn of(item: &Value, saved: bool) -> Option<Self> {
+        if item["type"] != "tool-call" {
+            return None;
         }
-        if !(matches!(scope, ProjectionScope::Thread)
-            || matches!(scope, ProjectionScope::Row(target) if *target == id))
-        {
-            continue;
+        if let Some(invocation) = item["toolInvocationId"].as_str() {
+            return Some(Self::Invocation(invocation.to_owned()));
         }
-        let mut tool_counts = BTreeMap::new();
-        let mut in_window = false;
-        for position in &block.items {
-            let part = by_number[&position.part];
-            let item = &part.content_items()[position.item as usize];
-            in_window |= visible(part);
-            if item["type"] == "tool-call" {
-                *tool_counts
-                    .entry(item["name"].as_str().unwrap_or("tool").to_owned())
-                    .or_insert(0) += 1;
-                in_window |=
-                    result_for(part, item).is_some_and(|(number, _)| window.contains(&number));
-            }
-        }
-        if in_window || matches!(scope, ProjectionScope::Row(target) if *target == id) {
-            work_at.insert(
-                (first.part, first.item),
-                TranscriptRow {
-                    id,
-                    run_id: block.run_id,
-                    body: TranscriptRowBody::Work {
-                        tool_counts,
-                        // Clients settle rows from runs that are no longer active.
-                        running: !block.closed,
-                    },
-                },
-            );
+        // Providers reuse call IDs, so a live call only matches by its invocation once saved.
+        item["callId"]
+            .as_str()
+            .filter(|call| saved && !call.is_empty())
+            .map(|call| Self::Provider(call.to_owned()))
+    }
+
+    fn matches(&self, result: &TranscriptToolBody) -> bool {
+        match self {
+            Self::Invocation(id) => result.tool_invocation_id.as_deref() == Some(id.as_str()),
+            Self::Provider(id) => result.call_id == *id,
         }
     }
-    let mut rows = Vec::new();
-    let mut commands: HashMap<String, Option<String>> = HashMap::new();
-    for part in &parts {
-        if let Some(prompt) = &part.prompt
-            && prompt.hidden.is_none()
-            && (matches!(scope, ProjectionScope::Thread) && visible(part)
-                || matches!(scope, ProjectionScope::Row(target) if *target == item_id("prompt", part, 0)))
-        {
-            rows.push(TranscriptRow {
-                id: item_id("prompt", part, 0),
-                run_id: part.run_id.clone(),
-                body: TranscriptRowBody::Prompt {
-                    text: prompt.text.clone(),
-                    attachments: prompt.image_uploads.clone(),
-                },
-            });
+}
+
+/// Rows a live view adds or changes on top of the saved ones, and the rows still streaming.
+#[derive(Debug, Default)]
+pub struct LiveRows {
+    pub rows: Vec<Row>,
+    pub streaming: HashSet<String>,
+}
+
+impl RowTally {
+    pub fn apply(&mut self, part: &TranscriptPart, commands: &mut SessionCommands) -> Vec<Row> {
+        let mut changes = Vec::new();
+        self.apply_part(part, true, commands, &mut changes);
+        changes
+    }
+
+    /// Turns results still waiting for a call into rows. Call it where folding stops.
+    pub fn settle(&mut self, commands: &mut SessionCommands) -> Vec<Row> {
+        let mut changes = Vec::new();
+        if let Some(run) = &mut self.run {
+            run.flush(commands, &mut changes);
         }
-        for (offset, item) in part.content_items().iter().enumerate() {
-            let position = (part.number, offset as u32);
-            if let Some(work) = work_at.remove(&position) {
-                rows.push(work);
-            }
-            let kind = item["type"].as_str().unwrap_or_default();
-            let text = item["text"].as_str().unwrap_or_default();
-            if matches!(kind, "text" | "reasoning") && text.trim().is_empty() {
-                continue;
-            }
-            let id = item_id(
-                if kind == "tool-call" { "tool" } else { kind },
-                part,
-                offset,
-            );
-            let full = matches!(scope, ProjectionScope::Item(target) | ProjectionScope::Row(target) if *target == id);
-            if !(full
-                || selected_items.contains(&position)
-                || matches!(scope, ProjectionScope::Thread) && kind == "text" && visible(part))
+        changes
+    }
+
+    /// The rows after `overlays`, in order, on a copy of this state. Overlays whose completion
+    /// `is_saved` only mark their rows streaming. Waiting results can still pair with live calls.
+    pub fn live_rows(
+        &self,
+        overlays: &[LiveCompletionOverlay],
+        is_saved: impl Fn(&str) -> bool,
+        commands: &mut SessionCommands,
+    ) -> LiveRows {
+        let mut tally = self.clone();
+        let mut live = LiveRows::default();
+        for overlay in overlays {
+            let part = live_part(overlay);
+            let items = part.content_items();
+            if !overlay.run_status.is_final()
+                && let Some(item) = items.last()
+                && let Some(kind @ ("text" | "reasoning")) = item["type"].as_str()
             {
-                continue;
+                live.streaming.insert(item_id(kind, &part, items.len() - 1));
             }
-            let running = activity.streaming.contains(&id);
-            let body = match kind {
-                "text" => TranscriptRowBody::Text {
-                    text: text.to_owned(),
-                    running,
-                },
-                "reasoning" => TranscriptRowBody::Reasoning {
-                    label: if running {
-                        "Thinking".to_owned()
-                    } else {
-                        reasoning_label(text)
-                    },
-                    running,
-                    text: full.then(|| text.to_owned()),
-                },
-                "tool-call" => {
-                    let name = item["name"].as_str().unwrap_or("tool");
-                    let result = result_for(part, item).map(|(_, tool)| tool);
-                    let status = ToolStatus::from_result(result.map(|tool| tool.status.as_str()));
-                    let input = ToolDisplayInput::new(
-                        name,
-                        &item["input"],
-                        result.and_then(|tool| tool.output.as_ref()),
-                        status,
-                    );
-                    let mut display = input.display(None);
-                    if let Some(targets) = polled_targets(
-                        name,
-                        &item["input"],
-                        result.and_then(|tool| tool.output.as_ref()),
-                        status,
-                    ) {
-                        let mut summaries = Vec::with_capacity(targets.len());
-                        for input in targets {
-                            let target =
-                                command_display(name, &input, transcript_dir, &mut commands).await;
-                            summaries.push(match target.error {
-                                Some(error) if display.error.is_none() => {
-                                    format!("{}: {error}", target.summary)
-                                }
-                                _ => target.summary,
-                            });
-                        }
-                        display.summary = summaries.join("\n");
-                    } else {
-                        display =
-                            command_display(name, &input, transcript_dir, &mut commands).await;
-                    }
-                    let has_more = if full { false } else { display.shorten() };
-                    TranscriptRowBody::Tool {
-                        name: name.to_owned(),
-                        display,
-                        has_more,
-                    }
-                }
-                _ => continue,
-            };
-            rows.push(TranscriptRow {
-                id,
-                run_id: part.run_id.clone(),
-                body,
+            if !is_saved(&part.source_key) {
+                tally.apply_part(&part, false, commands, &mut live.rows);
+            }
+        }
+        live.rows.extend(tally.settle(commands));
+        live
+    }
+
+    fn apply_part(
+        &mut self,
+        part: &TranscriptPart,
+        saved: bool,
+        commands: &mut SessionCommands,
+        changes: &mut Vec<Row>,
+    ) {
+        if self.run.as_ref().is_none_or(|run| run.id != part.run_id) {
+            changes.extend(self.settle(commands));
+            self.run = Some(RunTally {
+                id: part.run_id.clone(),
+                block: None,
+                calls: Vec::new(),
+                results: Vec::new(),
             });
         }
+        let run = self.run.as_mut().expect("the part's run was just set");
+        if let Some(tool) = &part.tool {
+            // Older agents saved a `started` part before each result.
+            if tool.status != "started" {
+                run.result(part, tool, commands, changes);
+            }
+        } else if let Some(prompt) = &part.prompt {
+            run.flush(commands, changes);
+            if prompt.hidden.is_none() {
+                changes.push(Row {
+                    id: item_id("prompt", part, 0),
+                    run_id: part.run_id.clone(),
+                    part: part.number,
+                    body: RowBody::Prompt {
+                        text: prompt.text.clone(),
+                        attachments: prompt.image_uploads.clone(),
+                    },
+                });
+            }
+        } else {
+            run.completion(part, saved, commands, changes);
+        }
     }
-    rows
 }
 
-async fn command_display(
+fn live_part(overlay: &LiveCompletionOverlay) -> TranscriptPart {
+    let mut items: Vec<Value> = overlay
+        .parts
+        .iter()
+        .map(|item| serde_json::to_value(item).expect("live assistant parts serialize"))
+        .collect();
+    items.sort_by_key(|item| item_index(item, usize::MAX));
+    TranscriptPart {
+        number: LIVE_PART,
+        source_key: completion_source_key(overlay),
+        kind: TranscriptPartKind::Completion,
+        run_id: overlay.run_id.clone(),
+        created_at: None,
+        prompt: None,
+        completion: Some(TranscriptCompletionBody { items }),
+        tool: None,
+    }
+}
+
+struct Call<'a> {
+    id: String,
+    work: String,
+    part: u32,
+    name: &'a str,
+    input: &'a Value,
+    key: Option<CallKey>,
+    result: Option<&'a TranscriptPart>,
+}
+
+impl RunTally {
+    fn completion(
+        &mut self,
+        part: &TranscriptPart,
+        saved: bool,
+        commands: &mut SessionCommands,
+        changes: &mut Vec<Row>,
+    ) {
+        let items = part.content_items();
+        let keys: Vec<_> = items.iter().map(|item| CallKey::of(item, saved)).collect();
+        let early_results: Vec<_> = keys
+            .iter()
+            .map(|key| {
+                let key = key.as_ref()?;
+                let index = self.results.iter().position(|result| {
+                    result.tool.as_ref().is_some_and(|tool| key.matches(tool))
+                })?;
+                Some(self.results.remove(index))
+            })
+            .collect();
+        self.flush(commands, changes);
+        for (offset, (item, key)) in items.iter().zip(keys).enumerate() {
+            let kind = item["type"].as_str().unwrap_or_default();
+            match kind {
+                "text" | "reasoning" if !has_text(item) => {}
+                "text" => {
+                    self.close(changes);
+                    changes.push(Row {
+                        id: item_id(kind, part, offset),
+                        run_id: self.id.clone(),
+                        part: part.number,
+                        body: RowBody::Text {
+                            text: item["text"].as_str().unwrap_or_default().to_owned(),
+                            running: false,
+                        },
+                    });
+                }
+                "reasoning" => {
+                    let opened = self.block.is_none();
+                    let block = self.open_block(item_id("work", part, offset), part.number);
+                    let work = block.id.clone();
+                    if opened {
+                        changes.push(block.clone());
+                    }
+                    changes.push(Row {
+                        id: item_id(kind, part, offset),
+                        run_id: self.id.clone(),
+                        part: part.number,
+                        body: RowBody::Reasoning {
+                            work,
+                            text: item["text"].as_str().unwrap_or_default().to_owned(),
+                            running: false,
+                        },
+                    });
+                }
+                "tool-call" => self.call(
+                    Call {
+                        id: item_id("tool", part, offset),
+                        work: item_id("work", part, offset),
+                        part: part.number,
+                        name: item["name"].as_str().unwrap_or("tool"),
+                        input: &item["input"],
+                        key,
+                        result: early_results[offset].as_ref(),
+                    },
+                    commands,
+                    changes,
+                ),
+                _ => {}
+            }
+        }
+    }
+
+    fn result(
+        &mut self,
+        part: &TranscriptPart,
+        tool: &TranscriptToolBody,
+        commands: &mut SessionCommands,
+        changes: &mut Vec<Row>,
+    ) {
+        let Some(index) = self.calls.iter().position(|call| call.key.matches(tool)) else {
+            self.results.push(part.clone());
+            return;
+        };
+        let WaitingCall { mut row, input, .. } = self.calls.remove(index);
+        if let RowBody::Tool {
+            name,
+            display,
+            result,
+            ..
+        } = &mut row.body
+        {
+            *display = tool_display(name, &input, Some(tool), commands);
+            *result = Some(part.number);
+        }
+        changes.push(row);
+    }
+
+    /// Results that no call claimed become rows where they were saved.
+    fn flush(&mut self, commands: &mut SessionCommands, changes: &mut Vec<Row>) {
+        for result in std::mem::take(&mut self.results) {
+            let Some(tool) = &result.tool else { continue };
+            let input = tool.input.clone().unwrap_or_default();
+            let id = format!("{}:{}:0", self.id, result.source_key);
+            self.call(
+                Call {
+                    id: format!("tool:{id}"),
+                    work: format!("work:{id}"),
+                    part: result.number,
+                    name: &tool.name,
+                    input: &input,
+                    key: None,
+                    result: Some(&result),
+                },
+                commands,
+                changes,
+            );
+        }
+    }
+
+    fn call(&mut self, call: Call<'_>, commands: &mut SessionCommands, changes: &mut Vec<Row>) {
+        let block = self.open_block(call.work, call.part);
+        if let RowBody::Work { tool_counts, .. } = &mut block.body {
+            *tool_counts.entry(call.name.to_owned()).or_insert(0) += 1;
+        }
+        changes.push(block.clone());
+        let work = block.id.clone();
+        let result = call.result.and_then(|part| part.tool.as_ref());
+        let row = Row {
+            id: call.id,
+            run_id: self.id.clone(),
+            part: call.part,
+            body: RowBody::Tool {
+                work,
+                name: call.name.to_owned(),
+                display: tool_display(call.name, call.input, result, commands),
+                result: call.result.map(|part| part.number),
+            },
+        };
+        if result.is_none()
+            && let Some(key) = call.key
+        {
+            self.calls.push(WaitingCall {
+                row: row.clone(),
+                input: call.input.clone(),
+                key,
+            });
+        }
+        changes.push(row);
+    }
+
+    fn open_block(&mut self, id: String, part: u32) -> &mut Row {
+        self.block.get_or_insert_with(|| Row {
+            id,
+            run_id: self.id.clone(),
+            part,
+            body: RowBody::Work {
+                tool_counts: BTreeMap::new(),
+                running: true,
+            },
+        })
+    }
+
+    fn close(&mut self, changes: &mut Vec<Row>) {
+        if let Some(mut block) = self.block.take() {
+            if let RowBody::Work { running, .. } = &mut block.body {
+                *running = false;
+            }
+            changes.push(block);
+        }
+    }
+}
+
+fn tool_display(
+    name: &str,
+    input: &Value,
+    result: Option<&TranscriptToolBody>,
+    commands: &mut SessionCommands,
+) -> ToolDisplay {
+    let output = result.and_then(|tool| tool.output.as_ref());
+    let status = ToolStatus::from_result(result.map(|tool| tool.status.as_str()));
+    let display_input = ToolDisplayInput::new(name, input, output, status);
+    let Some(targets) = polled_targets(name, input, output, status) else {
+        return command_display(name, &display_input, commands);
+    };
+    let mut display = display_input.display(None);
+    display.summary = targets
+        .iter()
+        .map(|target| {
+            let target_display = command_display(name, target, commands);
+            match target_display.error {
+                Some(error) if display.error.is_none() => {
+                    format!("{}: {error}", target_display.summary)
+                }
+                _ => target_display.summary,
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    display
+}
+
+fn command_display(
     name: &str,
     input: &ToolDisplayInput<'_>,
-    transcript_dir: &Path,
-    commands: &mut HashMap<String, Option<String>>,
+    commands: &mut SessionCommands,
 ) -> ToolDisplay {
-    let command = match input.session_id().filter(|_| is_session_command(name)) {
-        Some(session) => {
-            if !commands.contains_key(session) {
-                let command = match uuid::Uuid::parse_str(session) {
-                    Ok(id) => load_session_command(transcript_dir, id).await,
-                    Err(_) => None,
-                };
-                commands.insert(session.to_owned(), command);
-            }
-            commands[session].as_deref()
-        }
-        None => None,
-    };
+    let command = input
+        .session_id()
+        .filter(|_| is_session_command(name))
+        .and_then(|session| commands.get(session));
     input.display(command)
 }
 
