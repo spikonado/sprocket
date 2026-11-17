@@ -118,7 +118,7 @@ impl ContextHandoffWrite<'_> {
 #[derive(Clone)]
 pub(crate) struct RuntimeClient {
     pub(crate) output: Option<std::sync::Arc<crate::RunOutput>>,
-    pub(crate) client: ConvexRpcClient,
+    client: ConvexRpcClient,
     execution_secret: String,
 }
 
@@ -161,24 +161,12 @@ impl RuntimeClient {
         }
     }
 
-    pub(crate) async fn from_request(request: &RunAgentRequest) -> anyhow::Result<Self> {
-        eprintln!(
-            "sprocket-agent: initializing Convex client for thread {}",
-            request.thread_id
-        );
-        let client = ConvexRpcClient::new(&request.deployment_url).await?;
-        client
-            .set_auth_token_fetcher(request.auth_token_fetcher.clone())
-            .await?;
-        eprintln!(
-            "sprocket-agent: Convex client ready for thread {}",
-            request.thread_id
-        );
-        Ok(Self {
+    pub(crate) fn from_request(request: &RunAgentRequest) -> Self {
+        Self {
             output: None,
-            client,
+            client: request.run_convex.clone(),
             execution_secret: request.execution_secret.clone(),
-        })
+        }
     }
 
     pub(crate) async fn query_json<T: for<'de> Deserialize<'de>>(
@@ -342,8 +330,8 @@ impl RuntimeClient {
         let mut retry_delay = TRANSPORT_INITIAL_RETRY_DELAY;
         let mut last_error = None;
         for attempt in 1..=TRANSPORT_MAX_ATTEMPTS {
-            match self
-                .client
+            match request
+                .user_convex
                 .action("agentRuntime:createGatewayRun", args.clone())
                 .await
             {

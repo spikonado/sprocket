@@ -171,9 +171,17 @@ async fn launch_agent_inner(
         .register(&payload.user_id)
         .await
         .map_err(LaunchError::Rejected)?;
-    let auth_token_fetcher = host
-        .native_auth
-        .auth_token_fetcher_for_user(payload.user_id.clone());
+    let user_convex = host
+        .convex
+        .client_for(&payload.user_id)
+        .await
+        .map_err(LaunchError::Internal)?
+        .into_rpc_client();
+    let run_convex = host
+        .convex
+        .anonymous()
+        .await
+        .map_err(LaunchError::Internal)?;
     let automatic_recovery = recovery.is_some();
     let mut recovery = recovery.unwrap_or_else(|| {
         crate::run_recovery::RecoveryRecord::new(
@@ -200,7 +208,8 @@ async fn launch_agent_inner(
         allow_interaction,
         cancellation,
         deployment_url: host.convex.deployment_url().to_owned(),
-        auth_token_fetcher: auth_token_fetcher.clone(),
+        user_convex,
+        run_convex,
         execution_secret: saved
             .request
             .execution_secret
@@ -245,8 +254,6 @@ async fn launch_agent_inner(
             Ok(run) => Ok(run),
             Err(error) => {
                 let startup_error = format!("{error:#}");
-                let mut cleanup_request = cleanup_request;
-                cleanup_request.auth_token_fetcher = auth_token_fetcher;
                 let cleanup = timeout(
                     AGENT_START_CLEANUP_TIMEOUT,
                     finalize_failed_start(cleanup_request, &error),

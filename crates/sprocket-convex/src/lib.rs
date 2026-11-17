@@ -139,14 +139,6 @@ impl Client {
         Ok(())
     }
 
-    pub async fn clear_auth(&self) {
-        let mut convex = self.inner.convex.lock().await;
-        self.inner.auth.clear().await;
-        if let Some(convex) = convex.as_mut() {
-            convex.set_auth_callback(None).await;
-        }
-    }
-
     pub async fn query(
         &self,
         function: &str,

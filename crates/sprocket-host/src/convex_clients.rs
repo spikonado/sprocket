@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use tokio::sync::{Mutex, watch};
+use tokio::sync::{Mutex, OnceCell, watch};
 
 use crate::native_auth::NativeAuthManager;
 use crate::transcript_client::UserConvexClient;
@@ -11,6 +11,7 @@ pub struct ConvexClients {
     deployment_url: String,
     native_auth: Arc<NativeAuthManager>,
     cache: Mutex<Cache>,
+    anonymous: OnceCell<sprocket_convex::Client>,
 }
 
 struct Cache {
@@ -28,11 +29,21 @@ impl ConvexClients {
                 session_changes,
                 clients: HashMap::new(),
             }),
+            anonymous: OnceCell::new(),
         })
     }
 
     pub fn deployment_url(&self) -> &str {
         &self.deployment_url
+    }
+
+    /// Agent runs authenticate each call with their execution secret, so they share this
+    /// signed-out client. It never closes, since only a failed token refresh closes a client.
+    pub async fn anonymous(&self) -> anyhow::Result<sprocket_convex::Client> {
+        self.anonymous
+            .get_or_try_init(|| sprocket_convex::Client::new(&self.deployment_url))
+            .await
+            .cloned()
     }
 
     pub async fn client_for(&self, user_id: &str) -> anyhow::Result<UserConvexClient> {
