@@ -305,18 +305,17 @@ impl Browser {
 
     async fn catch_up(&mut self, rows: &ThreadRowsLease) {
         while let Ok(change) = self.changes.try_recv() {
-            match &*change {
-                Change::Reset => {
-                    let resets = self.resets + 1;
-                    *self = Self::watch(rows, self.filter.request.clone()).await;
-                    self.resets = resets;
+            if let Change::Rows(updates) = &*change
+                && let Some(updates) = self.filter.apply(updates)
+            {
+                for update in updates {
+                    self.apply(update);
                 }
-                Change::Rows(updates) => {
-                    for update in self.filter.apply(updates) {
-                        self.apply(update);
-                    }
-                }
+                continue;
             }
+            let resets = self.resets + 1;
+            *self = Self::watch(rows, self.filter.request.clone()).await;
+            self.resets = resets;
         }
     }
 
@@ -551,4 +550,54 @@ async fn watched_rows_match_a_fresh_snapshot_after_every_change() {
         browsers.iter().all(|browser| browser.resets == 1),
         "only the retry moves rows"
     );
+}
+
+#[tokio::test]
+async fn a_late_result_shows_its_block_from_before_the_watched_rows() {
+    let (state, _root) = state();
+    let store = &state.host.transcript;
+    let mut parts = vec![
+        prompt(0, "run", None),
+        completion(
+            1,
+            "run",
+            "c1",
+            json!([
+                {"type":"tool-call", "callId":"call", "toolInvocationId":"inv", "name":"exec_cmd",
+                    "input":{"cmd":"sleep 1"}},
+                {"type":"text", "text":"Waiting"}
+            ]),
+        ),
+    ];
+    parts.extend((2..250).map(|number| reasoning(number, "run")));
+    store.append_parts("user", "thread", &parts).await.unwrap();
+    let rows = thread_rows(&state, cached());
+    rows.build(&mut *rows.folder.lock().await, &|| {})
+        .await
+        .unwrap();
+    let request = Request::Thread { before: None };
+    let mut browser = Browser::watch(&rows, request.clone()).await;
+    let ids = |browser: &Browser| -> Vec<String> {
+        browser.rows.iter().map(|row| row.id.clone()).collect()
+    };
+    assert_eq!(ids(&browser), ["work:run:source:2:0"]);
+    let result = tool(
+        250,
+        "run",
+        "tool:inv:finished",
+        json!({"toolInvocationId":"inv", "callId":"call", "name":"exec_cmd", "status":"cancelled"}),
+    );
+    store
+        .append_parts("user", "thread", &[result])
+        .await
+        .unwrap();
+    let mut live = LiveWindow::default();
+    let mut folder = rows.folder.lock().await;
+    rows.refresh(&mut folder, &mut live, true, false)
+        .await
+        .unwrap();
+    drop(folder);
+    browser.catch_up(&rows).await;
+    assert_eq!(ids(&browser), ["work:run:c1:0", "work:run:source:2:0"]);
+    assert_eq!(browser.rows, fresh(&state, &live, &request).await);
 }

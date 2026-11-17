@@ -135,7 +135,8 @@ impl Filter {
         }
     }
 
-    fn apply(&mut self, updates: &[Update]) -> Vec<TranscriptRowUpdate> {
+    /// The updates to send, or `None` when the watch needs a new snapshot instead.
+    fn apply(&mut self, updates: &[Update]) -> Option<Vec<TranscriptRowUpdate>> {
         let scope = self.request.scope();
         let mut sent = Vec::new();
         for update in updates {
@@ -152,6 +153,13 @@ impl Filter {
                             .map(|row| TranscriptRowUpdate::Row { row }),
                     );
                 }
+                // A late result can show a block from before this watch's first row.
+                Update::Changed(row)
+                    if scope == RowScope::Thread
+                        && row.work().is_some_and(|work| !self.known.contains(work)) =>
+                {
+                    return None;
+                }
                 // Work rows label reasoning without its text.
                 Update::Append { id, offset, text }
                     if scope != RowScope::Work && self.known.contains(id) =>
@@ -165,7 +173,7 @@ impl Filter {
                 _ => {}
             }
         }
-        sent
+        Some(sent)
     }
 }
 
@@ -335,25 +343,23 @@ async fn next_event(mut watch: Watch) -> Option<(TranscriptRowsEvent, Watch)> {
             Err(RecvError::Lagged(_)) => Arc::new(Change::Reset),
             Err(RecvError::Closed) => return None,
         };
-        match &*change {
-            Change::Rows(updates) => {
-                let updates = watch.filter.apply(updates);
-                if !updates.is_empty() {
-                    return Some((TranscriptRowsEvent::Batch { updates }, watch));
-                }
+        if let Change::Rows(updates) = &*change
+            && let Some(updates) = watch.filter.apply(updates)
+        {
+            if !updates.is_empty() {
+                return Some((TranscriptRowsEvent::Batch { updates }, watch));
             }
-            Change::Reset => {
-                let (snapshot, filter, receiver) = open(&watch.rows, &watch.filter.request)
-                    .await
-                    .inspect_err(|error| {
-                        tracing::warn!("could not reload transcript rows: {error:#}");
-                    })
-                    .ok()?;
-                watch.filter = filter;
-                watch.receiver = receiver;
-                return Some((TranscriptRowsEvent::Snapshot { snapshot }, watch));
-            }
+            continue;
         }
+        let (snapshot, filter, receiver) = open(&watch.rows, &watch.filter.request)
+            .await
+            .inspect_err(|error| {
+                tracing::warn!("could not reload transcript rows: {error:#}");
+            })
+            .ok()?;
+        watch.filter = filter;
+        watch.receiver = receiver;
+        return Some((TranscriptRowsEvent::Snapshot { snapshot }, watch));
     }
 }
 
