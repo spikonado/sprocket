@@ -45,6 +45,7 @@ const FAILURE_CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(250);
 const CONTINUE_PROMPT: &str = "continue";
 const SYSTEM_PROMPT_TEMPLATE: &str = include_str!("system_prompt.md");
 const MODEL_IDENTITY_PLACEHOLDER: &str = "{{MODEL_IDENTITY}}";
+const REASONING_EFFORT_PLACEHOLDER: &str = "{{REASONING_EFFORT}}";
 const COMMIT_CO_AUTHOR_PLACEHOLDER: &str = "{{COMMIT_CO_AUTHOR}}";
 const COMMIT_CO_AUTHOR_LINE: &str = "- End the message of each git commit you make with the trailer `Co-authored-by: usesprocket[bot] <306702232+usesprocket[bot]@users.noreply.github.com>`.";
 
@@ -100,7 +101,12 @@ fn restore_cwd(workspace_root: &Path, saved: Option<&str>) -> PathBuf {
         .unwrap_or_else(|| workspace_root.to_path_buf())
 }
 
-fn base_instructions(model_label: &str, model_id: &str, co_author_commits: bool) -> String {
+fn base_instructions(
+    model_label: &str,
+    model_id: &str,
+    reasoning_effort: &str,
+    co_author_commits: bool,
+) -> String {
     let co_author = if co_author_commits {
         format!("\n{COMMIT_CO_AUTHOR_LINE}")
     } else {
@@ -112,6 +118,7 @@ fn base_instructions(model_label: &str, model_id: &str, co_author_commits: bool)
             MODEL_IDENTITY_PLACEHOLDER,
             &format!("Your model is {model_label} ({model_id})."),
         )
+        .replace(REASONING_EFFORT_PLACEHOLDER, reasoning_effort)
         .replace(&format!("\n{COMMIT_CO_AUTHOR_PLACEHOLDER}"), &co_author)
 }
 
@@ -769,6 +776,7 @@ pub async fn run_agent(
                 base_instructions: base_instructions(
                     &handoff_capabilities.label,
                     &handoff.selected_model,
+                    &handoff.reasoning_effort,
                     context.co_author_commits,
                 ),
                 usage_pricing: handoff_capabilities.usage_pricing,
@@ -869,6 +877,7 @@ pub async fn run_agent(
         let system_prompt = base_instructions(
             &capabilities.label,
             &context.run.selected_model,
+            &reasoning_effort,
             context.co_author_commits,
         );
         let continue_without_prompt = should_continue_without_prompt(
