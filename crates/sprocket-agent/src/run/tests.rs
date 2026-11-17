@@ -2,6 +2,7 @@ use super::{base_instructions, should_continue_without_prompt};
 
 const MODEL_LABEL: &str = "GPT-5.6 Sol";
 const MODEL_ID: &str = "gpt-5.6-sol";
+const REASONING_EFFORT: &str = "xhigh";
 
 #[tokio::test]
 async fn context_readiness_uses_captured_cutoff_and_cached_handoff_part() {
@@ -83,20 +84,19 @@ fn prompted_continuations_use_their_user_prompt() {
 
 #[test]
 fn base_instructions_include_the_selected_model_identity() {
-    let instructions = base_instructions(MODEL_LABEL, MODEL_ID, false);
+    let instructions = base_instructions(MODEL_LABEL, MODEL_ID, REASONING_EFFORT, false);
 
-    assert!(
-        instructions
-            .lines()
-            .any(|line| line == "- Your model is GPT-5.6 Sol (gpt-5.6-sol).")
-    );
+    assert!(instructions.contains(
+        "- Your model is GPT-5.6 Sol (gpt-5.6-sol).\n- Your reasoning effort is xhigh.\n"
+    ));
     assert!(!instructions.contains(super::MODEL_IDENTITY_PLACEHOLDER));
+    assert!(!instructions.contains(super::REASONING_EFFORT_PLACEHOLDER));
 }
 
 #[test]
 fn base_instructions_follow_the_co_author_preference() {
-    let with = base_instructions(MODEL_LABEL, MODEL_ID, true);
-    let without = base_instructions(MODEL_LABEL, MODEL_ID, false);
+    let with = base_instructions(MODEL_LABEL, MODEL_ID, REASONING_EFFORT, true);
+    let without = base_instructions(MODEL_LABEL, MODEL_ID, REASONING_EFFORT, false);
 
     assert!(with.contains("PRs you or your subagents are working on to your thread.\n- End the message of each git commit"));
     assert!(without.contains("PRs you or your subagents are working on to your thread.\n\n## "));
