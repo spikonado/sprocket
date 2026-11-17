@@ -9427,6 +9427,7 @@ dependencies = [
  "keyring",
  "libc",
  "memmap2",
+ "notify",
  "nsis",
  "portable-pty",
  "reqwest 0.13.5",
