@@ -36,6 +36,10 @@ jobs:
 
       # The CLI writes unformatted files, so formatting keeps no-op runs from producing a diff.
       - name: Update skills in skills-lock.json
+        # With no agent detected, the CLI installs into every agent's directory, including Eve's agent/skills.
+        # Codex reads .agents/skills, so this keeps updates there.
+        env:
+          AI_AGENT: codex
         run: |
           npx -y skills update -p -y
           bun fmt skills-lock.json .agents/skills
