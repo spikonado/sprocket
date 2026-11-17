@@ -30,6 +30,10 @@ Released UIs call `providerCredentials:saveOpenAiKey` and `removeOpenAiKey`, and
 
 Released agents call `firecrawlRequests:start`, `getResult` and `dispose`. These forward to `webRequests`, so released scrapes run on context.dev and return no `summary`. `start` rejects `kind: 'screenshot'` with "This tool is no longer supported." `getResult` and `dispose` accept any string ID, so IDs from the old table report the request as ended. Remove the module once clients that call `firecrawlRequests:*` age out.
 
+### Retired command sync
+
+Released hosts call `commands:get` to decide whether to upload each local command session, and to read sessions they can't find on disk. `get` returns a finished, failed command with no output, so hosts mark every session synced, report missing sessions as failed, and never call the removed `sync` or `getLogChunks`. Remove `commands.ts` once hosts that call `commands:get` age out.
+
 ### Artifact types
 
 Released agents send `contentType` to `artifacts:addArtifact` and `artifacts:editArtifact`, which accept and ignore it. Released agents read `type` from `artifacts:getArtifactForRun`, and released servers read it from `artifacts:listArtifacts`, so `artifacts.ts` derives it from the title. Released agents also start `add_artifact` and `edit_artifact` jobs, so `vCurrentExecutorJobKind` keeps both kinds. Once those clients age out, remove the argument and the derived `type` from the artifact functions, and move both kinds to `vStoredExecutorJobKind`. Stored jobs of both kinds stay readable, see the permanent list.
@@ -139,6 +143,10 @@ Usage charged before the `usage` table lives in `modelUsageMonthly` buckets of t
 ### Retired Prava mandate rows
 
 `mandates` and `mandateCharges` are untyped tables kept only so the schema accepts their old rows. Remove both tables after `bunx convex run payments:deleteRetiredMandates` has emptied them on each deployment, and remove that mutation with them. Delete the unmounted `actionRetrier` component's data on each deployment at the same time.
+
+### Retired command sync tables
+
+`commandSessions` and `commandLogChunks` are untyped tables kept only so the schema accepts their old rows. `clearCommandSessions` and `clearCommandLogChunks` in `migrations.ts` delete those rows, and the Convex Production workflow runs both after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports both done on each deployment, remove the tables and the migrations.
 
 ### Stored executor job and result fields
 

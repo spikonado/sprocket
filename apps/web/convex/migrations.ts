@@ -44,9 +44,10 @@ async function moveGrants(ctx: MutationCtx, userId: string): Promise<void> {
 	for (const grant of grants) await ctx.db.delete('subscriptions', grant._id);
 }
 
-function deleteEveryRow(table: TableNames) {
+function deleteEveryRow(table: TableNames, batchSize?: number) {
 	return migrations.define({
 		table,
+		batchSize,
 		migrateOne: async (ctx, row) => {
 			await ctx.db.delete(table, row._id);
 		}
@@ -154,6 +155,11 @@ export const clearCheckoutAttempts = deleteEveryRow('billingCheckoutAttempts');
 
 export const clearPricingCache = deleteEveryRow('dodoPricingCache');
 
+export const clearCommandSessions = deleteEveryRow('commandSessions');
+
+// Each chunk holds up to 128 KiB, so the default 100-row batch nears the 16 MiB read limit.
+export const clearCommandLogChunks = deleteEveryRow('commandLogChunks', 20);
+
 export const resyncDodoCustomers = migrations.define({
 	table: 'users',
 	customRange: (query) =>
@@ -196,6 +202,8 @@ export const run = migrations.runner([
 	internal.migrations.clearCheckoutSessions,
 	internal.migrations.clearCheckoutAttempts,
 	internal.migrations.clearPricingCache,
+	internal.migrations.clearCommandSessions,
+	internal.migrations.clearCommandLogChunks,
 	internal.migrations.resyncDodoCustomers,
 	internal.migrations.backfillThreadCompletionProviders,
 	internal.migrations.backfillRunCompletionProviders

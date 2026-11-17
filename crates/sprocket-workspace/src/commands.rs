@@ -21,7 +21,7 @@ use tokio::sync::{Mutex, mpsc, oneshot, watch};
 
 use self::process::{
     CommandCompletion, CommandProcess, StdinRequest, build_shell_command, capture_pipes,
-    completion_output, signal_change, supervise_command, write_command_input,
+    signal_change, supervise_command, write_command_input,
 };
 
 const STDIN_QUEUE_CAPACITY: usize = 8;
@@ -78,19 +78,9 @@ pub struct RunningCommand {
 
 type CommandLifetimeGuard = Box<dyn Send + Sync>;
 type CommandLifetimeGuardFactory = Arc<dyn Fn() -> Result<CommandLifetimeGuard> + Send + Sync>;
-type HistoryFuture =
-    std::pin::Pin<Box<dyn std::future::Future<Output = Result<Option<CommandHistory>>> + Send>>;
-type HistoryResolver = Arc<dyn Fn(String, PathBuf) -> HistoryFuture + Send + Sync>;
 type Environment = Vec<(OsString, OsString)>;
 type EnvironmentFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Environment> + Send>>;
 type CommandEnvironment = Arc<dyn Fn() -> EnvironmentFuture + Send + Sync>;
-
-#[derive(Clone, Default)]
-struct HistoryScope {
-    user_id: String,
-    thread_id: String,
-    machine_id: String,
-}
 
 #[derive(Clone)]
 pub struct CommandSessionManager {
@@ -103,9 +93,6 @@ pub struct CommandSessionManager {
     stopped: Arc<AtomicBool>,
     lifetime_guard_factory: Option<CommandLifetimeGuardFactory>,
     container: Option<CommandContainer>,
-    history_scope: HistoryScope,
-    history_resolver: Option<HistoryResolver>,
-    history_fetch_lock: Arc<Mutex<()>>,
     changes: Option<watch::Sender<()>>,
 }
 
@@ -121,9 +108,6 @@ impl CommandSessionManager {
             stopped: Arc::new(AtomicBool::new(false)),
             lifetime_guard_factory: None,
             container: None,
-            history_scope: Default::default(),
-            history_resolver: None,
-            history_fetch_lock: Arc::new(Mutex::new(())),
             changes: None,
         }
     }
@@ -143,52 +127,6 @@ impl CommandSessionManager {
         self
     }
 
-    pub fn with_history_scope(
-        mut self,
-        user_id: String,
-        thread_id: String,
-        machine_id: String,
-    ) -> Self {
-        self.history_scope = HistoryScope {
-            user_id,
-            thread_id,
-            machine_id,
-        };
-        self
-    }
-
-    pub async fn history_snapshot(
-        &self,
-        session_id: &str,
-        history: &mut CommandHistory,
-    ) -> Result<()> {
-        if let Some(session) = self.session(session_id).await {
-            let capture = session.output.lock().await;
-            let completion = session.completion.borrow().clone();
-            let preview = capture.full_preview();
-            match completion {
-                Some(completion) => history.result = completion_output(&completion, preview),
-                None => history.result.output = preview.output,
-            }
-        } else {
-            history
-                .recover_if_running(&self.log_directory, session_id)
-                .await?;
-        }
-        Ok(())
-    }
-
-    pub fn with_history_resolver<F, Fut>(mut self, resolver: F) -> Self
-    where
-        F: Fn(String, PathBuf) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Result<Option<CommandHistory>>> + Send + 'static,
-    {
-        self.history_resolver = Some(Arc::new(move |id, directory| {
-            Box::pin(resolver(id, directory))
-        }));
-        self
-    }
-
     async fn saved_result(
         &self,
         session_id: &str,
@@ -196,34 +134,10 @@ impl CommandSessionManager {
         from_offset: u64,
     ) -> Result<CommandStdinOutput> {
         let path = history_path(&self.log_directory, session_id)?;
-        let local = CommandHistory::read(&path).await?;
-        let fetched = match &self.history_resolver {
-            Some(resolver)
-                if local.as_ref().is_none_or(|history| {
-                    history.machine_id != self.history_scope.machine_id && history.result.running
-                }) =>
-            {
-                let fetched = tokio::time::timeout(Duration::from_secs(10), async {
-                    let _fetch = self.history_fetch_lock.lock().await;
-                    resolver(session_id.to_string(), self.log_directory.clone()).await
-                })
-                .await
-                .context("remote command history fetch timed out")
-                .and_then(|result| result);
-                match fetched {
-                    Ok(fetched) => fetched,
-                    Err(error) if local.is_none() => return Err(error),
-                    Err(_) => None,
-                }
-            }
-            _ => None,
-        };
-        let Some(mut history) = fetched.or(local) else {
+        let Some(mut history) = CommandHistory::read(&path).await? else {
             bail!("unknown command session: {session_id}");
         };
-        if history.is_orphaned_on(&self.history_scope.machine_id) {
-            history.mark_interrupted().await?;
-        }
+        history.mark_interrupted().await?;
         let unreturned = if reveal_output {
             history.read_output(from_offset).await?
         } else {
@@ -339,9 +253,6 @@ impl CommandSessionManager {
         let history_path = history_path(&self.log_directory, &session_id)?;
         let preview = output.lock().await.preview_metadata();
         let history = CommandHistory {
-            user_id: self.history_scope.user_id.clone(),
-            thread_id: self.history_scope.thread_id.clone(),
-            machine_id: self.history_scope.machine_id.clone(),
             command: command.to_string(),
             workdir: cwd.to_string_lossy().to_string(),
             max_output_chars,
@@ -462,16 +373,10 @@ impl CommandSessionManager {
         action.validate(chars)?;
         cancellation.ensure_active()?;
         let Some(session) = self.session(session_id).await else {
-            let output = tokio::select! {
-                _ = cancellation.cancelled() => return Err(WorkspaceOperationCancelled.into()),
-                result = self.saved_result(session_id, yield_time_ms != 0, from_offset) => result?,
+            return tokio::select! {
+                _ = cancellation.cancelled() => Err(WorkspaceOperationCancelled.into()),
+                result = self.saved_result(session_id, yield_time_ms != 0, from_offset) => result,
             };
-            if output.result.running {
-                bail!(
-                    "command is running on another machine; control it on its originating machine"
-                );
-            }
-            return Ok(output);
         };
         let (result, next_offset) = self
             .write_session(
