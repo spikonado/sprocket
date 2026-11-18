@@ -1,6 +1,30 @@
 import OpenAiBlossom from '$lib/components/openai-blossom';
 import { cn } from '$lib/utils';
 
+const PROVIDER_LABELS = new Map([
+	['spikonado', 'Spikonado'],
+	['openai', 'OpenAI'],
+	['chatgpt', 'OpenAI'],
+	['anthropic', 'Anthropic'],
+	['claude', 'Anthropic'],
+	['vercel', 'Vercel'],
+	['openrouter', 'OpenRouter'],
+	['opencode', 'OpenCode'],
+	['opencode-go', 'OpenCode'],
+	['morph', 'Morph'],
+	['xai', 'xAI'],
+	['zai', 'Z.AI'],
+	['deepseek', 'DeepSeek'],
+	['kimi', 'Moonshot AI'],
+	['moonshotai', 'Moonshot AI'],
+	['meta', 'Meta'],
+	['muse', 'Meta']
+]);
+
+export function providerLabel(provider: string) {
+	return PROVIDER_LABELS.get(provider) ?? (provider || 'Unknown provider');
+}
+
 export default function ProviderLogo({
 	provider,
 	className = ''
@@ -8,21 +32,23 @@ export default function ProviderLogo({
 	provider: string;
 	className?: string;
 }) {
-	if (provider === 'spikonado') {
+	const label = providerLabel(provider);
+
+	if (label === 'Spikonado') {
 		return <img src="/logo.svg" alt="" className={cn('size-4 shrink-0', className)} />;
 	}
 
-	if (provider === 'openai' || provider === 'chatgpt') {
+	if (label === 'OpenAI') {
 		return <OpenAiBlossom className={cn('text-foreground size-4', className)} />;
 	}
 
-	if (provider === 'anthropic' || provider === 'claude') {
+	if (label === 'Anthropic') {
 		return (
 			<svg
 				viewBox="0 0 24 24"
 				className={cn('size-4 text-[#D97757]', className)}
 				role="img"
-				aria-label="Anthropic"
+				aria-label={label}
 				fill="currentColor"
 			>
 				<path d="M17.304 3.541h-3.672l6.696 16.918H24Zm-10.608 0L0 20.459h3.744l1.37-3.553h7.005l1.369 3.553h3.744L10.536 3.541Zm-.371 10.223 2.291-5.945 2.292 5.945Z" />
@@ -30,13 +56,13 @@ export default function ProviderLogo({
 		);
 	}
 
-	if (provider === 'vercel') {
+	if (label === 'Vercel') {
 		return (
 			<svg
 				viewBox="0 0 24 24"
 				className={cn('text-foreground size-4', className)}
 				role="img"
-				aria-label="Vercel"
+				aria-label={label}
 				fill="currentColor"
 			>
 				<path d="m12 1.608 12 20.784H0Z" />
@@ -44,13 +70,13 @@ export default function ProviderLogo({
 		);
 	}
 
-	if (provider === 'openrouter') {
+	if (label === 'OpenRouter') {
 		return (
 			<svg
 				viewBox="0 0 24 24"
 				className={cn('text-foreground size-4', className)}
 				role="img"
-				aria-label="OpenRouter"
+				aria-label={label}
 				fill="currentColor"
 			>
 				<path d="M16.778 1.844v1.919q-.569-.026-1.138-.032-.708-.008-1.415.037c-1.93.126-4.023.728-6.149 2.237-2.911 2.066-2.731 1.95-4.14 2.75-.396.223-1.342.574-2.185.798-.841.225-1.753.333-1.751.333v4.229s.768.108 1.61.333c.842.224 1.789.575 2.185.799 1.41.798 1.228.683 4.14 2.75 2.126 1.509 4.22 2.11 6.148 2.236.88.058 1.716.041 2.555.005v1.918l7.222-4.168-7.222-4.17v2.176c-.86.038-1.611.065-2.278.021-1.364-.09-2.417-.357-3.979-1.465-2.244-1.593-2.866-2.027-3.68-2.508.889-.518 1.449-.906 3.822-2.59 1.56-1.109 2.614-1.377 3.978-1.466.667-.044 1.418-.017 2.278.02v2.176L24 6.014Z" />
@@ -58,13 +84,13 @@ export default function ProviderLogo({
 		);
 	}
 
-	if (provider === 'opencode' || provider === 'opencode-go') {
+	if (label === 'OpenCode') {
 		return (
 			<svg
 				viewBox="0 0 24 24"
 				className={cn('text-foreground size-4', className)}
 				role="img"
-				aria-label="OpenCode"
+				aria-label={label}
 				fill="currentColor"
 			>
 				<path fillRule="evenodd" d="M2.4 0h19.2v24H2.4Zm4.8 4.8v14.4h9.6V4.8Z" />
@@ -73,13 +99,13 @@ export default function ProviderLogo({
 		);
 	}
 
-	if (provider === 'morph') {
+	if (label === 'Morph') {
 		return (
 			<svg
 				viewBox="0 0 48 48"
 				className={cn('size-4 text-[#99D52A]', className)}
 				role="img"
-				aria-label="Morph"
+				aria-label={label}
 				fill="currentColor"
 			>
 				<path d="M16.5586 6C17.4193 6.00005 18.1838 6.55068 18.4561 7.36719L19.5439 10.6328C19.8162 11.4493 20.5807 12 21.4414 12H26.5586C27.4193 12 28.1838 11.4493 28.4561 10.6328L29.5439 7.36719C29.8162 6.55068 30.5807 6.00005 31.4414 6H34.5586C35.4193 6.00005 36.1838 6.55068 36.4561 7.36719L37.6523 10.958C37.8686 11.6067 38.402 12.1008 39.0654 12.2666L44.4854 13.6211C45.3756 13.8438 46 14.6439 46 15.5615V32.4385C46 33.3561 45.3756 34.1562 44.4854 34.3789L39.0654 35.7334C38.402 35.8992 37.8686 36.3933 37.6523 37.042L36.4561 40.6328C36.1838 41.4493 35.4193 42 34.5586 42H31.4414C30.5807 42 29.8162 41.4493 29.5439 40.6328L28.8779 38.6328C28.4463 37.3379 29.4095 36.0003 30.7744 36H36C37.1046 36 38 35.1046 38 34V14C38 12.8954 37.1046 12 36 12H30C28.8954 12 28 12.8954 28 14V28C28 29.1046 27.1046 30 26 30H22C20.8954 30 20 29.1046 20 28V14C20 12.8954 19.1046 12 18 12H12C10.8954 12 10 12.8954 10 14V34C10 35.1046 10.8954 36 12 36H17.2256C18.5905 36.0003 19.5537 37.3379 19.1221 38.6328L18.4561 40.6328C18.1838 41.4493 17.4193 42 16.5586 42H13.4414C12.5807 42 11.8162 41.4493 11.5439 40.6328L10.3477 37.042C10.1314 36.3933 9.59795 35.8992 8.93457 35.7334L3.51465 34.3789C2.62444 34.1562 2.00001 33.3561 2 32.4385V15.5615C2.00001 14.6439 2.62444 13.8438 3.51465 13.6211L8.93457 12.2666C9.59795 12.1008 10.1314 11.6067 10.3477 10.958L11.5439 7.36719C11.8162 6.55068 12.5807 6.00005 13.4414 6H16.5586Z" />
@@ -87,13 +113,13 @@ export default function ProviderLogo({
 		);
 	}
 
-	if (provider === 'xai') {
+	if (label === 'xAI') {
 		return (
 			<svg
 				viewBox="0 0 24 24"
 				className={cn('text-foreground size-4', className)}
 				role="img"
-				aria-label="xAI"
+				aria-label={label}
 				fill="currentColor"
 			>
 				<path d="M6.469 8.776 16.512 23h-4.464L2.005 8.776H6.47Zm-.004 7.9 2.233 3.164L6.467 23H2l4.465-6.324ZM22 2.582V23h-3.659V7.764L22 2.582ZM22 1l-9.952 14.095-2.233-3.163L17.533 1H22Z" />
@@ -101,13 +127,13 @@ export default function ProviderLogo({
 		);
 	}
 
-	if (provider === 'zai') {
+	if (label === 'Z.AI') {
 		return (
 			<svg
 				viewBox="0 0 24 24"
 				className={cn('text-foreground size-4', className)}
 				role="img"
-				aria-label="Z.AI"
+				aria-label={label}
 				fill="currentColor"
 			>
 				<path d="M12.606 1.806l-1.677 2.388c-0.258 0.374-0.697 0.606-1.161 0.606h-9.162V1.794C0.594 1.806 12.606 1.806 12.606 1.806zM24 1.806L9.6 22.206 0 22.206 14.4 1.806zM11.394 22.206l1.69-2.4c0.258-0.374 0.697-0.606 1.161-0.606h9.149v3.006H11.394z" />
@@ -115,13 +141,13 @@ export default function ProviderLogo({
 		);
 	}
 
-	if (provider === 'deepseek') {
+	if (label === 'DeepSeek') {
 		return (
 			<svg
 				viewBox="0 0 24 24"
 				className={cn('size-4 text-[#4D6BFE]', className)}
 				role="img"
-				aria-label="DeepSeek"
+				aria-label={label}
 				fill="currentColor"
 			>
 				<path d="M23.748 4.651c-.254-.124-.364.113-.512.233-.051.04-.094.09-.137.137-.372.397-.806.657-1.373.626-.829-.046-1.537.214-2.163.848-.133-.782-.575-1.248-1.247-1.548-.352-.155-.708-.311-.955-.65-.172-.24-.219-.509-.305-.774-.055-.16-.11-.323-.293-.35-.2-.031-.278.136-.356.276-.313.572-.434 1.202-.422 1.84.027 1.436.633 2.58 1.838 3.393.137.094.172.187.129.323-.082.28-.18.553-.266.833-.055.179-.137.218-.328.14a5.5 5.5 0 0 1-1.737-1.179c-.857-.828-1.631-1.743-2.597-2.46a12 12 0 0 0-.689-.47c-.985-.957.13-1.743.387-1.836.27-.098.094-.433-.778-.428-.872.003-1.67.295-2.687.685a3 3 0 0 1-.465.136 9.6 9.6 0 0 0-2.883-.101c-1.885.21-3.39 1.1-4.497 2.622C.082 8.776-.231 10.854.152 13.02c.403 2.284 1.568 4.175 3.36 5.653 1.857 1.533 3.997 2.284 6.438 2.14 1.482-.085 3.132-.284 4.994-1.86.47.234.962.328 1.78.398.629.058 1.235-.031 1.705-.129.735-.155.684-.836.418-.961-2.155-1.004-1.682-.595-2.112-.926 1.095-1.295 2.768-3.598 3.284-6.733.05-.346.115-.834.108-1.114-.004-.171.035-.238.23-.257a4.2 4.2 0 0 0 1.545-.475c1.397-.763 1.96-2.016 2.093-3.517.02-.23-.004-.467-.247-.588M11.58 18.168c-2.088-1.642-3.101-2.183-3.52-2.16-.39.024-.32.472-.234.763.09.288.207.487.371.74.114.167.192.416-.113.603-.673.416-1.842-.14-1.897-.168-1.361-.801-2.5-1.86-3.301-3.306-.775-1.393-1.225-2.888-1.299-4.482-.02-.385.094-.522.477-.592a4.7 4.7 0 0 1 1.53-.038c2.131.311 3.946 1.264 5.467 2.774.868.86 1.525 1.887 2.202 2.89.72 1.066 1.494 2.082 2.48 2.915.348.291.626.513.892.677-.802.09-2.14.109-3.055-.615zm1.001-6.44a.306.306 0 0 1 .415-.287.3.3 0 0 1 .113.074.3.3 0 0 1 .086.214c0 .17-.136.307-.308.307a.303.303 0 0 1-.306-.307m3.11 1.596c-.2.081-.4.151-.591.16a1.25 1.25 0 0 1-.798-.254c-.274-.23-.47-.358-.551-.758a1.7 1.7 0 0 1 .015-.588c.07-.327-.007-.537-.238-.727-.188-.156-.426-.199-.689-.199a.6.6 0 0 1-.254-.078.253.253 0 0 1-.114-.358 1 1 0 0 1 .192-.21c.356-.202.767-.136 1.146.016.352.144.618.408 1.001.782.392.451.462.576.685.915.176.264.336.536.446.848.066.194-.02.353-.25.45" />
@@ -129,13 +155,13 @@ export default function ProviderLogo({
 		);
 	}
 
-	if (provider === 'kimi' || provider === 'moonshotai') {
+	if (label === 'Moonshot AI') {
 		return (
 			<svg
 				viewBox="0 0 465 465"
 				className={cn('text-foreground size-4', className)}
 				role="img"
-				aria-label="Moonshot AI"
+				aria-label={label}
 				fill="currentColor"
 			>
 				<path
@@ -147,13 +173,13 @@ export default function ProviderLogo({
 		);
 	}
 
-	if (provider === 'meta' || provider === 'muse') {
+	if (label === 'Meta') {
 		return (
 			<svg
 				viewBox="0 0 24 24"
 				className={cn('size-4 text-[#0467DF]', className)}
 				role="img"
-				aria-label="Meta"
+				aria-label={label}
 				fill="currentColor"
 			>
 				<path d="M6.915 4.03c-1.968 0-3.683 1.28-4.871 3.113C.704 9.208 0 11.883 0 14.449c0 .706.07 1.369.21 1.973a6.624 6.624 0 0 0 .265.86 5.297 5.297 0 0 0 .371.761c.696 1.159 1.818 1.927 3.593 1.927 1.497 0 2.633-.671 3.965-2.444.76-1.012 1.144-1.626 2.663-4.32l.756-1.339.186-.325c.061.1.121.196.183.3l2.152 3.595c.724 1.21 1.665 2.556 2.47 3.314 1.046.987 1.992 1.22 3.06 1.22 1.075 0 1.876-.355 2.455-.843a3.743 3.743 0 0 0 .81-.973c.542-.939.861-2.127.861-3.745 0-2.72-.681-5.357-2.084-7.45-1.282-1.912-2.957-2.93-4.716-2.93-1.047 0-2.088.467-3.053 1.308-.652.57-1.257 1.29-1.82 2.05-.69-.875-1.335-1.547-1.958-2.056-1.182-.966-2.315-1.303-3.454-1.303zm10.16 2.053c1.147 0 2.188.758 2.992 1.999 1.132 1.748 1.647 4.195 1.647 6.4 0 1.548-.368 2.9-1.839 2.9-.58 0-1.027-.23-1.664-1.004-.496-.601-1.343-1.878-2.832-4.358l-.617-1.028a44.908 44.908 0 0 0-1.255-1.98c.07-.109.141-.224.211-.327 1.12-1.667 2.118-2.602 3.358-2.602zm-10.201.553c1.265 0 2.058.791 2.675 1.446.307.327.737.871 1.234 1.579l-1.02 1.566c-.757 1.163-1.882 3.017-2.837 4.338-1.191 1.649-1.81 1.817-2.486 1.817-.524 0-1.038-.237-1.383-.794-.263-.426-.464-1.13-.464-2.046 0-2.221.63-4.535 1.66-6.088.454-.687.964-1.226 1.533-1.533a2.264 2.264 0 0 1 1.088-.285z" />
@@ -166,7 +192,7 @@ export default function ProviderLogo({
 			viewBox="0 0 24 24"
 			className={cn('text-muted-foreground size-4', className)}
 			role="img"
-			aria-label={provider || 'Unknown provider'}
+			aria-label={label}
 			fill="none"
 			stroke="currentColor"
 			strokeWidth={1.5}

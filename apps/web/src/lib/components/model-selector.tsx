@@ -1,5 +1,5 @@
 import { Check, ChevronDown, ChevronRight, Zap } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import {
 	type CatalogModel,
 	reasoningEffortLabel,
@@ -8,7 +8,8 @@ import {
 import ModelReasoningOptions from './model-reasoning-options';
 import MobileModelSelector from './mobile-model-selector';
 import { useMobileSelector } from './ui/use-mobile-selector';
-import ProviderLogo from './provider-logo';
+import ProviderLogo, { providerLabel } from './provider-logo';
+import ProviderTabs, { groupModelsByProvider } from './provider-tabs';
 import { listenOpenMenuDismiss } from './ui/menu-dismiss';
 import { cn } from '$lib/utils';
 
@@ -32,8 +33,10 @@ export default function ModelSelector({
 	const [isOpen, setIsOpen] = useState(false);
 	const mobile = useMobileSelector();
 	const [previewId, setPreviewId] = useState<string | null>(null);
+	const [activeProvider, setActiveProvider] = useState<string | null>(null);
 	const [position, setPosition] = useState({ left: 0, bottom: 0, maxHeight: 0 });
 	const [reasoningTop, setReasoningTop] = useState(0);
+	const panelId = useId();
 	const rootRef = useRef<HTMLDivElement>(null);
 	const triggerRef = useRef<HTMLButtonElement>(null);
 	const menuRef = useRef<HTMLDivElement>(null);
@@ -42,6 +45,14 @@ export default function ModelSelector({
 	const touchPreviewRef = useRef(false);
 	const selectedModel = models.find((model) => model.id === modelId);
 	const fastModeAvailable = selectedModel?.supportsFastMode;
+	const groups = groupModelsByProvider(models);
+
+	const group =
+		groups.find(
+			(candidate) => candidate.provider === (activeProvider ?? selectedModel?.provider)
+		) ?? groups[0];
+
+	const groupModels = group?.models ?? [];
 
 	const previewModel = models.find((model) => model.id === previewId);
 
@@ -57,6 +68,7 @@ export default function ModelSelector({
 	function closeMenu() {
 		setIsOpen(false);
 		setPreviewId(null);
+		setActiveProvider(null);
 	}
 
 	function selectModel(model: CatalogModel, effort = model.defaultReasoningEffort) {
@@ -66,7 +78,7 @@ export default function ModelSelector({
 	}
 
 	function focusModel(index: number) {
-		const model = models[(index + models.length) % models.length];
+		const model = groupModels[(index + groupModels.length) % groupModels.length];
 
 		if (model) modelButtons.current.get(model.id)?.focus();
 	}
@@ -180,71 +192,106 @@ export default function ModelSelector({
 					ref={menuRef}
 					role="dialog"
 					aria-label="Model"
-					className="fixed z-50 flex w-[min(19rem,calc(100vw-1rem))] flex-col gap-1 overflow-y-auto sm:block sm:w-[30.75rem] sm:overflow-visible"
+					className="fixed z-50 flex w-[min(22.5rem,calc(100vw-1rem))] flex-col gap-1 overflow-y-auto sm:block sm:w-[34.25rem] sm:overflow-visible"
 					style={position}
 				>
 					<div
-						className="bg-popover/96 flex min-h-0 shrink-0 flex-col overflow-hidden rounded-[18px] border border-[var(--hairline)] p-2 shadow-[var(--composer-shadow)] backdrop-blur-xl sm:w-[19rem]"
+						className="bg-popover/96 flex min-h-0 shrink-0 flex-col overflow-hidden rounded-[18px] border border-[var(--hairline)] p-2 shadow-[var(--composer-shadow)] backdrop-blur-xl sm:w-[22.5rem]"
 						style={{ maxHeight: position.maxHeight }}
 					>
-						<div role="group" aria-label="Models" className="min-h-0 space-y-0.5 overflow-y-auto">
-							{models.map((model, index) => (
-								<button
-									key={model.id}
-									ref={(button) => {
-										if (button) modelButtons.current.set(model.id, button);
-										else modelButtons.current.delete(model.id);
+						<div className="flex min-h-0 gap-2">
+							<div
+								className="shrink-0 overflow-y-auto border-r border-[var(--hairline)] pr-2"
+								onKeyDown={(event) => {
+									if (event.key !== 'ArrowRight') return;
+									event.preventDefault();
+									focusModel(
+										Math.max(
+											0,
+											groupModels.findIndex((model) => model.id === modelId)
+										)
+									);
+								}}
+							>
+								<ProviderTabs
+									groups={groups}
+									panelId={panelId}
+									provider={group?.provider ?? ''}
+									orientation="vertical"
+									onChange={(provider) => {
+										setActiveProvider(provider);
+										setPreviewId(null);
 									}}
-									type="button"
-									aria-label={model.label}
-									data-ph-capture-attribute-action="select_model"
-									data-ph-capture-attribute-model={model.id}
-									aria-pressed={model.id === modelId}
-									aria-haspopup={showsReasoningControl(model) ? 'true' : undefined}
-									className={cn(
-										'text-foreground focus-visible:ring-ring/60 hover:bg-hover-fill flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm outline-none focus-visible:ring-2',
-										model.id === previewId && 'bg-hover-fill'
-									)}
-									onMouseEnter={() => setPreviewId(model.id)}
-									onFocus={() => setPreviewId(model.id)}
-									onPointerDown={(event) => {
-										touchPreviewRef.current =
-											event.pointerType === 'touch' &&
-											showsReasoningControl(model) &&
-											previewId !== model.id;
-									}}
-									onClick={() => {
-										if (touchPreviewRef.current) {
-											touchPreviewRef.current = false;
-											setPreviewId(model.id);
+								/>
+							</div>
+							<div
+								role="tabpanel"
+								id={panelId}
+								aria-label={`${providerLabel(group?.provider ?? '')} models`}
+								className="min-h-0 min-w-0 flex-1 space-y-0.5 overflow-y-auto"
+							>
+								{groupModels.map((model, index) => (
+									<button
+										key={model.id}
+										ref={(button) => {
+											if (button) modelButtons.current.set(model.id, button);
+											else modelButtons.current.delete(model.id);
+										}}
+										type="button"
+										aria-label={model.label}
+										data-ph-capture-attribute-action="select_model"
+										data-ph-capture-attribute-model={model.id}
+										aria-pressed={model.id === modelId}
+										aria-haspopup={showsReasoningControl(model) ? 'true' : undefined}
+										className={cn(
+											'text-foreground focus-visible:ring-ring/60 hover:bg-hover-fill flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm outline-none focus-visible:ring-2',
+											model.id === previewId && 'bg-hover-fill'
+										)}
+										onMouseEnter={() => setPreviewId(model.id)}
+										onFocus={() => setPreviewId(model.id)}
+										onPointerDown={(event) => {
+											touchPreviewRef.current =
+												event.pointerType === 'touch' &&
+												showsReasoningControl(model) &&
+												previewId !== model.id;
+										}}
+										onClick={() => {
+											if (touchPreviewRef.current) {
+												touchPreviewRef.current = false;
+												setPreviewId(model.id);
 
-											return;
-										}
+												return;
+											}
 
-										selectModel(model);
-									}}
-									onKeyDown={(event) => {
-										if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-											event.preventDefault();
-											focusModel(index + (event.key === 'ArrowDown' ? 1 : -1));
-										} else if (event.key === 'ArrowRight' && showsReasoningControl(model)) {
-											event.preventDefault();
-											reasoningRef.current
-												?.querySelector<HTMLButtonElement>('[data-default-reasoning]')
-												?.focus();
-										}
-									}}
-								>
-									<ProviderLogo provider={model.provider} className="size-4 shrink-0" />
-									<span className="min-w-0 flex-1 truncate">{model.label}</span>
-									{model.id === modelId ? (
-										<Check className="text-accent-strong size-3.5 shrink-0" />
-									) : null}
-									{showsReasoningControl(model) ? (
-										<ChevronRight className="text-muted-foreground size-3 shrink-0" />
-									) : null}
-								</button>
-							))}
+											selectModel(model);
+										}}
+										onKeyDown={(event) => {
+											if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+												event.preventDefault();
+												focusModel(index + (event.key === 'ArrowDown' ? 1 : -1));
+											} else if (event.key === 'ArrowLeft') {
+												event.preventDefault();
+												rootRef.current
+													?.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')
+													?.focus();
+											} else if (event.key === 'ArrowRight' && showsReasoningControl(model)) {
+												event.preventDefault();
+												reasoningRef.current
+													?.querySelector<HTMLButtonElement>('[data-default-reasoning]')
+													?.focus();
+											}
+										}}
+									>
+										<span className="min-w-0 flex-1 truncate">{model.label}</span>
+										{model.id === modelId ? (
+											<Check className="text-accent-strong size-3.5 shrink-0" />
+										) : null}
+										{showsReasoningControl(model) ? (
+											<ChevronRight className="text-muted-foreground size-3 shrink-0" />
+										) : null}
+									</button>
+								))}
+							</div>
 						</div>
 						{fastModeAvailable ? (
 							<div
