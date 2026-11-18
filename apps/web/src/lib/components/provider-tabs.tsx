@@ -24,12 +24,14 @@ export function groupModelsByProvider(models: readonly CatalogModel[]): Provider
 export default function ProviderTabs({
 	groups,
 	provider,
+	panelId,
 	orientation,
 	onChange,
 	className
 }: {
 	groups: readonly ProviderGroup[];
 	provider: string;
+	panelId: string;
 	orientation: 'horizontal' | 'vertical';
 	onChange: (provider: string) => void;
 	className?: string;
@@ -62,6 +64,7 @@ export default function ProviderTabs({
 					key={group.provider}
 					type="button"
 					role="tab"
+					aria-controls={panelId}
 					aria-label={providerLabel(group.provider)}
 					title={providerLabel(group.provider)}
 					aria-selected={group.provider === provider}

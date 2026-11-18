@@ -1,5 +1,5 @@
 import { Check, Zap } from 'lucide-react';
-import { useState, type RefObject } from 'react';
+import { useId, useState, type RefObject } from 'react';
 import {
 	type CatalogModel,
 	reasoningEffortLabel,
@@ -30,6 +30,7 @@ export default function MobileModelSelector({
 	const [draftId, setDraftId] = useState(modelId);
 	const [draftEffort, setDraftEffort] = useState(reasoningEffort);
 	const [draftFast, setDraftFast] = useState(fastMode);
+	const panelId = useId();
 	const model = models.find((candidate) => candidate.id === draftId) ?? models[0];
 	const fastAvailable = model?.supportsFastMode;
 	const groups = groupModelsByProvider(models);
@@ -60,6 +61,7 @@ export default function MobileModelSelector({
 		>
 			<ProviderTabs
 				groups={groups}
+				panelId={panelId}
 				provider={group?.provider ?? ''}
 				orientation="horizontal"
 				onChange={setActiveProvider}
@@ -67,6 +69,7 @@ export default function MobileModelSelector({
 			/>
 			<div
 				role="tabpanel"
+				id={panelId}
 				aria-label={`${providerLabel(group?.provider ?? '')} models`}
 				className="space-y-1 pb-4"
 			>

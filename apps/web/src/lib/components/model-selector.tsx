@@ -1,5 +1,5 @@
 import { Check, ChevronDown, ChevronRight, Zap } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import {
 	type CatalogModel,
 	reasoningEffortLabel,
@@ -36,6 +36,7 @@ export default function ModelSelector({
 	const [activeProvider, setActiveProvider] = useState<string | null>(null);
 	const [position, setPosition] = useState({ left: 0, bottom: 0, maxHeight: 0 });
 	const [reasoningTop, setReasoningTop] = useState(0);
+	const panelId = useId();
 	const rootRef = useRef<HTMLDivElement>(null);
 	const triggerRef = useRef<HTMLButtonElement>(null);
 	const menuRef = useRef<HTMLDivElement>(null);
@@ -214,6 +215,7 @@ export default function ModelSelector({
 							>
 								<ProviderTabs
 									groups={groups}
+									panelId={panelId}
 									provider={group?.provider ?? ''}
 									orientation="vertical"
 									onChange={(provider) => {
@@ -224,6 +226,7 @@ export default function ModelSelector({
 							</div>
 							<div
 								role="tabpanel"
+								id={panelId}
 								aria-label={`${providerLabel(group?.provider ?? '')} models`}
 								className="min-h-0 min-w-0 flex-1 space-y-0.5 overflow-y-auto"
 							>

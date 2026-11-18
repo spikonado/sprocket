@@ -730,6 +730,27 @@ describe('PromptComposer mobile selectors', () => {
 		await click(screen.getByRole('button', { name: 'Select model' }));
 		expect(screen.getByRole('button', { name: 'Model One', pressed: true })).toBeTruthy();
 	});
+
+	it('shows reasoning only under the draft model provider', async () => {
+		const { props } = renderComposer({
+			modelCatalog: {
+				...modelCatalog,
+				models: [modelCatalog.models[0], { ...modelCatalog.models[1], provider: 'anthropic' }]
+			},
+			selectedModel: 'model-one',
+			selectedReasoningEffort: 'medium',
+			onSelectedModelChange: vi.fn()
+		});
+
+		await click(screen.getByRole('button', { name: 'Select model' }));
+		await click(screen.getByRole('tab', { name: 'Anthropic' }));
+		expect(screen.queryByRole('group', { name: 'Reasoning for Model One' })).toBeNull();
+		expect(screen.queryByRole('switch')).toBeNull();
+		await click(screen.getByRole('button', { name: 'Model Two' }));
+		expect(screen.getByRole('group', { name: 'Reasoning for Model Two' })).toBeTruthy();
+		await click(screen.getByRole('button', { name: 'Done' }));
+		expect(props.onSelectedModelChange).toHaveBeenCalledWith('model-two');
+	});
 });
 
 describe('PromptComposer model selection', () => {
