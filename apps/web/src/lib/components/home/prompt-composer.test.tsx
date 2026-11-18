@@ -880,6 +880,31 @@ describe('PromptComposer model selection', () => {
 		);
 	});
 
+	it('groups models behind provider tabs', async () => {
+		renderComposer({
+			modelCatalog: {
+				...modelCatalog,
+				models: [modelCatalog.models[0], { ...modelCatalog.models[1], provider: 'anthropic' }]
+			},
+			selectedModel: 'model-one',
+			selectedReasoningEffort: 'medium'
+		});
+		await click(screen.getByRole('button', { name: 'Select model' }));
+		const menu = screen.getByRole('dialog', { name: 'Model' });
+		const tabs = within(menu).getAllByRole('tab');
+		expect(tabs.map((tab) => tab.getAttribute('aria-label'))).toEqual(['Anthropic', 'Spikonado']);
+		expect(within(menu).getByRole('tab', { name: 'Spikonado', selected: true })).toBeTruthy();
+		expect(within(menu).queryByRole('button', { name: 'Model Two' })).toBeNull();
+		await pressKey(document.activeElement!, { key: 'ArrowLeft' });
+		await pressKey(document.activeElement!, { key: 'ArrowDown' });
+		expect(document.activeElement).toBe(within(menu).getByRole('tab', { name: 'Anthropic' }));
+		await pressKey(document.activeElement!, { key: 'ArrowRight' });
+		await click(within(menu).getByRole('button', { name: 'Model Two' }));
+		expect(screen.getByRole('button', { name: 'Select model' }).textContent).toBe(
+			'Model Two · High'
+		);
+	});
+
 	it.each([true, false])(
 		'shows provider-managed models with only their supported speed controls (Fast: %s)',
 		async (supportsFastMode) => {
@@ -965,8 +990,8 @@ describe('PromptComposer Fast mode', () => {
 		await click(trigger);
 		fireEvent.mouseEnter(screen.getByRole('button', { name: 'Model One' }));
 		const toggle = screen.getByRole('switch', { name: 'Fast' });
-		const models = screen.getByRole('group', { name: 'Models' });
-		expect(models.nextElementSibling).toBe(toggle.parentElement);
+		const models = screen.getByRole('tabpanel', { name: 'Spikonado models' });
+		expect(models.parentElement?.nextElementSibling).toBe(toggle.parentElement);
 		expect(toggle.getAttribute('aria-checked')).toBe('false');
 		await click(toggle);
 		expect(onFastModeChange).toHaveBeenCalledWith(true);

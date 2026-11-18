@@ -5,7 +5,8 @@ import {
 	reasoningEffortLabel,
 	showsReasoningControl
 } from '$lib/chat/model-catalog';
-import ProviderLogo from './provider-logo';
+import { providerLabel } from './provider-logo';
+import ProviderTabs, { groupModelsByProvider } from './provider-tabs';
 import MobileSelectorSheet from './ui/mobile-selector-sheet';
 import { cn } from '$lib/utils';
 
@@ -31,6 +32,10 @@ export default function MobileModelSelector({
 	const [draftFast, setDraftFast] = useState(fastMode);
 	const model = models.find((candidate) => candidate.id === draftId) ?? models[0];
 	const fastAvailable = model?.supportsFastMode;
+	const groups = groupModelsByProvider(models);
+	const [activeProvider, setActiveProvider] = useState(model?.provider);
+	const group = groups.find((candidate) => candidate.provider === activeProvider) ?? groups[0];
+	const modelShown = model?.provider === group?.provider;
 
 	return (
 		<MobileSelectorSheet
@@ -53,8 +58,19 @@ export default function MobileModelSelector({
 				</button>
 			}
 		>
-			<div role="group" aria-label="Models" className="space-y-1 pb-4">
-				{models.map((candidate) => (
+			<ProviderTabs
+				groups={groups}
+				provider={group?.provider ?? ''}
+				orientation="horizontal"
+				onChange={setActiveProvider}
+				className="overflow-x-auto pb-2"
+			/>
+			<div
+				role="tabpanel"
+				aria-label={`${providerLabel(group?.provider ?? '')} models`}
+				className="space-y-1 pb-4"
+			>
+				{group?.models.map((candidate) => (
 					<button
 						key={candidate.id}
 						type="button"
@@ -71,7 +87,6 @@ export default function MobileModelSelector({
 							if (!candidate.supportsFastMode) setDraftFast(false);
 						}}
 					>
-						<ProviderLogo provider={candidate.provider} className="size-5 shrink-0" />
 						<span className="min-w-0 flex-1 text-[15px] leading-5">{candidate.label}</span>
 						{candidate.id === model?.id ? (
 							<Check className="text-accent-strong size-5 shrink-0" />
@@ -79,7 +94,7 @@ export default function MobileModelSelector({
 					</button>
 				))}
 			</div>
-			{model && showsReasoningControl(model) ? (
+			{model && modelShown && showsReasoningControl(model) ? (
 				<div
 					role="group"
 					aria-label={`Reasoning for ${model.label}`}
@@ -112,7 +127,7 @@ export default function MobileModelSelector({
 					</div>
 				</div>
 			) : null}
-			{fastAvailable ? (
+			{fastAvailable && modelShown ? (
 				<button
 					type="button"
 					role="switch"
