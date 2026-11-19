@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { marked } from 'marked';
 import { applyPathSelection, getActiveAtMention } from './at-paths';
+import { createMarkdownBlockRenderer } from './markdown';
 
 describe('workspace path mentions', () => {
 	it('searches the mention at the caret with path case intact', () => {
@@ -64,16 +64,14 @@ describe('workspace path mentions', () => {
 	])('preserves the name and destination of %s when rendered as Markdown', (name, renderedName) => {
 		const path = `docs/${name}`;
 		const selection = applyPathSelection('@doc', 4, { path, kind: 'file' });
-		const tokens = marked.Lexer.lexInline(selection?.text.trim() ?? '');
-		const link = tokens[0];
+		const blocks = createMarkdownBlockRenderer()(selection?.text.trim() ?? '', new Set());
+		const html = blocks[0]?.type === 'html' ? blocks[0].html : '';
+		const href = /^<p><a href="([^"]*)">/.exec(html)?.[1] ?? '';
 
-		expect(tokens).toHaveLength(1);
-
-		if (link.type !== 'link') throw new Error('Expected a Markdown link');
-		expect(decodeURIComponent(link.href)).toBe(path);
-		expect(marked.parseInline(selection?.text.trim() ?? '')).toBe(
-			`<a href="${link.href}">${renderedName}</a>`
-		);
+		expect(decodeURIComponent(href)).toBe(path);
+		expect(blocks).toEqual([
+			{ type: 'html', html: `<p><a href="${href}">${renderedName}</a></p>\n` }
+		]);
 	});
 
 	it('leaves completion closed when moving within an inserted link', () => {

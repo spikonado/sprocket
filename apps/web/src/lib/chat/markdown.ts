@@ -166,7 +166,7 @@ const BREAK_TOKENS =
 
 const NEXT_TAG = /<\/?([A-Za-z][A-Za-z0-9-]*)/y;
 
-/** Renders soft line breaks inside text as `<br>`, like marked's `breaks` option. */
+/** Renders soft line breaks inside text as `<br>`, so messages keep their line breaks. */
 function softBreaks(html: string) {
 	if (html.indexOf('\n') === html.length - 1) return html;
 
@@ -202,10 +202,6 @@ type BlockContext = {
 	openLinksInNewTab: boolean;
 };
 
-function blockHtml(rendered: string, placeholders: Placeholders) {
-	return placeholders.restore(softBreaks(rendered));
-}
-
 function toBlock(rendered: string, isOpenFence: boolean, context: BlockContext): MarkdownBlock {
 	const reference = context.placeholders.standaloneReference(rendered);
 
@@ -216,7 +212,7 @@ function toBlock(rendered: string, isOpenFence: boolean, context: BlockContext):
 		return reference;
 	}
 
-	const html = blockHtml(rendered, context.placeholders);
+	const html = context.placeholders.restore(softBreaks(rendered));
 	const code = CODE_BLOCK.exec(html);
 	const flagged = isOpenFence ? html.replace('<pre>', '<pre data-markdown-incomplete>') : html;
 
@@ -237,40 +233,6 @@ function toBlock(rendered: string, isOpenFence: boolean, context: BlockContext):
 	}
 
 	return { type: 'html', html: sanitizeMarkdown(flagged, context.openLinksInNewTab) };
-}
-
-export function renderMarkdown(value: string) {
-	const placeholders = createPlaceholders();
-
-	return splitBlocks(parseMarkdown(value, placeholders).html, [])
-		.map((block) => sanitizeMarkdown(blockHtml(block, placeholders)))
-		.join('');
-}
-
-export function mergeHtmlBlocks(blocks: readonly MarkdownBlock[]) {
-	const merged: MarkdownBlock[] = [];
-
-	for (const block of blocks) {
-		const previous = merged.at(-1);
-
-		if (block.type === 'html' && previous?.type === 'html') {
-			merged[merged.length - 1] = { type: 'html', html: previous.html + block.html };
-		} else {
-			merged.push(block);
-		}
-	}
-
-	return merged;
-}
-
-export function renderMarkdownBlocks(
-	value: string,
-	availableArtifactIds: ReadonlySet<string>,
-	openLinksInNewTab = false
-): MarkdownBlock[] {
-	return mergeHtmlBlocks(
-		createMarkdownBlockRenderer()(value, availableArtifactIds, openLinksInNewTab)
-	);
 }
 
 /**

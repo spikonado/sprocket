@@ -198,12 +198,16 @@ it('preserves GFM table column alignment through parsing and sanitization', () =
 });
 
 describe('code blocks', () => {
+	let highlighted: string[] = [];
+
 	beforeEach(() => {
+		highlighted = [];
 		vi.stubGlobal(
 			'Worker',
 			class {
 				onmessage?: (event: MessageEvent<HighlightResponse>) => void;
 				async postMessage({ id, code, language }: HighlightRequest) {
+					highlighted.push(code);
 					const tokens = await highlightCode(code, language);
 					this.onmessage?.(new MessageEvent('message', { data: { id, tokens } }));
 				}
@@ -246,7 +250,6 @@ describe('code blocks', () => {
 	});
 
 	it('highlights nested fences while preserving literal code, tabs, and blank lines', async () => {
-		// marked >=18.1.2 expands a tab right after `> ` into spaces (markedjs/marked#4110), unlike CommonMark.
 		const code = 'const markup = "<img src=x onerror=alert(1)>";\n\nconsole.log(markup);\t// raw\n';
 
 		const { container } = render(
@@ -270,6 +273,34 @@ describe('code blocks', () => {
 
 		await waitFor(() => expect(container.querySelector('pre code.shiki span')).not.toBeNull());
 		expect(container.querySelector('pre code')?.textContent).toBe(code);
+	});
+
+	it('highlights a code block once it closes and keeps its DOM while text streams after it', async () => {
+		const { container, rerender } = render(<ChatMarkdown content={'```ts\nconst a'} />);
+
+		rerender(<ChatMarkdown content={'```ts\nconst a = 1;\n'} />);
+		await waitFor(() =>
+			expect(container.querySelector('.markdown-code-header button')).not.toBeNull()
+		);
+		expect(highlighted).toEqual([]);
+
+		let content = '```ts\nconst a = 1;\n```\n\nAfter';
+		rerender(<ChatMarkdown content={content} />);
+		await waitFor(() => expect(container.querySelector('pre code.shiki span')).not.toBeNull());
+		const code = container.querySelector('pre code');
+
+		for (const tail of [' the', ' code', '.\n\nNext']) {
+			content += tail;
+			rerender(<ChatMarkdown content={content} />);
+		}
+
+		expect(container.querySelector('pre code')).toBe(code);
+		expect(code?.classList.contains('shiki')).toBe(true);
+		expect(highlighted).toEqual(['const a = 1;\n']);
+		expect([...container.querySelectorAll('p')].map((p) => p.textContent)).toEqual([
+			'After the code.',
+			'Next'
+		]);
 	});
 });
 
