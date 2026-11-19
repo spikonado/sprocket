@@ -21,13 +21,6 @@ const release = await fetchLatestSprocketRelease();
 
 const media = (id: string) => ({ src: `/media/${id}.mp4`, poster: `/media/${id}.webp` });
 
-const film = {
-	heading: 'Watch Sprocket build a board',
-	body: 'One real project, from the first prompt to files ready to order.',
-	label: 'Sprocket designing a circuit board from a prompt to fabrication files',
-	...media('film')
-};
-
 type Clip = {
 	id: string;
 	heading: string;
@@ -250,13 +243,18 @@ const subheadingClass =
 		>
 			<div class="mx-auto max-w-6xl">
 				<div class="grid gap-4 lg:grid-cols-2 lg:items-end lg:gap-16">
-					<h2 id="film-heading" class={subheadingClass}>{film.heading}</h2>
-					<p class={marketingSectionBodyClass}>{film.body}</p>
+					<h2 id="film-heading" class={subheadingClass}>Watch Sprocket build a board</h2>
+					<p class={marketingSectionBodyClass}>
+						One real project, from the first prompt to files ready to order.
+					</p>
 				</div>
 				<div
 					class="mt-10 overflow-hidden rounded-3xl border border-border/70 shadow-[0_30px_80px_-40px_oklch(0.2_0.02_260/0.7)]"
 				>
-					<Film src={film.src} poster={film.poster} label={film.label} />
+					<Film
+						{...media('film')}
+						label="Sprocket designing a circuit board from a prompt to fabrication files"
+					/>
 				</div>
 			</div>
 		</section>
