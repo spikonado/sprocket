@@ -1,0 +1,48 @@
+---
+import { cn } from '@/utils';
+
+interface Props {
+	src: string;
+	poster: string;
+	label: string;
+	class?: string;
+}
+
+const { src, poster, label, class: className } = Astro.props;
+---
+
+<video
+	data-loop-clip
+	class={cn('block h-auto w-full', className)}
+	poster={poster}
+	aria-label={label}
+	muted
+	loop
+	playsinline
+	preload="none"
+>
+	<source src={src} type="video/mp4" />
+</video>
+
+<script>
+	const clips = document.querySelectorAll<HTMLVideoElement>('[data-loop-clip]');
+	const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+	if (reduceMotion) {
+		for (const clip of clips) clip.controls = true;
+	} else {
+		const observer = new IntersectionObserver(
+			(entries) => {
+				for (const { target, isIntersecting } of entries) {
+					if (!(target instanceof HTMLVideoElement)) continue;
+
+					if (isIntersecting) void target.play().catch(() => {});
+					else target.pause();
+				}
+			},
+			{ threshold: 0.4 }
+		);
+
+		for (const clip of clips) observer.observe(clip);
+	}
+</script>

@@ -5,8 +5,8 @@
 	"license": "FSL-1.1-ALv2",
 	"type": "module",
 	"scripts": {
-		"dev": "astro dev",
-		"build": "astro build",
+		"dev": "bun run --cwd ../web build:demo && astro dev",
+		"build": "bun run --cwd ../web build:demo && astro build",
 		"preview": "astro preview",
 		"test": "bun test",
 		"check": "astro check"

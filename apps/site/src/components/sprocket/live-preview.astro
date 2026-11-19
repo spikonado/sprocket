@@ -1,0 +1,54 @@
+---
+import poster from '@/assets/live-preview.webp';
+
+const DEMO_PATH = '/demo/index.html';
+---
+
+<figure class="relative mx-auto mt-16 max-w-6xl">
+	<div
+		class="overflow-hidden rounded-2xl border border-border/70 bg-surface shadow-[0_30px_80px_-40px_oklch(0.2_0.02_260/0.7)]"
+	>
+		<iframe
+			data-live-preview
+			data-src={DEMO_PATH}
+			title="Interactive preview of the Sprocket app"
+			allowfullscreen
+			class="hidden h-[min(78vh,760px)] w-full md:block"></iframe>
+		<a href={DEMO_PATH} class="relative block md:hidden">
+			<img
+				src={poster.src}
+				width={poster.width}
+				height={poster.height}
+				alt="The Sprocket app with a hardware project's threads, a board design transcript, and the parts list"
+				class="h-auto w-full"
+				loading="lazy"
+				decoding="async"
+			/>
+			<span
+				class="absolute inset-x-0 bottom-4 mx-auto w-fit rounded-full bg-foreground px-4 py-2 text-sm font-medium text-background"
+			>
+				Open the live preview
+			</span>
+		</a>
+	</div>
+	<figcaption class="mt-4 text-sm text-muted-foreground">
+		This is the real app running in your browser with sample threads. Open a thread, expand the
+		work, or answer the question.
+	</figcaption>
+</figure>
+
+<script>
+	const frame = document.querySelector<HTMLIFrameElement>('[data-live-preview]');
+
+	if (frame?.dataset.src && window.matchMedia('(min-width: 768px)').matches) {
+		new IntersectionObserver(
+			([entry], observer) => {
+				if (!entry.isIntersecting || !frame.dataset.src) return;
+
+				frame.src = frame.dataset.src;
+				observer.disconnect();
+			},
+			{ rootMargin: '400px' }
+		).observe(frame);
+	}
+</script>
