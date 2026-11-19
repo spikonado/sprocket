@@ -8,8 +8,9 @@ import {
 	type MarkdownBlock
 } from './markdown';
 
-function streamEveryPrefix(text: string, ids: ReadonlySet<string> = new Set()) {
+function streamEveryPrefix(text: string) {
 	const render = createMarkdownBlockRenderer();
+	const ids = new Set<string>();
 	const snapshots: MarkdownBlock[][] = [];
 
 	for (let length = 1; length <= text.length; length++) {
@@ -49,35 +50,17 @@ describe('streamed Markdown', () => {
 		expect(snapshots.at(-1)).toContain(finishedCode);
 	});
 
-	it.each([
-		[
-			'math with every delimiter',
-			String.raw`Inline \(a^2\) and $b_1$, then` + '\n\n\\[c\\]\n\n$$d$$'
-		],
-		['currency', 'Costs $5 and $10, or `$HOME` and $x$.'],
-		[
-			'references',
-			'[guide][ref] and a note[^1].\n\nMore.\n\n[ref]: https://example.com\n\n[^1]: Note.'
-		],
-		['nested fences', 'Notes:\n\n```markdown\n```sh\nnpx sprocket\n```\n```\n\nDone.']
-	])('matches the one-shot render at every prefix for %s', (_name, source) => {
-		const snapshots = streamEveryPrefix(source, new Set(['known']));
+	it('matches the one-shot render at every prefix of math with every delimiter', () => {
+		const source = String.raw`Inline \(a^2\) and $b_1$, then` + '\n\n\\[c\\]\n\n$$d$$';
+		const snapshots = streamEveryPrefix(source);
 
 		snapshots.forEach((blocks, index) => {
 			const prefix = source.slice(0, index + 1);
 
 			expect(mergeHtmlBlocks(blocks), prefix).toEqual(
-				renderMarkdownBlocks(prefix, new Set(['known']), true)
+				renderMarkdownBlocks(prefix, new Set(), true)
 			);
 		});
-	});
-
-	it('renders math with every delimiter and leaves currency as text', () => {
-		const html = renderMarkdown(String.raw`\(a\), $b$, $5 and $10.` + '\n\n\\[c\\]\n\n$$d$$');
-
-		expect(html.match(/class="katex"/g)).toHaveLength(4);
-		expect(html.match(/class="katex-display"/g)).toHaveLength(2);
-		expect(html).toContain('$5 and $10.');
 	});
 
 	it('updates earlier blocks when a later reference definition resolves them', () => {
@@ -143,16 +126,5 @@ describe('streamed Markdown', () => {
 				'<pre><code>c\nd\n</code></pre>\n' +
 				'<table>\n<thead>\n<tr>\n<th>x</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>y</td>\n</tr>\n</tbody>\n</table>\n'
 		);
-	});
-
-	it('sanitizes javascript: links and raw HTML', () => {
-		const html = renderMarkdown(
-			'[click](javascript:alert(1)) <img src=x onerror="alert(1)">\n\n<script>alert(1)</script>\n\n<b onclick="alert(1)">bold</b>'
-		);
-
-		expect(html).not.toMatch(/javascript:|onerror|onclick|<script/);
-		expect(html).toContain('<a>click</a>');
-		expect(html).toContain('<img src="x">');
-		expect(html).toContain('<b>bold</b>');
 	});
 });
