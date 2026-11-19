@@ -80,7 +80,7 @@ function postTheme(frame: HTMLIFrameElement) {
 function createFrame(container: HTMLElement, title: string) {
 	const frame = document.createElement('iframe');
 	frame.title = title;
-	frame.src = '/kicanvas-viewer.html';
+	frame.src = `${import.meta.env.BASE_URL}kicanvas-viewer.html`;
 	frame.sandbox.add('allow-scripts', 'allow-downloads');
 	frame.allow = 'fullscreen';
 	frame.className = 'absolute inset-0 size-full border-0';
