@@ -3,7 +3,11 @@ import { renderToHtml } from '@pierre/words';
 import type { VisualKind } from './artifact-preview';
 import { prepareFences } from './markdown-fences';
 import { isWindowsImagePath } from './markdown-image-path';
-import { createMathTable, type MathTable } from './markdown-math';
+import {
+	createPlaceholders,
+	type MarkdownReference,
+	type Placeholders
+} from './markdown-placeholders';
 
 DOMPurify.addHook('uponSanitizeAttribute', (node, attribute) => {
 	const isPath =
@@ -30,22 +34,15 @@ function sanitizeMarkdown(rendered: string, openLinksInNewTab = false) {
 
 export type MarkdownBlock =
 	| { type: 'html'; html: string }
-	| { type: 'artifact'; artifactId: string }
-	| { type: 'kicad'; path: string }
+	| MarkdownReference
 	| { type: 'visual'; kind: VisualKind; source: string }
 	| { type: 'mermaid'; source: string; codeHtml: string }
 	| { type: 'json-render'; source: string; codeHtml: string };
-
-const ARTIFACT_REFERENCE = /^artifact:([A-Za-z0-9_-]+)$/;
-
-const KICAD_REFERENCE = /^kicad:([^\n]+?\.kicad_pro)$/;
 
 const VISUAL_LANGUAGES = new Map<string, VisualKind>([
 	['html-visual', 'html'],
 	['jsx-visual', 'react']
 ]);
-
-const PARAGRAPH = /^<p>([^<]*)<\/p>\n$/;
 
 const CODE_BLOCK = /^<pre><code(?: class="language-([^"]*)")?>([^<]*)<\/code><\/pre>\n$/;
 
@@ -58,15 +55,11 @@ function decodeHtml(html: string) {
 	);
 }
 
-function parseMarkdown(value: string, math: MathTable) {
+function parseMarkdown(value: string, placeholders: Placeholders) {
 	const normalized = value.includes('\r') ? value.replace(/\r\n?/g, '\n') : value;
 	const { source, endsInFence } = prepareFences(normalized);
 
-	return {
-		source: normalized,
-		endsInFence,
-		html: decoder.decode(renderToHtml(math.mask(source)))
-	};
+	return { endsInFence, html: decoder.decode(renderToHtml(placeholders.mask(source))) };
 }
 
 const TAG = /<!--[\s\S]*?-->|<(\/?)([A-Za-z][A-Za-z0-9-]*)(?:"[^"]*"|'[^']*'|[^'">])*>|\n/g;
@@ -204,37 +197,26 @@ function softBreaks(html: string) {
 }
 
 type BlockContext = {
-	source: string;
-	math: MathTable;
+	placeholders: Placeholders;
 	artifactIds: ReadonlySet<string>;
 	openLinksInNewTab: boolean;
 };
 
-function blockHtml(rendered: string, math: MathTable) {
-	return math.restore(softBreaks(rendered));
+function blockHtml(rendered: string, placeholders: Placeholders) {
+	return placeholders.restore(softBreaks(rendered));
 }
 
 function toBlock(rendered: string, isOpenFence: boolean, context: BlockContext): MarkdownBlock {
-	const html = blockHtml(rendered, context.math);
-	const text = PARAGRAPH.exec(html)?.[1];
+	const reference = context.placeholders.standaloneReference(rendered);
 
-	if (text !== undefined) {
-		const reference = decodeHtml(text).trim();
-		const artifactId = ARTIFACT_REFERENCE.exec(reference)?.[1];
-		const kicadPath = KICAD_REFERENCE.exec(reference)?.[1];
-
-		// Raw `<p>` HTML renders the same as a paragraph, so check the reference was Markdown.
-		if (
-			(artifactId || kicadPath) &&
-			context.source.split('\n').some((line) => line.trim() === reference)
-		) {
-			if (artifactId && context.artifactIds.has(artifactId))
-				return { type: 'artifact', artifactId };
-
-			if (kicadPath) return { type: 'kicad', path: kicadPath };
-		}
+	if (
+		reference?.type === 'kicad' ||
+		(reference?.type === 'artifact' && context.artifactIds.has(reference.artifactId))
+	) {
+		return reference;
 	}
 
+	const html = blockHtml(rendered, context.placeholders);
 	const code = CODE_BLOCK.exec(html);
 	const flagged = isOpenFence ? html.replace('<pre>', '<pre data-markdown-incomplete>') : html;
 
@@ -258,10 +240,10 @@ function toBlock(rendered: string, isOpenFence: boolean, context: BlockContext):
 }
 
 export function renderMarkdown(value: string) {
-	const math = createMathTable();
+	const placeholders = createPlaceholders();
 
-	return splitBlocks(parseMarkdown(value, math).html, [])
-		.map((block) => sanitizeMarkdown(blockHtml(block, math)))
+	return splitBlocks(parseMarkdown(value, placeholders).html, [])
+		.map((block) => sanitizeMarkdown(blockHtml(block, placeholders)))
 		.join('');
 }
 
@@ -296,7 +278,7 @@ export function renderMarkdownBlocks(
  * did not change, so finished blocks keep their sanitized HTML and DOM.
  */
 export function createMarkdownBlockRenderer() {
-	const math = createMathTable();
+	const placeholders = createPlaceholders();
 	let previousValue: string | undefined;
 	let previousArtifactIds = new Set<string>();
 	let previousOpenLinksInNewTab = false;
@@ -323,8 +305,8 @@ export function createMarkdownBlockRenderer() {
 		}
 
 		previousValue = value;
-		const { source, endsInFence, html } = parseMarkdown(value, math);
-		const context = { source, math, artifactIds: availableArtifactIds, openLinksInNewTab };
+		const { endsInFence, html } = parseMarkdown(value, placeholders);
+		const context = { placeholders, artifactIds: availableArtifactIds, openLinksInNewTab };
 		const nextCache = new Map<string, MarkdownBlock>();
 		rendered = splitBlocks(html, rendered);
 

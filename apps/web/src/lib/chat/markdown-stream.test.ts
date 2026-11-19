@@ -113,6 +113,23 @@ describe('streamed Markdown', () => {
 		expect(done[0]).toBe(intro[0]);
 	});
 
+	it('turns only Markdown reference paragraphs into cards', () => {
+		const render = createMarkdownBlockRenderer();
+		const ids = new Set(['known']);
+		render('<p>artifact:known</p>', ids);
+
+		expect(render('<p>artifact:known</p>\n\nartifact:known', ids)).toEqual([
+			{ type: 'html', html: '<p>artifact:known</p>\n' },
+			{ type: 'artifact', artifactId: 'known' }
+		]);
+	});
+
+	it('shows the private-use characters it reserves as replacement characters', () => {
+		expect(renderMarkdown('a \uE0000\uE001 and $x$')).toMatch(
+			/^<p>a \uFFFD0\uFFFD and <span class="katex">/
+		);
+	});
+
 	it('renders soft line breaks as <br> outside code', () => {
 		expect(
 			renderMarkdown(
