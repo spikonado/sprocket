@@ -1,5 +1,3 @@
-import type { MarkedExtension, Tokens } from 'marked';
-
 const FENCE = /^( {0,3})(`{3,}|~{3,})[ \t]*([^\n]*?)[ \t]*$/;
 
 const MARKDOWN_LANGUAGES = new Set(['markdown', 'md', 'mdx']);
@@ -22,55 +20,78 @@ function closes(line: Fence, open: Fence) {
 	return !line.info && canClose(line, open);
 }
 
-function nestedMarkdownFence(source: string): Tokens.Code | undefined {
-	const firstLineEnd = source.indexOf('\n');
-	const outer = parseFence(firstLineEnd === -1 ? source : source.slice(0, firstLineEnd));
-	const language = outer?.info.split(/\s/, 1)[0].toLowerCase();
+function isMarkdownFence(fence: Fence) {
+	return MARKDOWN_LANGUAGES.has(fence.info.split(/\s/, 1)[0].toLowerCase());
+}
 
-	if (!outer || !language || !MARKDOWN_LANGUAGES.has(language) || firstLineEnd === -1) return;
+function withMarker(line: string, fence: Fence, length: number) {
+	return line.replace(fence.marker, fence.marker[0].repeat(length));
+}
 
+/**
+ * Models write Markdown examples with fences inside a `markdown` fence of the same length.
+ * CommonMark closes the outer fence at the first inner one, so lengthen the outer markers.
+ */
+function lengthenNestedFence(lines: string[], start: number, outer: Fence) {
 	const inner: Fence[] = [];
-	const content: string[] = [];
 	let nested = false;
-	let end = source.length;
-	let lineStart = firstLineEnd + 1;
+	let longest = outer.marker.length;
+	let end = lines.length;
 
-	while (lineStart < source.length) {
-		const lineEnd = source.indexOf('\n', lineStart);
-		const line = source.slice(lineStart, lineEnd === -1 ? source.length : lineEnd);
-		const fence = parseFence(line);
+	for (let index = start + 1; index < lines.length; index++) {
+		const fence = parseFence(lines[index]);
 		const open = inner.at(-1);
+
+		if (fence && canClose(fence, outer)) longest = Math.max(longest, fence.marker.length);
 
 		if (fence && open && closes(fence, open)) {
 			inner.pop();
 		} else if (fence && !open && closes(fence, outer)) {
-			end = lineStart + line.length;
+			end = index;
 			break;
 		} else if (fence?.info && !open && canClose(fence, outer)) {
 			inner.push(fence);
 			nested = true;
 		}
-
-		content.push(line.replace(new RegExp(`^ {0,${outer.indent}}`), ''));
-
-		if (lineEnd === -1) break;
-		lineStart = lineEnd + 1;
 	}
 
 	if (!nested) return;
 
-	return {
-		type: 'code',
-		raw: source.slice(0, end),
-		lang: outer.info,
-		text: content.join('\n')
-	};
+	lines[start] = withMarker(lines[start], outer, longest + 1);
+
+	if (end < lines.length) lines[end] = withMarker(lines[end], parseFence(lines[end])!, longest + 1);
+
+	return end;
 }
 
-export const markdownFences: MarkedExtension = {
-	tokenizer: {
-		fences(source) {
-			return nestedMarkdownFence(source) ?? false;
+export function prepareFences(source: string) {
+	if (!/^ {0,3}(?:```|~~~)/m.test(source)) return { source, endsInFence: false };
+
+	const lines = source.split('\n');
+	let open: Fence | undefined;
+	let nestedEnd: number | undefined;
+
+	for (let index = 0; index < lines.length; index++) {
+		const fence = parseFence(lines[index]);
+
+		if (!fence) continue;
+
+		if (open) {
+			if (closes(fence, open)) open = undefined;
+			continue;
+		}
+
+		nestedEnd = isMarkdownFence(fence) ? lengthenNestedFence(lines, index, fence) : undefined;
+
+		if (nestedEnd === undefined) {
+			open = fence;
+		} else {
+			index = nestedEnd;
 		}
 	}
-};
+
+	return {
+		source: lines.join('\n'),
+		endsInFence: open !== undefined || nestedEnd === lines.length
+	};
+}

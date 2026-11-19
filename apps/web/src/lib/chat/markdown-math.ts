@@ -1,100 +1,103 @@
 import katex from 'katex';
-import { Tokenizer, type MarkedExtension, type Tokens } from 'marked';
 
-const BLOCK_MATH = /^ {0,3}(?:\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\])[ \t]*(?:\n|$)/;
-
-const INLINE_MATH = /^\$(?![\s$])((?:\\[^`\n]|[^\\$`\n])+?)(?<!\s)\$(?![\d$])/;
-
-const MATH_MASK =
+// Code spans and escapes come first so their dollars stay literal.
+const MATH =
 	/(`+)[\s\S]*?\1(?!`)|(?<math>\$\$[^`]+?\$\$|\\\[[^`]+?\\\]|\\\([^`]+?\\\)|\$(?![\s$])(?:\\[^`\n]|[^\\$`\n])+?(?<!\s)\$(?![\d$]))|\\[^\n]/g;
 
-const tokenizer = new Tokenizer();
+// Private-use characters pass through the Markdown parser as plain text.
+const OPEN = '\uE000';
+const CLOSE = '\uE001';
 
-function maskMath(source: string, maskedSource: string) {
-	const offset = maskedSource.length - source.length;
-	let masked = '';
-	let cursor = 0;
+const RESTORE = new RegExp(
+	`<p>${OPEN}(\\d+)${CLOSE}</p>|<(pre|code)\\b[^>]*>[\\s\\S]*?</\\2>|<[^>]*>|${OPEN}(\\d+)${CLOSE}`,
+	'g'
+);
 
-	for (const match of source.matchAll(MATH_MASK)) {
-		if (!match.groups?.math) continue;
+const PLACEHOLDER = new RegExp(`${OPEN}(\\d+)${CLOSE}`, 'g');
 
-		const start = offset + match.index;
+const MAX_CACHED_FORMULAS = 1000;
 
-		masked += maskedSource.slice(cursor, start) + 'a'.repeat(match[0].length);
-		cursor = start + match[0].length;
-	}
+const formulas = new Map<string, string>();
 
-	return masked + maskedSource.slice(cursor);
+function escapeHtml(text: string) {
+	return text.replace(
+		/[&"<>]/g,
+		(character) => ({ '&': '&amp;', '"': '&quot;', '<': '&lt;', '>': '&gt;' })[character]!
+	);
 }
 
-function renderMath(token: Tokens.Generic) {
-	return katex.renderToString(token.text, {
-		displayMode: token.displayMode,
+function renderFormula(source: string) {
+	let html = formulas.get(source);
+
+	if (html !== undefined) return html;
+
+	const displayMode = source.startsWith('$$') || source.startsWith('\\[');
+	const delimiter = displayMode || source[0] === '\\' ? 2 : 1;
+
+	html = katex.renderToString(source.slice(delimiter, -delimiter).trim(), {
+		displayMode,
 		throwOnError: false,
 		strict: false,
 		trust: false,
 		maxSize: 20,
 		maxExpand: 1000
 	});
+
+	if (formulas.size >= MAX_CACHED_FORMULAS) formulas.clear();
+	formulas.set(source, html);
+
+	return html;
 }
 
-export const markdownMath: MarkedExtension = {
-	tokenizer: {
-		emStrong(source, maskedSource, previousCharacter) {
-			if (!/^[*_]/.test(source)) return;
+/** Swaps math for placeholders before parsing, then KaTeX for the placeholders after. */
+export function createMathTable() {
+	const ids = new Map<string, number>();
+	const sources: string[] = [];
 
-			return tokenizer.emStrong.call(
-				this,
-				source,
-				maskMath(source, maskedSource),
-				previousCharacter
-			);
+	return {
+		mask(markdown: string) {
+			if (!/[$\\]/.test(markdown)) return markdown;
+
+			let masked = '';
+			let cursor = 0;
+
+			for (const match of markdown.matchAll(MATH)) {
+				const math = match.groups?.math;
+
+				if (!math) continue;
+
+				let id = ids.get(math);
+
+				if (id === undefined) {
+					id = sources.push(math) - 1;
+					ids.set(math, id);
+				}
+
+				masked += `${markdown.slice(cursor, match.index)}${OPEN}${id}${CLOSE}`;
+				cursor = match.index + math.length;
+			}
+
+			return masked + markdown.slice(cursor);
 		},
-		del(source, maskedSource, previousCharacter) {
-			if (!source.startsWith('~')) return;
+		restore(html: string) {
+			if (!html.includes(OPEN)) return html;
 
-			return tokenizer.del.call(this, source, maskMath(source, maskedSource), previousCharacter);
+			return html.replace(RESTORE, (match, paragraphId?: string, _code?: string, id?: string) => {
+				if (paragraphId !== undefined) {
+					const formula = renderFormula(sources[Number(paragraphId)]);
+
+					return formula.startsWith('<span class="katex-display">') ? formula : `<p>${formula}</p>`;
+				}
+
+				if (id !== undefined) return renderFormula(sources[Number(id)]);
+
+				// Code and attributes keep the source as written.
+				return match.replace(PLACEHOLDER, (_placeholder, literalId: string) =>
+					escapeHtml(sources[Number(literalId)])
+				);
+			});
 		}
-	},
-	extensions: [
-		{
-			name: 'blockMath',
-			level: 'block',
-			start: (source) => source.search(/^ {0,3}(?:\$\$|\\\[)/m),
-			tokenizer(source) {
-				const match = BLOCK_MATH.exec(source);
+	};
+}
 
-				if (!match) return;
-
-				return {
-					type: 'blockMath',
-					raw: match[0],
-					text: (match[1] ?? match[2]).trim(),
-					displayMode: true
-				};
-			},
-			renderer: renderMath
-		},
-		{
-			name: 'inlineMath',
-			level: 'inline',
-			start: (source) => source.search(/\$|\\[([]/),
-			tokenizer(source) {
-				if (this.lexer.state.inRawBlock) return;
-
-				const display = /^(?:\$\$([^`]+?)\$\$|\\\[([^`]+?)\\\])/.exec(source);
-				const match = display ?? /^\\\(([^`]+?)\\\)/.exec(source) ?? INLINE_MATH.exec(source);
-
-				if (!match) return;
-
-				return {
-					type: 'inlineMath',
-					raw: match[0],
-					text: (match[1] ?? match[2]).trim(),
-					displayMode: Boolean(display)
-				};
-			},
-			renderer: renderMath
-		}
-	]
-};
+export type MathTable = ReturnType<typeof createMathTable>;
