@@ -1,15 +1,17 @@
 import { paginationOptsValidator, paginationResultValidator } from 'convex/server';
-import { mergedStream, stream } from 'convex-helpers/server/stream';
 import { v } from 'convex/values';
 import { query } from './_generated/server';
 import { getUserId } from './lib/auth';
 import { MAX_INBOX_REPOSITORIES, vInboxState } from './lib/inboxState';
+import { rootThreadsPage, searchRootThreads } from './lib/threadListing';
 import schema from './schema';
 
 export const list = query({
 	args: {
 		state: vInboxState,
 		repositoryKeys: v.array(v.string()),
+		/** Title search. Returns every matching root thread as one page, in relevance order. */
+		query: v.optional(v.string()),
 		paginationOpts: paginationOptsValidator
 	},
 	returns: paginationResultValidator(schema.doc('threadRecords')),
@@ -25,29 +27,14 @@ export const list = query({
 			throw new Error(`Choose at most ${MAX_INBOX_REPOSITORIES} projects.`);
 		}
 
-		const streams = repositoryKeys.map((repositoryKey) => {
-			const rows = stream(ctx.db, schema)
-				.query('threadRecords')
-				.withIndex('by_userId_parentThreadId_repositoryKey_archivedAt_lastMessageAt', (range) => {
-					const project = range
-						.eq('userId', userId)
-						.eq('parentThreadId', undefined)
-						.eq('repositoryKey', repositoryKey);
+		const search = args.query?.trim();
 
-					return args.state === 'unsettled'
-						? project.eq('archivedAt', undefined)
-						: project.gt('archivedAt', 0);
-				})
-				.order('desc');
+		if (search) {
+			const page = await searchRootThreads(ctx, userId, search, repositoryKeys, [args.state]);
 
-			return rows;
-		});
+			return { page, isDone: true, continueCursor: '' };
+		}
 
-		return await mergedStream(
-			streams,
-			args.state === 'unsettled'
-				? ['lastMessageAt', '_creationTime']
-				: ['archivedAt', 'lastMessageAt', '_creationTime']
-		).paginate(args.paginationOpts);
+		return await rootThreadsPage(ctx, userId, args.state, repositoryKeys, args.paginationOpts);
 	}
 });

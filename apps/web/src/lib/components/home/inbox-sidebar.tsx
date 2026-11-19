@@ -8,6 +8,7 @@ import {
 	FolderInput,
 	FolderPlus,
 	RotateCcw,
+	Search,
 	Settings,
 	SquarePen,
 	X
@@ -91,6 +92,8 @@ type InboxSidebarProps = {
 	currentThreadId: Id<'threadRecords'> | null;
 	settledOpen?: boolean;
 	onSettledOpenChange: (open: boolean) => void;
+	search: string;
+	onSearchChange: (search: string) => void;
 	mutationsEnabled: boolean;
 	theme: SprocketTheme;
 	onThemeChange: (theme: SprocketTheme) => void;
@@ -120,6 +123,8 @@ export default function InboxSidebar({
 	currentThreadId,
 	settledOpen = false,
 	onSettledOpenChange,
+	search,
+	onSearchChange,
 	mutationsEnabled,
 	theme,
 	onThemeChange,
@@ -174,6 +179,12 @@ export default function InboxSidebar({
 				? (projects.find((project) => project.repositoryKey === selectedProjects[0])?.displayName ??
 					'All projects')
 				: `${selectedProjects.length} projects`;
+
+	const noSearchMatches =
+		search.trim() !== '' &&
+		sections
+			.filter((section) => section.state === 'unsettled' || settledOpen)
+			.every((section) => !section.loading && !section.error && section.rows.length === 0);
 
 	const menuThread = menu?.thread ?? null;
 
@@ -474,6 +485,21 @@ export default function InboxSidebar({
 						<FolderPlus size={17} />
 					</button>
 				</div>
+				<label className="inbox-thread-search">
+					<Search size={14} aria-hidden="true" />
+					<input
+						type="search"
+						value={search}
+						onChange={(event) => onSearchChange(event.currentTarget.value)}
+						onKeyDown={(event) => {
+							if (event.key !== 'Escape' || !search) return;
+							event.preventDefault();
+							onSearchChange('');
+						}}
+						aria-label="Search threads"
+						placeholder="Search threads"
+					/>
+				</label>
 			</div>
 
 			<div className="inbox-scroll">
@@ -508,6 +534,13 @@ export default function InboxSidebar({
 						</div>
 					</section>
 				))}
+				{noSearchMatches && (
+					<p className="inbox-search-empty" role="status">
+						{settledOpen
+							? 'No threads match your search.'
+							: 'No unsettled threads match your search.'}
+					</p>
+				)}
 			</div>
 
 			{notice && (

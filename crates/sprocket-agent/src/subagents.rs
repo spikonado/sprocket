@@ -52,27 +52,6 @@ pub struct CreateSubagentRunResponse {
     pub continuation_of_run_id: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SubagentListPage {
-    pub page: Vec<SubagentChildSummary>,
-    pub is_done: bool,
-    pub continue_cursor: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SubagentChildSummary {
-    pub thread_id: String,
-    #[serde(default)]
-    pub title: Option<String>,
-    pub status: RunStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_error: Option<String>,
-    pub parent_thread_id: String,
-    pub settings: SubagentSettings,
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubagentCommittedAnswer {

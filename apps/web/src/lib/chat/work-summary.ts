@@ -23,6 +23,8 @@ const ACTIVITIES: Record<SummarizedToolName | 'check_docs', Activity> = {
 	spawn_subagent: { verb: 'started', noun: 'subagent' },
 	control_subagent: { verb: 'controlled', noun: 'subagent' },
 	list_subagents: { verb: 'listed', noun: 'subagent group' },
+	list_threads: { verb: 'listed', noun: 'thread group' },
+	download_thread_transcripts: { verb: 'downloaded', noun: 'transcript' },
 	list_subagent_models: { verb: 'listed', noun: 'model group' },
 	ask_question: { verb: 'asked', noun: 'question' },
 	bind_artifact: { verb: 'bound', noun: 'artifact' },

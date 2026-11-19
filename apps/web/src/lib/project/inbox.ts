@@ -3,12 +3,14 @@ import {
 	type UsePaginatedQueryObjectReturnType,
 	type UsePaginatedQueryOptions
 } from 'convex/react';
+import { useEffect, useState } from 'react';
 import { api } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
 import type { InboxState } from '@convex/lib/inboxState';
 import { useRevealPaginatedThread } from '$lib/project/useThreadTree';
 
 const INBOX_PAGE_SIZE = 10;
+const SEARCH_DEBOUNCE_MS = 250;
 
 export type InboxQueryOptions = UsePaginatedQueryOptions<typeof api.inbox.list>;
 
@@ -25,6 +27,7 @@ type InboxSectionInput = {
 	enabled: boolean;
 	sectionOpen: boolean;
 	repositoryKeys: string[];
+	search: string;
 };
 
 function useInboxSection(input: InboxSectionInput, queryHook: InboxQueryHook): InboxSectionData {
@@ -32,7 +35,11 @@ function useInboxSection(input: InboxSectionInput, queryHook: InboxQueryHook): I
 		query: api.inbox.list,
 		args:
 			input.enabled && input.sectionOpen && input.repositoryKeys.length > 0
-				? { state: input.state, repositoryKeys: input.repositoryKeys }
+				? {
+						state: input.state,
+						repositoryKeys: input.repositoryKeys,
+						query: input.search || undefined
+					}
 				: 'skip',
 		initialNumItems: INBOX_PAGE_SIZE
 	});
@@ -51,15 +58,32 @@ type InboxInput = {
 	enabled: boolean;
 	repositoryKeys: string[];
 	settledOpen: boolean;
+	search?: string;
 };
+
+function useDebouncedSearch(search: string): string {
+	const trimmed = search.trim();
+	const [debounced, setDebounced] = useState(trimmed);
+
+	useEffect(() => {
+		const timer = setTimeout(() => setDebounced(trimmed), SEARCH_DEBOUNCE_MS);
+
+		return () => clearTimeout(timer);
+	}, [trimmed]);
+
+	return trimmed === '' ? '' : debounced;
+}
 
 export function useThreadInbox(
 	input: InboxInput,
 	queryHook: InboxQueryHook = usePaginatedQueryResult
 ) {
+	const search = useDebouncedSearch(input.search ?? '');
+
 	const sectionInput = {
 		enabled: input.enabled,
-		repositoryKeys: normalizeRepositoryKeys(input.repositoryKeys)
+		repositoryKeys: normalizeRepositoryKeys(input.repositoryKeys),
+		search
 	};
 
 	const unsettled = useInboxSection(

@@ -73,6 +73,7 @@ import type * as lib_runResume from "../lib/runResume.js";
 import type * as lib_runTerminal from "../lib/runTerminal.js";
 import type * as lib_runs from "../lib/runs.js";
 import type * as lib_threadHierarchy from "../lib/threadHierarchy.js";
+import type * as lib_threadListing from "../lib/threadListing.js";
 import type * as lib_threadRunStatus from "../lib/threadRunStatus.js";
 import type * as lib_threadUsage from "../lib/threadUsage.js";
 import type * as lib_tiers from "../lib/tiers.js";
@@ -184,6 +185,7 @@ declare const fullApi: ApiFromModules<{
   "lib/runTerminal": typeof lib_runTerminal;
   "lib/runs": typeof lib_runs;
   "lib/threadHierarchy": typeof lib_threadHierarchy;
+  "lib/threadListing": typeof lib_threadListing;
   "lib/threadRunStatus": typeof lib_threadRunStatus;
   "lib/threadUsage": typeof lib_threadUsage;
   "lib/tiers": typeof lib_tiers;

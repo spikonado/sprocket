@@ -344,7 +344,7 @@ export const renewClaim = mutation({
 
 function getContextResult(args: {
 	run: Doc<'runs'>;
-	parentThreadId?: Doc<'threadRecords'>['_id'];
+	thread: Doc<'threadRecords'>;
 	prompt: string;
 	pendingPrompt: TranscriptPromptBody | undefined;
 	contextTokens: number | undefined;
@@ -365,7 +365,8 @@ function getContextResult(args: {
 			fastMode: args.run.fastMode,
 			startedAt: runStartedAt(args.run),
 			continuationOfRunId: args.run.continuationOfRunId,
-			parentThreadId: args.parentThreadId
+			parentThreadId: args.thread.parentThreadId,
+			repositoryKey: args.thread.repositoryKey
 		},
 		providerPreferences: args.providerPreferences,
 		prompt: args.prompt,
@@ -396,8 +397,7 @@ export async function getContextHandler(ctx: QueryCtx, args: ObjectType<typeof g
 	const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
 	const contextTokens = await getThreadContextTokens(ctx, run.threadId);
 	const promptPart = await getPromptPart(ctx, run.threadId, run._id);
-	const thread = await ctx.db.get('threadRecords', run.threadId);
-	const parentThreadId = thread?.parentThreadId;
+	const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
 	const providerHandoff = await getProviderHandoff(ctx, run);
 	const preferences = await getUiPreferences(ctx.db, run.userId);
 	const knownProviders = args.knownProviders ?? releasedClientProviders;
@@ -408,7 +408,7 @@ export async function getContextHandler(ctx: QueryCtx, args: ObjectType<typeof g
 
 	return getContextResult({
 		run,
-		parentThreadId,
+		thread,
 		prompt: promptPart?.prompt?.text ?? '',
 		pendingPrompt: run.pendingPrompt && (await hydratePromptUrls(ctx, run.pendingPrompt)),
 		contextTokens,
@@ -420,7 +420,7 @@ export async function getContextHandler(ctx: QueryCtx, args: ObjectType<typeof g
 			enabledProviders: enabledProviders(preferences?.providerOrder, knownProviders),
 			restrictSubagentsToProvider: false
 		},
-		cwd: thread?.cwd,
+		cwd: thread.cwd,
 		shareConversationContent: preferences?.shareConversationContent ?? true,
 		coAuthorCommits: preferences?.coAuthorCommits ?? true
 	});

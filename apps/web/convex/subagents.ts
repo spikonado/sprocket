@@ -38,6 +38,7 @@ import { assertRunAcceptsWork } from '@convex/lib/runLease';
 import { getRunWithExecution, latestRunForThread } from '@convex/lib/runExecution';
 import { transcriptStateResult } from '@convex/transcript';
 import { assertDescendantThreadAccess, listDirectChildrenPage } from '@convex/lib/threadHierarchy';
+import { threadSettings } from '@convex/lib/threadListing';
 import { getPromptPart, loadTranscriptPartsPage } from '@convex/lib/transcriptParts';
 import {
 	isRunFinalStatus,
@@ -64,24 +65,13 @@ const vCallerRun = v.object({
 
 const vDescendantCaller = vCallerRun.extend({ threadId: v.id('threadRecords') });
 
-function subagentSettings(
-	source: Doc<'threadRecords'> | Doc<'runs'>
-): Infer<typeof vSubagentSettings> {
-	return {
-		model: source.selectedModel,
-		reasoning: source.reasoningEffort,
-		fast: source.fastMode,
-		completionProvider: source.completionProvider ?? 'spikonado'
-	};
-}
-
 function createdSubagentRun(run: Doc<'runs'>): Infer<typeof vCreatedSubagentRun> {
 	return {
 		threadId: run.threadId,
 		runId: run._id,
 		status: run.status,
 		continuationOfRunId: run.continuationOfRunId,
-		settings: subagentSettings(run)
+		settings: threadSettings(run)
 	};
 }
 
@@ -288,7 +278,7 @@ export const snapshot = mutation({
 		try {
 			const thread = await requireDescendantThread(ctx, args);
 
-			return { settings: subagentSettings(thread) };
+			return { settings: threadSettings(thread) };
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
@@ -337,7 +327,7 @@ export const listChildren = mutation({
 						title: child.title,
 						status: latest?.status ?? child.status,
 						lastError: latest?.lastError,
-						settings: subagentSettings(child)
+						settings: threadSettings(child)
 					};
 				})
 			);

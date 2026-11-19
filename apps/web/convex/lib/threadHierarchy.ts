@@ -83,7 +83,7 @@ export async function assertDescendantThreadAccess(
 	return target;
 }
 
-async function hierarchyState(db: DatabaseReader, threadId: Id<'threadRecords'>) {
+export async function hierarchyState(db: DatabaseReader, threadId: Id<'threadRecords'>) {
 	return await db
 		.query('threadHierarchyStates')
 		.withIndex('by_threadId', (q) => q.eq('threadId', threadId))

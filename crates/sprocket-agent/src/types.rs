@@ -411,6 +411,7 @@ pub struct RunSnapshot {
     pub id: String,
     pub thread_id: String,
     pub user_id: String,
+    pub repository_key: String,
     pub selected_model: String,
     #[serde(default)]
     pub completion_provider: CompletionProvider,

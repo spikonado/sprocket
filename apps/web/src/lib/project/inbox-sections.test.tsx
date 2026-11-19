@@ -1,5 +1,5 @@
-import { renderHook } from '@testing-library/react';
-import { expect, it, vi } from 'vitest';
+import { act, renderHook } from '@testing-library/react';
+import { afterEach, expect, it, vi } from 'vitest';
 import type { Doc } from '@convex/_generated/dataModel';
 import {
 	useRevealInboxThread,
@@ -55,6 +55,10 @@ function inboxQuery(
 		loadMore
 	};
 }
+
+afterEach(() => {
+	vi.useRealTimers();
+});
 
 it('reveals the selected root only in its included project and lifecycle section', () => {
 	const loadUnsettled = vi.fn();
@@ -161,4 +165,39 @@ it('maps query state into sections, preserving errors and pagination', () => {
 	unsettled.loadMore();
 	expect(loadMore).toHaveBeenCalledExactlyOnceWith(10);
 	expect(settled.error).toBe('Inbox query failed.');
+});
+
+it('passes the trimmed search to both sections after a debounce and drops it when cleared', () => {
+	vi.useFakeTimers();
+	const query = vi.fn<InboxQueryHook>(() => inboxQuery());
+
+	const { rerender } = renderHook(
+		(search) =>
+			useThreadInbox(
+				{ enabled: true, repositoryKeys: ['alpha'], settledOpen: true, search },
+				query
+			),
+		{ initialProps: '' }
+	);
+
+	query.mockClear();
+	rerender('  rover ');
+	expect(query.mock.calls.map(([call]) => call.args)).toEqual([
+		{ state: 'unsettled', repositoryKeys: ['alpha'] },
+		{ state: 'settled', repositoryKeys: ['alpha'] }
+	]);
+	query.mockClear();
+	act(() => {
+		vi.advanceTimersByTime(250);
+	});
+	expect(query.mock.calls.map(([call]) => call.args)).toEqual([
+		{ state: 'unsettled', repositoryKeys: ['alpha'], query: 'rover' },
+		{ state: 'settled', repositoryKeys: ['alpha'], query: 'rover' }
+	]);
+	query.mockClear();
+	rerender('');
+	expect(query.mock.calls.map(([call]) => call.args)).toEqual([
+		{ state: 'unsettled', repositoryKeys: ['alpha'] },
+		{ state: 'settled', repositoryKeys: ['alpha'] }
+	]);
 });

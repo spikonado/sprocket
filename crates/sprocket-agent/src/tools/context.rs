@@ -1,8 +1,11 @@
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 use rig::tool::ToolExecutionError;
-use sprocket_workspace::{CommandSessionManager, WorkspaceOperationCancelled};
+use sprocket_workspace::{
+    CommandSessionManager, WorkspaceCancellation, WorkspaceOperationCancelled,
+};
 
 use crate::convex::RuntimeClient;
 use crate::hooks::ToolCallTracker;
@@ -15,6 +18,17 @@ pub(super) fn tool_failure(message: impl Into<String>) -> ToolExecutionError {
 
 pub(super) fn cancelled_error() -> ToolExecutionError {
     ToolExecutionError::cancelled("Tool execution was cancelled.")
+}
+
+pub(super) async fn cancelled_read<T>(
+    cancellation: &WorkspaceCancellation,
+    read: impl Future<Output = Result<T, ToolExecutionError>>,
+) -> Result<T, ToolExecutionError> {
+    tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => Err(cancelled_error()),
+        result = read => result,
+    }
 }
 
 #[derive(Clone)]

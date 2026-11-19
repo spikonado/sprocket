@@ -240,6 +240,7 @@ fn deserializes_a_pending_prompt_from_convex_numbers() {
             "_id": "jd7run",
             "threadId": "jd7thread",
             "userId": "user_1",
+            "repositoryKey": "github.com/acme/robot",
             "selectedModel": "gpt-5.6-sol",
             "reasoningEffort": "medium",
             "fastMode": false,

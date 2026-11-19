@@ -30,6 +30,35 @@ describe('thread inbox', () => {
 		expect(settled.page.map((thread) => thread._id)).toEqual([second]);
 	});
 
+	it('lists root threads whose own or subagent titles match a search', async () => {
+		const t = initConvexTest();
+		const { asUser, subject, threadId } = await seedOwnedThread(t);
+		const child = await seedThreadRecord(t, subject, 'alpha');
+		const settled = await seedThreadRecord(t, subject, 'alpha');
+		await seedThreadRecord(t, subject, 'alpha');
+		await t.run(async (ctx) => {
+			await ctx.db.patch('threadRecords', threadId, { title: 'Plan the release' });
+			await ctx.db.patch('threadRecords', child, {
+				parentThreadId: threadId,
+				title: 'Fix the sidebar test'
+			});
+			await ctx.db.patch('threadRecords', settled, { title: 'Sidebar redesign', archivedAt: 1 });
+		});
+
+		const search = async (state: 'unsettled' | 'settled') =>
+			(
+				await asUser.query(api.inbox.list, {
+					state,
+					repositoryKeys: ['alpha'],
+					query: ' sidebar ',
+					paginationOpts: { numItems: 10, cursor: null }
+				})
+			).page.map((thread) => thread._id);
+
+		expect(await search('unsettled')).toEqual([threadId]);
+		expect(await search('settled')).toEqual([settled]);
+	});
+
 	it('keeps another account out of the requested project stream', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');

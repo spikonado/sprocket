@@ -20,14 +20,14 @@ use tokio::time::{sleep, timeout};
 use super::async_tools::{
     YieldMode, default_yield_ms, is_default_yield_ms, poll_targets, yield_time_schema,
 };
-use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure};
+use super::context::{AgentToolContext, cancelled_error, cancelled_read, tool_error, tool_failure};
 use super::job::execute_tool_job_with_id;
 use crate::catalog::{SubagentModelChoice, model_catalog};
 use crate::convex::{MutationFailure, RuntimeClient};
 use crate::run_settings::{ResolvedSettings, SettingsOverrides, resolve_settings};
 use crate::subagents::{
     CreateSubagentRunResponse, SharedSubagentLauncher, SubagentControlResponse,
-    SubagentLaunchRequest, SubagentListPage, SubagentMonitorInfo, SubagentThreadSnapshot,
+    SubagentLaunchRequest, SubagentMonitorInfo, SubagentThreadSnapshot,
 };
 use crate::submission::{SUBMISSION_ATTEMPT_TIMEOUT, submission_is_waiting, wait_until_ready};
 use crate::types::CompletionProvider;
@@ -37,11 +37,8 @@ const RECOVER_SUBMISSION: &str = "subagents:recoverSubmission";
 const SNAPSHOT: &str = "subagents:snapshot";
 const MONITOR_INFO: &str = "subagents:threadMonitorInfo";
 const ACTIVITY: &str = "subagents:threadActivity";
-const TRANSCRIPT_PARTS_PAGE: &str = "subagents:transcriptPartsPage";
 const CONTROL: &str = "subagents:control";
-const LIST_CHILDREN: &str = "subagents:listChildren";
 
-const SUBAGENT_LIST_PAGE_SIZE: u32 = 32;
 const CONTROL_MAX_ATTEMPTS: usize = 3;
 const CONTROL_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
 
@@ -57,11 +54,6 @@ pub(crate) struct ControlSubagentTool {
 
 #[derive(Clone)]
 pub(crate) struct PollSubagentTool {
-    pub(super) context: AgentToolContext,
-}
-
-#[derive(Clone)]
-pub(crate) struct ListSubagentsTool {
     pub(super) context: AgentToolContext,
 }
 
@@ -203,21 +195,6 @@ pub(crate) struct ControlSubagentArgs {
     )]
     #[schemars(default = "default_yield_ms")]
     pub(crate) yield_time_ms: u64,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct ListSubagentsArgs {
-    /// Parent whose immediate children are listed. Defaults to this thread;
-    /// any descendant of this thread is allowed.
-    #[serde(
-        rename = "parentThreadId",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub(crate) parent_thread_id: Option<String>,
-    /// Pagination cursor from a previous listing's nextCursor.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) cursor: Option<String>,
 }
 
 const SETTINGS_FIELDS: [&str; 3] = ["model", "reasoning", "fast"];
@@ -950,64 +927,6 @@ where
     }
 }
 
-impl rig::tool::Tool for ListSubagentsTool {
-    const NAME: &'static str = "list_subagents";
-    type Error = ToolExecutionError;
-    type Args = ListSubagentsArgs;
-    type Output = serde_json::Value;
-
-    fn description(&self) -> String {
-        String::new()
-    }
-
-    fn parameters(&self) -> serde_json::Value {
-        json!(schemars::schema_for!(ListSubagentsArgs))
-    }
-
-    async fn call(
-        &self,
-        _context: &mut rig::tool::ToolContext,
-        args: Self::Args,
-    ) -> Result<Self::Output, Self::Error> {
-        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
-        execute_tool_job_with_id(
-            &self.context,
-            Self::NAME,
-            payload,
-            |cancellation, _job_id| {
-                let context = self.context.clone();
-                async move {
-                    cancelled_read(&cancellation, async {
-                        let mut fields = BTreeMap::new();
-                        if let Some(parent_thread_id) = &args.parent_thread_id {
-                            fields.insert(
-                                "parentThreadId".to_string(),
-                                parent_thread_id.clone().into(),
-                            );
-                        }
-                        fields.insert(
-                            "paginationOpts".to_string(),
-                            Value::try_from(json!({
-                                "numItems": SUBAGENT_LIST_PAGE_SIZE,
-                                "cursor": args.cursor,
-                            }))
-                            .map_err(tool_error)?,
-                        );
-                        let page: SubagentListPage = context
-                            .runtime
-                            .mutation_json(LIST_CHILDREN, subagent_args(&context, fields))
-                            .await
-                            .map_err(tool_error)?;
-                        Ok(list_page_response(&page))
-                    })
-                    .await
-                }
-            },
-        )
-        .await
-    }
-}
-
 fn require_launcher(
     context: &AgentToolContext,
 ) -> Result<&SharedSubagentLauncher, ToolExecutionError> {
@@ -1117,15 +1036,6 @@ async fn recover_submission(
     .map_err(|_| anyhow::anyhow!("timed out recovering subagent submission"))?
 }
 
-fn list_page_response(page: &SubagentListPage) -> serde_json::Value {
-    json!({
-        "children": page.page,
-        "nextCursor": if page.is_done { serde_json::Value::Null } else {
-            serde_json::Value::String(page.continue_cursor.clone())
-        },
-    })
-}
-
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SubagentActivity {
@@ -1220,17 +1130,6 @@ async fn wait_for_activity(
         fetch_monitor_info(context, thread_id, target_run_id),
     )
     .await
-}
-
-async fn cancelled_read<T>(
-    cancellation: &WorkspaceCancellation,
-    read: impl Future<Output = Result<T, ToolExecutionError>>,
-) -> Result<T, ToolExecutionError> {
-    tokio::select! {
-        biased;
-        _ = cancellation.cancelled() => Err(cancelled_error()),
-        result = read => result,
-    }
 }
 
 async fn next_activity<S>(
@@ -1330,6 +1229,8 @@ async fn read_transcript_snapshot(
         .ok_or_else(|| tool_failure("transcript store is unavailable"))?;
 
     let transcript = &info.transcript;
+    let runtime = &context.runtime;
+    let caller_run_id = &context.run_id;
     let user_id = &context.user_id;
     let thread_id = &transcript.thread_id;
     let filter = sprocket_transcript::monitor::MonitorFilter {
@@ -1343,17 +1244,7 @@ async fn read_transcript_snapshot(
         cursor,
         transcript.total_parts,
         &filter,
-        |start, end| async move {
-            let mut fields = thread_args(context, thread_id);
-            fields.insert("start".into(), Value::Float64(f64::from(start)));
-            fields.insert("end".into(), Value::Float64(f64::from(end)));
-            fields.insert("order".into(), "desc".to_owned().into());
-            let value: serde_json::Value = context
-                .runtime
-                .mutation_json(TRANSCRIPT_PARTS_PAGE, fields)
-                .await?;
-            sprocket_transcript::parse_remote_page(value, thread_id)
-        },
+        |start, end| runtime.transcript_parts_page_for_run(caller_run_id, thread_id, start, end),
     )
     .await
     .map_err(tool_error)?;

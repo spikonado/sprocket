@@ -440,6 +440,23 @@ export const vListSubagentsPayload = v.object({
 	cursor: v.optional(v.string())
 });
 
+export const vRepositoryScope = v.union(v.literal('all'), v.array(v.string()));
+
+export type RepositoryScope = Infer<typeof vRepositoryScope>;
+
+export const vListThreadsPayload = v.object({
+	query: v.optional(v.string()),
+	parentThreadId: v.optional(v.string()),
+	repositoryKeys: v.optional(vRepositoryScope),
+	includeSettled: v.optional(v.boolean()),
+	cursor: v.optional(v.string())
+});
+
+export const vDownloadThreadTranscriptsPayload = v.object({
+	threadId: v.string(),
+	includeDescendants: v.optional(v.boolean())
+});
+
 export const vCurrentExecutorJobPayload = v.union(
 	v.object({}),
 	vParseFilePayload,
@@ -448,6 +465,8 @@ export const vCurrentExecutorJobPayload = v.union(
 	vPollSubagentPayload,
 	vPollSubagentsPayload,
 	vListSubagentsPayload,
+	vListThreadsPayload,
+	vDownloadThreadTranscriptsPayload,
 	vApplyPatchPayload,
 	vAskQuestionPayload,
 	vAwaitQuestionPayload,
@@ -891,6 +910,25 @@ export const vListSubagentsResult = v.object({
 	hasMore: v.optional(v.boolean())
 });
 
+export const vListThreadsResult = v.object({
+	threads: v.array(
+		v.object({
+			threadId: v.id('threadRecords'),
+			title: v.optional(v.string()),
+			status: vRunStatus,
+			lastError: v.optional(v.string()),
+			parentThreadId: v.optional(v.id('threadRecords')),
+			repositoryKey: v.string(),
+			lastMessageAt: v.string(),
+			settled: v.boolean(),
+			descendantCount: v.number(),
+			settings: vSubagentSettings,
+			pullRequests: v.optional(v.array(vLinkedPullRequest))
+		})
+	),
+	nextCursor: v.union(v.string(), v.null())
+});
+
 export const vListModelsResult = v.object({
 	defaultModelId: v.optional(v.string()),
 	defaultFast: v.optional(v.boolean()),
@@ -978,6 +1016,7 @@ export const vExecutorJobResult = v.union(
 	vSubagentSnapshotResult,
 	vPollSubagentsResult,
 	vListSubagentsResult,
+	vListThreadsResult,
 	vListModelsResult,
 	vCommandExecResult,
 	vCommandStdinResult,
@@ -1049,6 +1088,8 @@ export const vCurrentExecutorJobKind = v.union(
 	v.literal('list_artifacts'),
 	v.literal('list_subagent_models'),
 	v.literal('list_subagents'),
+	v.literal('list_threads'),
+	v.literal('download_thread_transcripts'),
 	v.literal('edit_artifact'),
 	v.literal('delete_artifact'),
 	v.literal('save_artifact'),

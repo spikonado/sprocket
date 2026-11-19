@@ -19,6 +19,7 @@ mod questions;
 mod scrape_files;
 mod skills;
 mod subagents;
+mod threads;
 mod url_fetch;
 mod web;
 mod web_request;
@@ -39,9 +40,8 @@ use self::payments::{CardCheckoutTool, PollCheckoutTool, ReportOrderTool};
 use self::pull_requests::{LinkPrsTool, PollPrTool};
 use self::questions::{AskQuestionTool, PollQuestionTool};
 use self::skills::ReadSkillTool;
-use self::subagents::{
-    ControlSubagentTool, ListSubagentsTool, PollSubagentTool, SpawnSubagentTool,
-};
+use self::subagents::{ControlSubagentTool, PollSubagentTool, SpawnSubagentTool};
+use self::threads::{DownloadThreadTranscriptsTool, ListThreadsTool};
 use self::web::{ScrapeUrlTool, WebSearchTool};
 use crate::convex::RuntimeClient;
 use crate::hooks::ToolCallTracker;
@@ -57,10 +57,11 @@ pub(crate) const AGENT_TOOLS: &[(&str, NormalizeToolArgs)] = &[
     agent_tool::<ControlCmdTool>(),
     agent_tool::<ControlSubagentTool>(),
     agent_tool::<DeleteArtifactTool>(),
+    agent_tool::<DownloadThreadTranscriptsTool>(),
     agent_tool::<ExecCmdTool>(),
     agent_tool::<LinkPrsTool>(),
     agent_tool::<ListArtifactsTool>(),
-    agent_tool::<ListSubagentsTool>(),
+    agent_tool::<ListThreadsTool>(),
     agent_tool::<LookupPartsTool>(),
     agent_tool::<ParseFileTool>(),
     agent_tool::<PollCheckoutTool>(),
@@ -101,7 +102,8 @@ pub(crate) struct AgentToolSet {
     pub(crate) control_cmd: ControlCmdTool,
     pub(crate) exec_cmd: ExecCmdTool,
     pub(crate) control_subagent: ControlSubagentTool,
-    pub(crate) list_subagents: ListSubagentsTool,
+    pub(crate) list_threads: ListThreadsTool,
+    pub(crate) download_thread_transcripts: DownloadThreadTranscriptsTool,
     pub(crate) lookup_parts: LookupPartsTool,
     pub(crate) parse_file: ParseFileTool,
     pub(crate) poll_cmd: PollCmdTool,
@@ -240,7 +242,11 @@ pub(crate) fn agent_tools(
         control_subagent: ControlSubagentTool {
             context: context.clone(),
         },
-        list_subagents: ListSubagentsTool {
+        list_threads: ListThreadsTool {
+            context: context.clone(),
+            repository_key: request.repository_key.clone(),
+        },
+        download_thread_transcripts: DownloadThreadTranscriptsTool {
             context: context.clone(),
         },
         parse_file: ParseFileTool(context.clone()),

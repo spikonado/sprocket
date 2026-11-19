@@ -222,7 +222,17 @@ export default defineSchema({
 			'repositoryKey',
 			'archivedAt',
 			'lastMessageAt'
-		]),
+		])
+		.index('by_userId_parentThreadId_archivedAt_lastMessageAt', [
+			'userId',
+			'parentThreadId',
+			'archivedAt',
+			'lastMessageAt'
+		])
+		.searchIndex('search_title', {
+			searchField: 'title',
+			filterFields: ['userId', 'repositoryKey']
+		}),
 	threadHierarchyStates: defineTable({
 		threadId: v.id('threadRecords'),
 		workingDescendantCount: v.number(),

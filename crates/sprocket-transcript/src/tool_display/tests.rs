@@ -123,6 +123,18 @@ fn tool_labels_and_summaries() {
             "",
         ),
         (
+            "list_threads",
+            json!({"query": "motor"}),
+            Some("Listed Threads"),
+            "motor",
+        ),
+        (
+            "download_thread_transcripts",
+            json!({"threadId": "child"}),
+            Some("Downloaded Transcripts"),
+            "child",
+        ),
+        (
             "check_docs",
             json!({"path": "docs/api"}),
             Some("Checked Docs"),

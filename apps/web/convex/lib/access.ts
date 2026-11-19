@@ -27,6 +27,18 @@ export async function getOwnedThreadRecord(
 	);
 }
 
+export async function getOwnedThreadRecordByString(
+	db: DatabaseReader,
+	userId: string,
+	threadId: string
+): Promise<Doc<'threadRecords'>> {
+	const id = db.normalizeId('threadRecords', threadId);
+
+	if (!id) throw new Error('Thread not found.');
+
+	return await getOwnedThreadRecord(db, userId, id);
+}
+
 export async function getOwnedRun(
 	db: DatabaseReader,
 	userId: string,

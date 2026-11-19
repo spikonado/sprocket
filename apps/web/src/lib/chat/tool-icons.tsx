@@ -4,6 +4,7 @@ import {
 	Camera,
 	CircleQuestionMark,
 	CreditCard,
+	Download,
 	FileCode,
 	FileDiff,
 	FileText,
@@ -40,8 +41,11 @@ export function toolKindIcon(kind: string): LucideIcon {
 		case 'poll_subagent':
 			return Bot;
 		case 'list_subagents':
+		case 'list_threads':
 		case 'list_subagent_models':
 			return ListChecks;
+		case 'download_thread_transcripts':
+			return Download;
 		case 'check_docs':
 			return BookOpen;
 		case 'bind_artifact':

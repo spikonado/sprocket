@@ -90,6 +90,10 @@ Released agents call `payments:reportOrder` without `outcome`, which means `orde
 
 Released UIs call `githubCredentials:saveToken` and `removeToken`, and released hosts call `issueTokens` to read the tokens saved in WorkOS Vault. Current clients sign in through the GitHub CLI or read environment tokens and never call the module. Once those clients age out, delete `githubCredentials.ts` and the saved `sprocket-github-*` WorkOS Vault objects.
 
+### Subagent listing and transcript pages
+
+Released agents start `list_subagents` jobs and call `subagents:listChildren` for them, and read subagent transcripts through `subagents:transcriptPartsPage`. Current agents use `list_threads` with `threads:listForRun`, and `transcript:getPartsPageForRun` with `threadId`. Once those agents age out, delete both mutations and move `list_subagents` from `vCurrentExecutorJobKind` to the retired kinds in `vExecutorJobKind`. Stored `list_subagents` jobs stay readable, see the permanent list.
+
 ## Convex data shims
 
 ### Completion provider defaults
@@ -208,6 +212,7 @@ Stored executor jobs, transcripts and local data files keep accepting these hist
 - Single-target `poll_cmd` (`sessionId`), `poll_subagent` (`threadId`, `cursor`) and `poll_pr` (`repository`, `number`, `cursor`) payloads and their single-object results, from before each poll took a list of targets. Released agents still send them.
 - The retired `list_subagent_models` tool kind, including `defaultModelId`, `defaultFast`, and model `label`, `vendor` and `supportsImages` on its results.
 - `lastError: null`, empty `pendingQuestions`, `settings.fast: false` and `settings.completionProvider` on subagent tool results, and `hasMore` on `list_subagents` results.
+- The retired `list_subagents` tool kind, with its payloads and results.
 - Completion items without `startedAt`, `completedAt` or `streamId`, and local parts without `createdAt`.
 - `completionProvider: 'chatgpt'` on threads and runs. Local SIWC runs use the same ID, so `chatgpt` stays in `completionProviderIds`.
 - Settled-tool output and section assignments of jobs without section metadata, which reconciliation preserves.
