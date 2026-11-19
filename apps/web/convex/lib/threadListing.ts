@@ -92,14 +92,17 @@ async function searchTitles(
 			.take(SEARCH_MATCH_LIMIT);
 	}
 
+	const keys = [...new Set(repositoryKeys)];
+	const perProjectLimit = Math.ceil(SEARCH_MATCH_LIMIT / keys.length);
+
 	const perProject = await Promise.all(
-		[...new Set(repositoryKeys)].map((repositoryKey) =>
+		keys.map((repositoryKey) =>
 			ctx.db
 				.query('threadRecords')
 				.withSearchIndex('search_title', (search) =>
 					search.search('title', query).eq('userId', userId).eq('repositoryKey', repositoryKey)
 				)
-				.take(SEARCH_MATCH_LIMIT)
+				.take(perProjectLimit)
 		)
 	);
 
