@@ -1,0 +1,6 @@
+/* The preview has no backend, so controls that open settings or add projects are hidden. */
+[data-ph-capture-attribute-action='open_settings'],
+.inbox-add-project-button,
+.inbox-project-footer {
+	display: none;
+}
