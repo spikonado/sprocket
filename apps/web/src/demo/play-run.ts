@@ -75,17 +75,17 @@ export async function playRun(
 				transcripts.putRow(threadId, { ...row, toolCounts: {}, running: true });
 
 				for (const item of run.work[row.id] ?? []) {
+					const detail = run.items[item.id];
 					transcripts.putWorkItem(threadId, row.id, startedItem(item));
 
 					try {
 						await wait(450 + Math.random() * 250, signal);
 					} catch (error) {
+						if (detail) transcripts.putDetail(threadId, detail);
 						transcripts.putWorkItem(threadId, row.id, cancelledItem(item));
 						transcripts.putRow(threadId, { ...row, toolCounts, running: false });
 						throw error;
 					}
-
-					const detail = run.items[item.id];
 
 					if (detail) transcripts.putDetail(threadId, detail);
 					transcripts.putWorkItem(threadId, row.id, item);

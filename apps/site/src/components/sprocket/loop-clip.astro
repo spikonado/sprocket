@@ -36,7 +36,7 @@ const { src, poster, label, class: className } = Astro.props;
 				for (const { target, isIntersecting } of entries) {
 					if (!(target instanceof HTMLVideoElement)) continue;
 
-					if (isIntersecting) void target.play().catch(() => {});
+					if (isIntersecting) void target.play().catch(() => (target.controls = true));
 					else target.pause();
 				}
 			},
