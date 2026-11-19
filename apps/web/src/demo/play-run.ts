@@ -81,7 +81,7 @@ export async function playRun(
 					try {
 						await wait(450 + Math.random() * 250, signal);
 					} catch (error) {
-						if (detail) transcripts.putDetail(threadId, detail);
+						if (detail) transcripts.putDetail(threadId, cancelledItem(detail));
 						transcripts.putWorkItem(threadId, row.id, cancelledItem(item));
 						transcripts.putRow(threadId, { ...row, toolCounts, running: false });
 						throw error;
