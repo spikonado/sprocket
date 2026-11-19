@@ -1,7 +1,7 @@
 ---
 import poster from '@/assets/live-preview.webp';
 
-const DEMO_PATH = '/demo/index.html';
+const DEMO_PATH = '/demo/demo.html';
 ---
 
 <figure class="relative mx-auto mt-16 max-w-6xl">
@@ -40,12 +40,14 @@ const DEMO_PATH = '/demo/index.html';
 <script>
 	const frame = document.querySelector<HTMLIFrameElement>('[data-live-preview]');
 
-	if (frame?.dataset.src && window.matchMedia('(min-width: 768px)').matches) {
+	const src = frame?.dataset.src;
+
+	if (frame && src && window.matchMedia('(min-width: 768px)').matches) {
 		new IntersectionObserver(
 			([entry], observer) => {
-				if (!entry.isIntersecting || !frame.dataset.src) return;
+				if (!entry.isIntersecting) return;
 
-				frame.src = frame.dataset.src;
+				frame.src = src;
 				observer.disconnect();
 			},
 			{ rootMargin: '400px' }

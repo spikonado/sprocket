@@ -10,7 +10,7 @@ export const project: Project = {
 	localAttachmentAvailability: 'available'
 };
 
-export const BOM = `# ESP32-S3 Air Sensor BOM (rev A)
+const BOM = `# ESP32-S3 Air Sensor BOM (rev A)
 
 Unit prices are LCSC at quantity 10. "JLC" marks parts priced from JLCPCB where LCSC had no stock. Mounting holes and PWR_FLAGs are skipped.
 
@@ -49,7 +49,7 @@ Parts for one board come to **$16.12**, or $161.17 for ten.
 - **J2**: confirm the SMD header's orientation against the vertical footprint.
 `;
 
-export const ASSEMBLY = `# Assembly: ESP32-S3 Air Sensor rev A
+const ASSEMBLY = `# Assembly: ESP32-S3 Air Sensor rev A
 
 Hand assembly for a batch of ten. Allow about 40 minutes per board.
 

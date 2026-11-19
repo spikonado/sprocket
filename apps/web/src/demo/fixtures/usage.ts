@@ -1,14 +1,7 @@
+import { emptyCounts } from '@convex/lib/tokenUsage';
 import type { TokenUsageTotals } from '@convex/lib/validators';
 import { modelCatalog } from './models';
 import type { TranscriptFixture } from './types';
-
-const NO_TOKENS = {
-	inputTokens: 0,
-	cacheReadTokens: 0,
-	cacheWriteTokens: 0,
-	outputTokens: 0,
-	reasoningTokens: 0
-};
 
 /** Plausible, deterministic token counts for a recorded run: one model call per tool plus the reply. */
 export function runUsage(modelId: string, run: TranscriptFixture): TokenUsageTotals {
@@ -40,6 +33,6 @@ export function runUsage(modelId: string, run: TranscriptFixture): TokenUsageTot
 			outputTokens,
 			reasoningTokens: Math.round(outputTokens * 0.4)
 		},
-		longContext: NO_TOKENS
+		longContext: emptyCounts
 	};
 }
