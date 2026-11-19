@@ -1,4 +1,4 @@
-import { use, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import { memo, use, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import CodeBlockControls from './code-block-controls';
 import ImageViewer, { type ViewerImage } from './image-viewer';
@@ -18,7 +18,7 @@ type CodeControl = {
 	language?: string;
 };
 
-export default function MarkdownHtml({
+export default memo(function MarkdownHtml({
 	html: sourceHtml,
 	imageScope
 }: {
@@ -76,7 +76,8 @@ export default function MarkdownHtml({
 
 			blocks.push({ target, wrapper, pre, code, language });
 
-			if (!language) continue;
+			// An open fence is highlighted once it closes.
+			if (!language || pre.hasAttribute('data-markdown-incomplete')) continue;
 
 			void import('$lib/chat/code-highlighting-client')
 				.then(({ highlightCodeInWorker }) =>
@@ -200,4 +201,4 @@ export default function MarkdownHtml({
 				: null}
 		</>
 	);
-}
+});

@@ -1,11 +1,13 @@
 import DOMPurify from 'isomorphic-dompurify';
-import { Marked, type Token } from 'marked';
+import { renderToHtml } from '@pierre/words';
 import type { VisualKind } from './artifact-preview';
-import { markdownFences } from './markdown-fences';
+import { prepareFences } from './markdown-fences';
 import { isWindowsImagePath } from './markdown-image-path';
-import { markdownMath } from './markdown-math';
-
-const marked = new Marked({ gfm: true, breaks: true }, markdownFences, markdownMath);
+import {
+	createPlaceholders,
+	type MarkdownReference,
+	type Placeholders
+} from './markdown-placeholders';
 
 DOMPurify.addHook('uponSanitizeAttribute', (node, attribute) => {
 	const isPath =
@@ -30,115 +32,220 @@ function sanitizeMarkdown(rendered: string, openLinksInNewTab = false) {
 	return sanitized.replace(/<a(?=[\s>])/gi, '<a target="_blank" rel="noopener noreferrer"');
 }
 
-export function renderMarkdown(value: string) {
-	return sanitizeMarkdown(marked.parse(value, { async: false }));
-}
-
 export type MarkdownBlock =
 	| { type: 'html'; html: string }
-	| { type: 'artifact'; artifactId: string }
-	| { type: 'kicad'; path: string }
+	| MarkdownReference
 	| { type: 'visual'; kind: VisualKind; source: string }
 	| { type: 'mermaid'; source: string; codeHtml: string }
 	| { type: 'json-render'; source: string; codeHtml: string };
-
-const ARTIFACT_REFERENCE = /^\s*artifact:([A-Za-z0-9_-]+)\s*$/;
-
-const KICAD_REFERENCE = /^\s*kicad:([^\n]+?\.kicad_pro)\s*$/;
 
 const VISUAL_LANGUAGES = new Map<string, VisualKind>([
 	['html-visual', 'html'],
 	['jsx-visual', 'react']
 ]);
 
-const FENCE_MARKERS = /^ {0,3}(`{3,}|~{3,})[^\n]*\n(?:[\s\S]*\n)? {0,3}(`{3,}|~{3,})\s*$/;
+const CODE_BLOCK = /^<pre><code(?: class="language-([^"]*)")?>([^<]*)<\/code><\/pre>\n$/;
 
-function fenceIsClosed(raw: string) {
-	const [, open, close] = FENCE_MARKERS.exec(raw) ?? [];
+const decoder = new TextDecoder();
 
-	return !!open && !!close && close[0] === open[0] && close.length >= open.length;
+function decodeHtml(html: string) {
+	return html.replace(
+		/&(amp|lt|gt|quot);/g,
+		(_entity, name: string) => ({ amp: '&', lt: '<', gt: '>', quot: '"' })[name]!
+	);
 }
 
-function specialBlock(
-	token: Token,
-	availableArtifactIds: ReadonlySet<string>
-): MarkdownBlock | undefined {
-	if (token.type === 'code') {
-		const language = token.lang?.split(/\s/, 1)[0].toLowerCase() ?? '';
-		const kind = VISUAL_LANGUAGES.get(language);
-		const isDiagram = language === 'mermaid';
-		const codeHtml = () => sanitizeMarkdown(marked.parser([token]));
+function parseMarkdown(value: string, placeholders: Placeholders) {
+	const normalized = value.includes('\r') ? value.replace(/\r\n?/g, '\n') : value;
+	const { source, endsInFence } = prepareFences(normalized);
 
-		if (language === 'json-render') {
-			return { type: 'json-render', source: token.text, codeHtml: codeHtml() };
-		}
-
-		if (!(kind || isDiagram) || !fenceIsClosed(token.raw)) return;
-
-		if (kind) return { type: 'visual', kind, source: token.text };
-
-		return { type: 'mermaid', source: token.text, codeHtml: codeHtml() };
-	}
-
-	if (token.type !== 'paragraph') return;
-
-	const artifactId = ARTIFACT_REFERENCE.exec(token.raw)?.[1];
-
-	if (artifactId && availableArtifactIds.has(artifactId)) return { type: 'artifact', artifactId };
-
-	const kicadPath = KICAD_REFERENCE.exec(token.raw)?.[1];
-
-	if (kicadPath) return { type: 'kicad', path: kicadPath };
+	return { endsInFence, html: decoder.decode(renderToHtml(placeholders.mask(source))) };
 }
 
-export function renderMarkdownBlocks(
-	value: string,
-	availableArtifactIds: ReadonlySet<string>,
-	openLinksInNewTab = false
-): MarkdownBlock[] {
-	return renderMarkdownTokens(marked.lexer(value), availableArtifactIds, openLinksInNewTab);
-}
+const TAG = /<!--[\s\S]*?-->|<(\/?)([A-Za-z][A-Za-z0-9-]*)(?:"[^"]*"|'[^']*'|[^'">])*>|\n/g;
 
-function renderMarkdownTokens(
-	tokens: Token[],
-	availableArtifactIds: ReadonlySet<string>,
-	openLinksInNewTab: boolean
-): MarkdownBlock[] {
-	const blocks: MarkdownBlock[] = [];
-	let markdownTokens: Token[] = [];
+const VOID_TAGS = new Set([
+	'area',
+	'base',
+	'br',
+	'col',
+	'embed',
+	'hr',
+	'img',
+	'input',
+	'link',
+	'meta',
+	'source',
+	'track',
+	'wbr'
+]);
 
-	const flushMarkdown = () => {
-		if (markdownTokens.length === 0) return;
-		const html = sanitizeMarkdown(marked.parser(markdownTokens), openLinksInNewTab);
+/** Splits rendered HTML into top-level blocks, reusing the previous finished blocks it starts with. */
+function splitBlocks(html: string, previous: readonly string[]) {
+	const blocks: string[] = [];
+	let start = 0;
 
-		if (html) blocks.push({ type: 'html', html });
-		markdownTokens = [];
-	};
+	// The last block can be the unbalanced rest of the HTML rather than a finished block.
+	for (const block of previous.slice(0, -1)) {
+		if (!html.startsWith(block, start)) break;
 
-	for (const token of tokens) {
-		const block = specialBlock(token, availableArtifactIds);
-
-		if (!block) {
-			markdownTokens.push(token);
-			continue;
-		}
-
-		flushMarkdown();
 		blocks.push(block);
+		start += block.length;
 	}
 
-	flushMarkdown();
+	let depth = 0;
+	TAG.lastIndex = start;
+
+	for (let match = TAG.exec(html); match; match = TAG.exec(html)) {
+		const [token, closing, name] = match;
+
+		if (token === '\n') {
+			if (depth > 0) continue;
+
+			blocks.push(html.slice(start, match.index + 1));
+			start = match.index + 1;
+		} else if (closing) {
+			depth = Math.max(0, depth - 1);
+		} else if (name && !VOID_TAGS.has(name.toLowerCase()) && !token.endsWith('/>')) {
+			depth++;
+		}
+	}
+
+	if (start < html.length) blocks.push(html.slice(start));
 
 	return blocks;
 }
 
+const BLOCK_TAGS = new Set([
+	'address',
+	'article',
+	'aside',
+	'blockquote',
+	'br',
+	'caption',
+	'col',
+	'colgroup',
+	'dd',
+	'details',
+	'div',
+	'dl',
+	'dt',
+	'fieldset',
+	'figcaption',
+	'figure',
+	'footer',
+	'form',
+	'h1',
+	'h2',
+	'h3',
+	'h4',
+	'h5',
+	'h6',
+	'header',
+	'hr',
+	'li',
+	'main',
+	'nav',
+	'ol',
+	'p',
+	'pre',
+	'section',
+	'summary',
+	'table',
+	'tbody',
+	'td',
+	'tfoot',
+	'th',
+	'thead',
+	'tr',
+	'ul'
+]);
+
+const BREAK_TOKENS =
+	/<(pre|code)\b[^>]*>[\s\S]*?<\/\1>|<!--[\s\S]*?-->|<\/?([A-Za-z][A-Za-z0-9-]*)(?:"[^"]*"|'[^']*'|[^'">])*>|\n/g;
+
+const NEXT_TAG = /<\/?([A-Za-z][A-Za-z0-9-]*)/y;
+
+/** Renders soft line breaks inside text as `<br>`, so messages keep their line breaks. */
+function softBreaks(html: string) {
+	if (html.indexOf('\n') === html.length - 1) return html;
+
+	let tagEnd = -1;
+	let tag = '';
+
+	return html.replace(
+		BREAK_TOKENS,
+		(token, code: string | undefined, name: string | undefined, offset: number) => {
+			if (token !== '\n') {
+				tagEnd = offset + token.length;
+				tag = (code ?? name ?? '').toLowerCase();
+
+				return token;
+			}
+
+			NEXT_TAG.lastIndex = offset + 1;
+			const next = NEXT_TAG.exec(html)?.[1].toLowerCase();
+
+			const separatesBlocks =
+				offset === html.length - 1 ||
+				(tagEnd === offset && BLOCK_TAGS.has(tag)) ||
+				(next !== undefined && BLOCK_TAGS.has(next));
+
+			return separatesBlocks ? token : '<br>';
+		}
+	);
+}
+
+type BlockContext = {
+	placeholders: Placeholders;
+	artifactIds: ReadonlySet<string>;
+	openLinksInNewTab: boolean;
+};
+
+function toBlock(rendered: string, isOpenFence: boolean, context: BlockContext): MarkdownBlock {
+	const reference = context.placeholders.standaloneReference(rendered);
+
+	if (
+		reference?.type === 'kicad' ||
+		(reference?.type === 'artifact' && context.artifactIds.has(reference.artifactId))
+	) {
+		return reference;
+	}
+
+	const html = context.placeholders.restore(softBreaks(rendered));
+	const code = CODE_BLOCK.exec(html);
+	const flagged = isOpenFence ? html.replace('<pre>', '<pre data-markdown-incomplete>') : html;
+
+	if (code) {
+		const language = code[1]?.toLowerCase() ?? '';
+		const kind = VISUAL_LANGUAGES.get(language);
+		const source = decodeHtml(code[2]).replace(/\n$/, '');
+
+		if (language === 'json-render') {
+			return { type: 'json-render', source, codeHtml: sanitizeMarkdown(flagged) };
+		}
+
+		if (!isOpenFence && kind) return { type: 'visual', kind, source };
+
+		if (!isOpenFence && language === 'mermaid') {
+			return { type: 'mermaid', source, codeHtml: sanitizeMarkdown(html) };
+		}
+	}
+
+	return { type: 'html', html: sanitizeMarkdown(flagged, context.openLinksInNewTab) };
+}
+
+/**
+ * Renders a growing message. Each call reparses the whole text and reuses the blocks whose HTML
+ * did not change, so finished blocks keep their sanitized HTML and DOM.
+ */
 export function createMarkdownBlockRenderer() {
-	let previousValue = '';
+	const placeholders = createPlaceholders();
+	let previousValue: string | undefined;
 	let previousArtifactIds = new Set<string>();
 	let previousOpenLinksInNewTab = false;
-	let mode: 'paragraphs' | 'full' = 'paragraphs';
-	let completedLength = 0;
-	let completed: MarkdownBlock[] = [];
+	let rendered: string[] = [];
+	let cache = new Map<string, MarkdownBlock>();
 	let blocks: MarkdownBlock[] = [];
 
 	return (
@@ -151,51 +258,30 @@ export function createMarkdownBlockRenderer() {
 			previousArtifactIds.size !== availableArtifactIds.size ||
 			[...availableArtifactIds].some((id) => !previousArtifactIds.has(id));
 
-		if (optionsChanged || !value.startsWith(previousValue)) {
+		if (optionsChanged) {
 			previousArtifactIds = new Set(availableArtifactIds);
 			previousOpenLinksInNewTab = openLinksInNewTab;
-			mode = 'paragraphs';
-			completedLength = 0;
-			completed = [];
+			cache = new Map();
 		} else if (value === previousValue) {
 			return blocks;
 		}
 
 		previousValue = value;
-		const tail = value.slice(completedLength);
+		const { endsInFence, html } = parseMarkdown(value, placeholders);
+		const context = { placeholders, artifactIds: availableArtifactIds, openLinksInNewTab };
+		const nextCache = new Map<string, MarkdownBlock>();
+		rendered = splitBlocks(html, rendered);
 
-		// Reference definitions, HTML, and math can span paragraphs or change earlier output.
-		// Fences and other multi-paragraph blocks lex as non-paragraph tokens below.
-		const tokens =
-			mode === 'paragraphs' && !/^ {0,3}\[|[<\\$\r]/m.test(tail) ? marked.lexer(tail) : undefined;
+		blocks = rendered.map((block, index) => {
+			const isOpenFence = endsInFence && index === rendered.length - 1 && block.startsWith('<pre>');
+			const key = isOpenFence ? `${block}\0` : block;
+			const result = cache.get(key) ?? nextCache.get(key) ?? toBlock(block, isOpenFence, context);
+			nextCache.set(key, result);
 
-		if (!tokens || tokens.some((token) => token.type !== 'paragraph' && token.type !== 'space')) {
-			mode = 'full';
-			completed = [];
-			blocks = renderMarkdownBlocks(value, availableArtifactIds, openLinksInNewTab);
+			return result;
+		});
 
-			return blocks;
-		}
-
-		let pending: Token[] = [];
-		let offset = completedLength;
-
-		for (const token of tokens) {
-			pending.push(token);
-			offset += token.raw.length;
-
-			if (token.type !== 'space' || !/\n[ \t]*\n/.test(token.raw)) continue;
-
-			completed.push(...renderMarkdownTokens(pending, availableArtifactIds, openLinksInNewTab));
-			// Spaces after the last newline may become indentation in the next chunk.
-			completedLength = offset - token.raw.length + token.raw.lastIndexOf('\n') + 1;
-			pending = [];
-		}
-
-		blocks = [
-			...completed,
-			...renderMarkdownTokens(pending, availableArtifactIds, openLinksInNewTab)
-		];
+		cache = nextCache;
 
 		return blocks;
 	};
