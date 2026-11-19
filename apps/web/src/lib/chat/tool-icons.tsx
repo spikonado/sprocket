@@ -44,7 +44,7 @@ export function toolKindIcon(kind: string): LucideIcon {
 		case 'list_threads':
 		case 'list_subagent_models':
 			return ListChecks;
-		case 'download_thread_transcripts':
+		case 'download_threads':
 			return Download;
 		case 'check_docs':
 			return BookOpen;

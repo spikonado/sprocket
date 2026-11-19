@@ -452,7 +452,7 @@ export const vListThreadsPayload = v.object({
 	cursor: v.optional(v.string())
 });
 
-export const vDownloadThreadTranscriptsPayload = v.object({
+export const vDownloadThreadsPayload = v.object({
 	threadId: v.string(),
 	includeDescendants: v.optional(v.boolean())
 });
@@ -466,7 +466,7 @@ export const vCurrentExecutorJobPayload = v.union(
 	vPollSubagentsPayload,
 	vListSubagentsPayload,
 	vListThreadsPayload,
-	vDownloadThreadTranscriptsPayload,
+	vDownloadThreadsPayload,
 	vApplyPatchPayload,
 	vAskQuestionPayload,
 	vAwaitQuestionPayload,
@@ -1089,7 +1089,7 @@ export const vCurrentExecutorJobKind = v.union(
 	v.literal('list_subagent_models'),
 	v.literal('list_subagents'),
 	v.literal('list_threads'),
-	v.literal('download_thread_transcripts'),
+	v.literal('download_threads'),
 	v.literal('edit_artifact'),
 	v.literal('delete_artifact'),
 	v.literal('save_artifact'),

@@ -41,7 +41,7 @@ use self::pull_requests::{LinkPrsTool, PollPrTool};
 use self::questions::{AskQuestionTool, PollQuestionTool};
 use self::skills::ReadSkillTool;
 use self::subagents::{ControlSubagentTool, PollSubagentTool, SpawnSubagentTool};
-use self::threads::{DownloadThreadTranscriptsTool, ListThreadsTool};
+use self::threads::{DownloadThreadsTool, ListThreadsTool};
 use self::web::{ScrapeUrlTool, WebSearchTool};
 use crate::convex::RuntimeClient;
 use crate::hooks::ToolCallTracker;
@@ -57,7 +57,7 @@ pub(crate) const AGENT_TOOLS: &[(&str, NormalizeToolArgs)] = &[
     agent_tool::<ControlCmdTool>(),
     agent_tool::<ControlSubagentTool>(),
     agent_tool::<DeleteArtifactTool>(),
-    agent_tool::<DownloadThreadTranscriptsTool>(),
+    agent_tool::<DownloadThreadsTool>(),
     agent_tool::<ExecCmdTool>(),
     agent_tool::<LinkPrsTool>(),
     agent_tool::<ListArtifactsTool>(),
@@ -103,7 +103,7 @@ pub(crate) struct AgentToolSet {
     pub(crate) exec_cmd: ExecCmdTool,
     pub(crate) control_subagent: ControlSubagentTool,
     pub(crate) list_threads: ListThreadsTool,
-    pub(crate) download_thread_transcripts: DownloadThreadTranscriptsTool,
+    pub(crate) download_threads: DownloadThreadsTool,
     pub(crate) lookup_parts: LookupPartsTool,
     pub(crate) parse_file: ParseFileTool,
     pub(crate) poll_cmd: PollCmdTool,
@@ -246,7 +246,7 @@ pub(crate) fn agent_tools(
             context: context.clone(),
             repository_key: request.repository_key.clone(),
         },
-        download_thread_transcripts: DownloadThreadTranscriptsTool {
+        download_threads: DownloadThreadsTool {
             context: context.clone(),
         },
         parse_file: ParseFileTool(context.clone()),

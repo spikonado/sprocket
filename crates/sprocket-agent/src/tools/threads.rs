@@ -19,7 +19,7 @@ pub(crate) struct ListThreadsTool {
 }
 
 #[derive(Clone)]
-pub(crate) struct DownloadThreadTranscriptsTool {
+pub(crate) struct DownloadThreadsTool {
     pub(super) context: AgentToolContext,
 }
 
@@ -70,7 +70,7 @@ enum AllRepositories {
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct DownloadThreadTranscriptsArgs {
+pub(crate) struct DownloadThreadsArgs {
     /// Thread to download into the local transcript cache.
     #[serde(rename = "threadId")]
     thread_id: String,
@@ -146,10 +146,10 @@ impl rig::tool::Tool for ListThreadsTool {
     }
 }
 
-impl rig::tool::Tool for DownloadThreadTranscriptsTool {
-    const NAME: &'static str = "download_thread_transcripts";
+impl rig::tool::Tool for DownloadThreadsTool {
+    const NAME: &'static str = "download_threads";
     type Error = ToolExecutionError;
-    type Args = DownloadThreadTranscriptsArgs;
+    type Args = DownloadThreadsArgs;
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
@@ -162,7 +162,7 @@ impl rig::tool::Tool for DownloadThreadTranscriptsTool {
     }
 
     fn parameters(&self) -> serde_json::Value {
-        let mut schema = json!(schemars::schema_for!(DownloadThreadTranscriptsArgs));
+        let mut schema = json!(schemars::schema_for!(DownloadThreadsArgs));
         schema["properties"]["includeDescendants"]["default"] = json!(true);
         schema
     }

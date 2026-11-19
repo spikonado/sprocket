@@ -751,7 +751,7 @@ async fn run_with_completion_model(
         .tool(tools.control_subagent)
         .tool(tools.poll_subagent)
         .tool(tools.list_threads)
-        .tool(tools.download_thread_transcripts)
+        .tool(tools.download_threads)
         .tool(tools.set_cwd);
     let agent = if offer_github_tools {
         agent.tool(tools.link_prs).tool(tools.poll_pr)

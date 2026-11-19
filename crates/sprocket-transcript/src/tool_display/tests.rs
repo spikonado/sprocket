@@ -129,9 +129,9 @@ fn tool_labels_and_summaries() {
             "motor",
         ),
         (
-            "download_thread_transcripts",
+            "download_threads",
             json!({"threadId": "child"}),
-            Some("Downloaded Transcripts"),
+            Some("Downloaded Threads"),
             "child",
         ),
         (
