@@ -130,9 +130,9 @@ fn tool_labels_and_summaries() {
         ),
         (
             "download_threads",
-            json!({"threadId": "child"}),
+            json!({"threadIds": ["child", "sibling"]}),
             Some("Downloaded Threads"),
-            "child",
+            "child, sibling",
         ),
         (
             "check_docs",

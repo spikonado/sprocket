@@ -453,7 +453,7 @@ export const vListThreadsPayload = v.object({
 });
 
 export const vDownloadThreadsPayload = v.object({
-	threadId: v.string(),
+	threadIds: v.array(v.string()),
 	includeDescendants: v.optional(v.boolean())
 });
 

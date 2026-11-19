@@ -212,7 +212,16 @@ impl<'a> ToolDisplayInput<'a> {
             "poll_subagent" => field("threadId").unwrap_or("Child agent").into(),
             "list_subagents" | "list_subagent_models" => String::new(),
             "list_threads" => field("query").unwrap_or_default().into(),
-            "download_threads" => field("threadId").unwrap_or("Thread").into(),
+            "download_threads" => input
+                .get("threadIds")
+                .and_then(Value::as_array)
+                .map(|ids| {
+                    ids.iter()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_else(|| "Threads".into()),
             "check_docs" => field("query")
                 .or_else(|| field("path"))
                 .unwrap_or("Docs")

@@ -71,10 +71,10 @@ enum AllRepositories {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct DownloadThreadsArgs {
-    /// Thread to download into the local transcript cache.
-    #[serde(rename = "threadId")]
-    thread_id: String,
-    /// Also download every subagent thread under it.
+    #[serde(rename = "threadIds")]
+    #[schemars(length(min = 1))]
+    thread_ids: Vec<String>,
+    /// Also download every subagent thread under them.
     #[serde(
         rename = "includeDescendants",
         default,
@@ -117,7 +117,7 @@ impl rig::tool::Tool for ListThreadsTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "List threads, newest first, or search their titles.".to_string()
+        "List/search threads.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -153,12 +153,7 @@ impl rig::tool::Tool for DownloadThreadsTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        let transcripts = &self.context.transcript_dir;
-        let transcripts = transcripts.parent().unwrap_or(transcripts.as_path());
-        format!(
-            "Download a thread's transcript into `{}/<threadId>/parts/*.jsonl`. Read the files in filename order. Calling it again downloads only new parts.",
-            transcripts.display()
-        )
+        "Download threads' complete transcript.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -180,7 +175,7 @@ impl rig::tool::Tool for DownloadThreadsTool {
             |cancellation, _job_id| async move {
                 download_threads(
                     &self.context,
-                    args.thread_id,
+                    args.thread_ids,
                     args.include_descendants.unwrap_or(true),
                     &cancellation,
                 )
@@ -210,7 +205,7 @@ async fn query_threads<T: DeserializeOwned>(
 
 async fn download_threads(
     context: &AgentToolContext,
-    thread_id: String,
+    thread_ids: Vec<String>,
     include_descendants: bool,
     cancellation: &WorkspaceCancellation,
 ) -> Result<(), ToolExecutionError> {
@@ -218,7 +213,7 @@ async fn download_threads(
         .transcript_store
         .as_deref()
         .ok_or_else(|| tool_failure("transcript store is unavailable"))?;
-    let mut pending = vec![thread_id];
+    let mut pending = thread_ids;
     while let Some(thread_id) = pending.pop() {
         cancelled_read(cancellation, download_thread(context, store, &thread_id)).await?;
         if include_descendants {
