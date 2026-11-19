@@ -92,19 +92,33 @@ async function searchTitles(
 			.take(SEARCH_MATCH_LIMIT);
 	}
 
-	const keys = [...new Set(repositoryKeys)];
-	const perProjectLimit = Math.ceil(SEARCH_MATCH_LIMIT / keys.length);
+	const searchProject = (repositoryKey: string, limit: number) =>
+		ctx.db
+			.query('threadRecords')
+			.withSearchIndex('search_title', (search) =>
+				search.search('title', query).eq('userId', userId).eq('repositoryKey', repositoryKey)
+			)
+			.take(limit);
 
-	const perProject = await Promise.all(
-		keys.map((repositoryKey) =>
-			ctx.db
-				.query('threadRecords')
-				.withSearchIndex('search_title', (search) =>
-					search.search('title', query).eq('userId', userId).eq('repositoryKey', repositoryKey)
-				)
-				.take(perProjectLimit)
-		)
+	const found = new Map<string, Doc<'threadRecords'>[]>(
+		[...new Set(repositoryKeys)].map((key) => [key, []])
 	);
+
+	// Projects that fill their share of the budget may have more matches, so they split what the others left.
+	let hungry = [...found.keys()];
+
+	while (hungry.length > 0) {
+		const spare = SEARCH_MATCH_LIMIT - [...found.values()].reduce((sum, m) => sum + m.length, 0);
+
+		if (spare <= 0) break;
+		const limits = hungry.map((key) => found.get(key)!.length + Math.ceil(spare / hungry.length));
+		const rounds = await Promise.all(hungry.map((key, i) => searchProject(key, limits[i])));
+
+		hungry.forEach((key, i) => found.set(key, rounds[i]));
+		hungry = hungry.filter((_, i) => rounds[i].length === limits[i]);
+	}
+
+	const perProject = [...found.values()];
 
 	// Relevance scores aren't comparable across searches, so interleave each project's ranking.
 	const longest = Math.max(...perProject.map((matches) => matches.length));
