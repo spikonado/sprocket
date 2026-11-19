@@ -2522,7 +2522,7 @@ export default function App({
 							title="Open sidebar"
 							onClick={() => void openSidebar()}
 						>
-							<img src="/logo.svg" alt="" className="size-6" />
+							<img src={`${import.meta.env.BASE_URL}logo.svg`} alt="" className="size-6" />
 						</button>
 						<button
 							className="inbox-icon touch-target"
