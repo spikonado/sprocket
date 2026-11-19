@@ -96,6 +96,27 @@ export default defineConfig({
 	],
 
 	vite: {
-		plugins: [tailwindcss(), ...posthogSourceMaps]
+		plugins: [
+			tailwindcss(),
+			// Matches vercel.json: the demo's KiCanvas frame has an opaque origin, so its script loads with CORS.
+			// Astro's dev server blocks cross-site subresources from the front of its stack, so this goes ahead of it.
+			{
+				name: 'demo-kicanvas-cors',
+				configureServer(server) {
+					return () => {
+						const { stack } = server.middlewares.use('/demo/kicanvas/', (req, res, next) => {
+							delete req.headers['sec-fetch-site'];
+							res.setHeader('Access-Control-Allow-Origin', '*');
+							next();
+						});
+
+						const corsEntry = stack.pop();
+
+						if (corsEntry) stack.unshift(corsEntry);
+					};
+				}
+			},
+			...posthogSourceMaps
+		]
 	}
 });

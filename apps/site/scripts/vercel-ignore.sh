@@ -20,4 +20,4 @@ if [[ -z "$base" ]] || ! git merge-base --is-ancestor "$base" HEAD 2>/dev/null; 
 fi
 
 # Vercel fails the deployment on exit codes other than 0 and 1.
-git diff --quiet "$base" HEAD -- . ../web/convex ../web/convex.json ../../bun.lock || exit 1
+git diff --quiet "$base" HEAD -- . ../web ../../bun.lock || exit 1

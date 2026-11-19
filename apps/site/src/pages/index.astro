@@ -1,13 +1,10 @@
 ---
 import Footer from '@/components/footer.astro';
 import LineIcon, { type LineIconName } from '@/components/line-icon.astro';
-import SprocketScreenshot from '@/components/sprocket-screenshot';
+import Film from '@/components/sprocket/film.astro';
 import InstallRow from '@/components/sprocket/install-row.astro';
-import ContextMock from '@/components/sprocket/mocks/context-mock.astro';
-import HardwareMock from '@/components/sprocket/mocks/hardware-mock.astro';
-import PurchaseMock from '@/components/sprocket/mocks/purchase-mock.astro';
-import QuestionsMock from '@/components/sprocket/mocks/questions-mock.astro';
-import SubagentsMock from '@/components/sprocket/mocks/subagents-mock.astro';
+import LivePreview from '@/components/sprocket/live-preview.astro';
+import LoopClip from '@/components/sprocket/loop-clip.astro';
 import ReleaseBadge from '@/components/sprocket/release-badge.astro';
 import BaseLayout from '@/layouts/base-layout.astro';
 import { fetchLatestSprocketRelease } from '@/lib/latest-sprocket-release';
@@ -22,64 +19,61 @@ import { cn } from '@/utils';
 
 const release = await fetchLatestSprocketRelease();
 
-const showcases = [
+const media = (id: string) => ({ src: `/media/${id}.mp4`, poster: `/media/${id}.webp` });
+
+const film = {
+	heading: 'Watch Sprocket build a board',
+	body: 'One real project, from the first prompt to files ready to order.',
+	label: 'Sprocket designing a circuit board from a prompt to fabrication files',
+	...media('film')
+};
+
+type Clip = {
+	id: string;
+	heading: string;
+	body: string;
+	span?: 'md:col-span-2' | 'lg:col-span-2';
+};
+
+const clips: readonly Clip[] = [
 	{
 		id: 'electronics',
-		heading: 'Designs electronics',
-		body: 'Describe a device, and Sprocket designs the circuit board around real parts.',
-		points: [
-			'Picks parts by reading their datasheets and checking distributor stock',
-			'Designs boards in KiCad, from the schematic to the routed multi-layer PCB',
-			'Exports Gerbers, BOMs, and pick-and-place files ready to order',
-			'Writes the assembly guide and the firmware that runs on the board'
-		],
-		mock: HardwareMock
+		heading: 'Designs circuit boards',
+		body: 'Describe a device, and Sprocket draws the schematic, routes the board in KiCad, and checks it with ERC and DRC.',
+		span: 'md:col-span-2'
 	},
 	{
-		id: 'context',
-		heading: 'Works from real docs',
-		body: 'Sprocket checks current sources before it acts, so its answers hold up on real hardware.',
-		points: [
-			'Searches the web and reads full pages, not just snippets',
-			'Reads PDFs, spreadsheets, and images you share',
-			'Runs commands to confirm the fix works'
-		],
-		mock: ContextMock
+		id: 'parts',
+		heading: 'Picks parts that exist',
+		body: 'It reads datasheets and checks JLCPCB and LCSC stock and prices before a part goes in the BOM.'
 	},
 	{
-		id: 'purchasing',
-		heading: 'Buys what the project needs',
-		body: 'Sprocket can buy anything that your project needs, after you approve each purchase.',
-		points: [
-			'You save a card once in Settings',
-			'You approve the store and the amount with your passkey in the thread',
-			'Your card details never reach the agent'
-		],
-		mock: PurchaseMock
+		id: 'browser',
+		heading: 'Tests in a real browser',
+		body: 'Sprocket clicks through your app, fills forms, and shows you the browser as it works.'
 	},
 	{
 		id: 'questions',
-		heading: 'Asks before guessing',
-		body: 'When a request is ambiguous, Sprocket asks a quick question instead of assuming.',
-		points: [
-			'Multiple-choice answers for design choices, frameworks, and parts',
-			"An option to let Sprocket decide when you don't mind",
-			'Skip a question to let Sprocket continue without an answer'
-		],
-		mock: QuestionsMock
+		heading: 'Asks before it guesses',
+		body: 'When a choice is yours to make, it asks a multiple-choice question and waits for you.'
 	},
 	{
 		id: 'subagents',
 		heading: 'Splits big tasks',
-		body: 'Sprocket hands parts of a large task to subagents and keeps working while they run.',
-		points: [
-			'Subagents run in the background and report back when they finish',
-			'Each subagent has its own context, so the main thread stays focused',
-			'Follow their threads in the inbox, send follow-ups, and answer their questions'
-		],
-		mock: SubagentsMock
+		body: 'Subagents take parts of the work in parallel, each in its own thread you can open.'
+	},
+	{
+		id: 'firmware',
+		heading: 'Writes and runs firmware',
+		body: 'It builds, flashes, and reads serial output, and keeps long commands running.'
+	},
+	{
+		id: 'purchasing',
+		heading: 'Buys what the project needs',
+		body: 'You approve the store and the amount with your passkey. Your card details never reach the agent.',
+		span: 'lg:col-span-2'
 	}
-] as const;
+];
 
 const capabilities = [
 	{
@@ -245,54 +239,69 @@ const subheadingClass =
 				</ul>
 			</div>
 
-			<figure
-				class="relative mx-auto mt-16 max-w-5xl overflow-hidden rounded-2xl border border-border/70 bg-ink shadow-[0_30px_80px_-40px_oklch(0.2_0.02_260/0.7)]"
-			>
-				<SprocketScreenshot client:visible />
-			</figure>
+			<LivePreview />
 		</section>
 
-		<div class="mx-auto max-w-6xl border-t border-border/70 px-4 sm:px-6 lg:px-8">
-			{
-				showcases.map(({ id, heading, body, points, mock: Mock }, index) => (
-					<section
-						id={id}
-						aria-labelledby={`${id}-heading`}
-						data-ph-capture-attribute-section={`sprocket_${id}`}
-						class="grid scroll-mt-24 items-center gap-10 py-16 lg:grid-cols-2 lg:gap-16 lg:py-24"
-					>
-						<div class={cn(index % 2 === 1 && 'lg:order-2')}>
-							<h2 id={`${id}-heading`} class={subheadingClass}>
-								{heading}
-							</h2>
-							<p class={cn(marketingSectionBodyClass, 'mt-4')}>{body}</p>
-							<ul class="mt-6 space-y-3">
-								{points.map((point) => (
-									<li class="flex gap-3 text-base leading-relaxed text-muted-foreground">
-										<svg
-											viewBox="0 0 16 16"
-											class="mt-1 h-4 w-4 shrink-0 text-accent-strong"
-											fill="none"
-											aria-hidden="true"
-										>
-											<path
-												d="M3.5 8.5 6.5 11.5 12.5 4.5"
-												stroke="currentColor"
-												stroke-width="1.8"
-												stroke-linecap="round"
-												stroke-linejoin="round"
-											/>
-										</svg>
-										{point}
-									</li>
-								))}
-							</ul>
-						</div>
-						<Mock />
-					</section>
-				))
-			}
-		</div>
+		<section
+			id="film"
+			aria-labelledby="film-heading"
+			data-ph-capture-attribute-section="sprocket_film"
+			class="scroll-mt-24 border-t border-border/70 px-4 py-20 sm:px-6 lg:px-8 lg:py-28"
+		>
+			<div class="mx-auto max-w-6xl">
+				<div class="grid gap-4 lg:grid-cols-2 lg:items-end lg:gap-16">
+					<h2 id="film-heading" class={subheadingClass}>{film.heading}</h2>
+					<p class={marketingSectionBodyClass}>{film.body}</p>
+				</div>
+				<div
+					class="mt-10 overflow-hidden rounded-3xl border border-border/70 shadow-[0_30px_80px_-40px_oklch(0.2_0.02_260/0.7)]"
+				>
+					<Film src={film.src} poster={film.poster} label={film.label} />
+				</div>
+			</div>
+		</section>
+
+		<section
+			id="work"
+			aria-labelledby="work-heading"
+			data-ph-capture-attribute-section="sprocket_work"
+			class="scroll-mt-24 border-t border-border/70 px-4 py-20 sm:px-6 lg:px-8 lg:py-28"
+		>
+			<div class="mx-auto max-w-6xl">
+				<h2 id="work-heading" class={subheadingClass}>Real work, recorded in the app</h2>
+				<p class={cn(marketingSectionBodyClass, 'mt-4')}>
+					Each clip is Sprocket doing the job, shown the way you'll see it.
+				</p>
+			</div>
+			<ul class="mx-auto mt-12 grid max-w-6xl gap-6 md:grid-cols-2 lg:grid-cols-3">
+				{
+					clips.map(({ id, heading, body, span }) => (
+						<li
+							id={id}
+							data-ph-capture-attribute-section={`sprocket_${id}`}
+							class={cn(
+								'flex scroll-mt-24 flex-col gap-5 rounded-3xl bg-surface/70 p-3 pb-6 ring-1 ring-border/60',
+								span
+							)}
+						>
+							<div class="flex-1 overflow-hidden rounded-2xl bg-background ring-1 ring-border/60">
+								<LoopClip
+									{...media(id)}
+									label={`Sprocket at work: ${heading.toLowerCase()}`}
+									class={cn('h-full object-cover', span ? 'aspect-video' : 'aspect-square')}
+								/>
+							</div>
+							<div class="px-3">
+								<h3 class="text-xl font-semibold tracking-tight text-foreground">{heading}</h3>
+								<p class="mt-2 max-w-prose text-[0.9375rem] leading-relaxed text-muted-foreground">
+									{body}
+								</p>
+							</div>
+						</li>
+					))
+				}
+			</ul>
+		</section>
 
 		<section
 			class="border-t border-border/70 px-4 py-20 sm:px-6 lg:px-8 lg:py-28"
