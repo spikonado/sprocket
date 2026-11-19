@@ -42,7 +42,8 @@ const DEMO_PATH = '/demo/demo.html';
 
 	const src = frame?.dataset.src;
 
-	if (frame && src && window.matchMedia('(min-width: 768px)').matches) {
+	// The frame is display: none on phones, so it never intersects there.
+	if (frame && src) {
 		new IntersectionObserver(
 			([entry], observer) => {
 				if (!entry.isIntersecting) return;
