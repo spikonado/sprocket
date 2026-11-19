@@ -3,6 +3,7 @@ import { v, type Infer } from 'convex/values';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { getOwnedThreadRecord, getOwnedThreadRecordByString } from '@convex/lib/access';
 import { getExecutionRunRecord, getUserId } from '@convex/lib/auth';
+import { toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { imageUploadByStorageId } from '@convex/lib/imageUploads';
 import {
 	vAttachmentFileDownloadResult,
@@ -73,15 +74,19 @@ export const getStateForRun = query({
 	},
 	returns: vTranscriptStateResult,
 	handler: async (ctx, args) => {
-		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
+		try {
+			const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
 
-		const thread = await getOwnedThreadRecordByString(
-			ctx.db,
-			run.userId,
-			args.threadId ?? run.threadId
-		);
+			const thread = await getOwnedThreadRecordByString(
+				ctx.db,
+				run.userId,
+				args.threadId ?? run.threadId
+			);
 
-		return await transcriptStateResult(ctx, thread._id, thread);
+			return await transcriptStateResult(ctx, thread._id, thread);
+		} catch (error) {
+			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
+		}
 	}
 });
 
@@ -97,17 +102,21 @@ export const getPartsPageForRun = query({
 	},
 	returns: vTranscriptPartsResult,
 	handler: async (ctx, args) => {
-		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
+		try {
+			const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
 
-		const { _id: threadId } = await getOwnedThreadRecordByString(
-			ctx.db,
-			run.userId,
-			args.threadId ?? run.threadId
-		);
+			const { _id: threadId } = await getOwnedThreadRecordByString(
+				ctx.db,
+				run.userId,
+				args.threadId ?? run.threadId
+			);
 
-		const parts = await loadTranscriptPartsPage(ctx, threadId, args.start, args.end, args.order);
+			const parts = await loadTranscriptPartsPage(ctx, threadId, args.start, args.end, args.order);
 
-		return { threadId, parts };
+			return { threadId, parts };
+		} catch (error) {
+			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
+		}
 	}
 });
 

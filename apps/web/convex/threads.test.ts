@@ -38,6 +38,36 @@ describe('thread mutations', () => {
 		expect(children.threads.map((thread) => thread.threadId)).toEqual([child]);
 	});
 
+	it('searches titles across the chosen projects and within a parent', async () => {
+		const t = initConvexTest();
+		const { asUser, subject, threadId } = await seedOwnedThread(t);
+		const child = await seedThreadRecord(t, subject, 'alpha');
+		const beta = await seedThreadRecord(t, subject, 'beta');
+		await seedThreadRecord(t, subject, 'gamma');
+		await t.run(async (ctx) => {
+			const records = await ctx.db.query('threadRecords').collect();
+
+			for (const record of records) {
+				await ctx.db.patch('threadRecords', record._id, { title: 'Fix the radio' });
+			}
+
+			await ctx.db.patch('threadRecords', child, { parentThreadId: threadId });
+		});
+		const executionSecret = 'search-threads-secret';
+		const { runId } = await createQueuedRun(t, asUser, threadId, 'search', executionSecret);
+		const base = { runId, executionSecret, query: 'radio' };
+
+		const roots = await t.query(api.threads.listForRun, {
+			...base,
+			repositoryKeys: ['alpha', 'beta']
+		});
+
+		const children = await t.query(api.threads.listForRun, { ...base, parentThreadId: threadId });
+
+		expect(roots.threads.map((thread) => thread.threadId).sort()).toEqual([threadId, beta].sort());
+		expect(children.threads.map((thread) => thread.threadId)).toEqual([child]);
+	});
+
 	it('supports direct mutations', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);

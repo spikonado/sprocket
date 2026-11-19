@@ -83,19 +83,34 @@ async function searchTitles(
 	query: string,
 	repositoryKeys: RepositoryScope
 ) {
-	const keys = repositoryKeys === 'all' ? undefined : new Set(repositoryKeys);
-	const onlyKey = keys?.size === 1 ? [...keys][0] : undefined;
+	if (repositoryKeys === 'all') {
+		return await ctx.db
+			.query('threadRecords')
+			.withSearchIndex('search_title', (search) =>
+				search.search('title', query).eq('userId', userId)
+			)
+			.take(SEARCH_MATCH_LIMIT);
+	}
 
-	const matches = await ctx.db
-		.query('threadRecords')
-		.withSearchIndex('search_title', (search) => {
-			const owned = search.search('title', query).eq('userId', userId);
+	const perProject = await Promise.all(
+		[...new Set(repositoryKeys)].map((repositoryKey) =>
+			ctx.db
+				.query('threadRecords')
+				.withSearchIndex('search_title', (search) =>
+					search.search('title', query).eq('userId', userId).eq('repositoryKey', repositoryKey)
+				)
+				.take(SEARCH_MATCH_LIMIT)
+		)
+	);
 
-			return onlyKey === undefined ? owned : owned.eq('repositoryKey', onlyKey);
-		})
-		.take(SEARCH_MATCH_LIMIT);
+	// Relevance scores aren't comparable across searches, so interleave each project's ranking.
+	const longest = Math.max(...perProject.map((matches) => matches.length));
 
-	return keys ? matches.filter((match) => keys.has(match.repositoryKey)) : matches;
+	const interleaved = Array.from({ length: longest }, (_, rank) =>
+		perProject.flatMap((matches) => (rank < matches.length ? [matches[rank]] : []))
+	).flat();
+
+	return interleaved.slice(0, SEARCH_MATCH_LIMIT);
 }
 
 /** Root threads whose own or subagent titles match, in relevance order. */
@@ -122,9 +137,12 @@ export async function searchChildThreads(
 	parent: Doc<'threadRecords'>,
 	query: string
 ) {
-	const matches = await searchTitles(ctx, parent.userId, query, [parent.repositoryKey]);
-
-	return matches.filter((match) => match.parentThreadId === parent._id);
+	return await ctx.db
+		.query('threadRecords')
+		.withSearchIndex('search_title', (search) =>
+			search.search('title', query).eq('userId', parent.userId).eq('parentThreadId', parent._id)
+		)
+		.take(SEARCH_MATCH_LIMIT);
 }
 
 export async function threadSummary(

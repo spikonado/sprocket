@@ -231,7 +231,7 @@ export default defineSchema({
 		])
 		.searchIndex('search_title', {
 			searchField: 'title',
-			filterFields: ['userId', 'repositoryKey']
+			filterFields: ['userId', 'repositoryKey', 'parentThreadId']
 		}),
 	threadHierarchyStates: defineTable({
 		threadId: v.id('threadRecords'),

@@ -307,6 +307,7 @@ describe('run execution state', () => {
 				'fastMode',
 				'parentThreadId',
 				'reasoningEffort',
+				'repositoryKey',
 				'selectedModel',
 				'startedAt',
 				'threadId',

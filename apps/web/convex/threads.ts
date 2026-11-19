@@ -4,6 +4,7 @@ import { paginationOptsValidator, paginationResultValidator } from 'convex/serve
 import { v } from 'convex/values';
 import { getOwnedThreadRecord, getOwnedThreadRecordByString } from '@convex/lib/access';
 import { getExecutionRunRecord, getUserId } from '@convex/lib/auth';
+import { toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { INBOX_STATES, type InboxState } from '@convex/lib/inboxState';
 import schema from '@convex/schema';
 import {
@@ -232,66 +233,75 @@ export const listForRun = query({
 	},
 	returns: vListThreadsResult,
 	handler: async (ctx, args) => {
-		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
-		const search = args.query?.trim();
+		try {
+			const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
+			const search = args.query?.trim();
 
-		if (args.parentThreadId !== undefined) {
-			const parent = await getOwnedThreadRecordByString(ctx.db, run.userId, args.parentThreadId);
+			if (args.parentThreadId !== undefined) {
+				const parent = await getOwnedThreadRecordByString(ctx.db, run.userId, args.parentThreadId);
 
-			if (search) {
+				if (search) {
+					return {
+						threads: await summaries(ctx, await searchChildThreads(ctx, parent, search)),
+						nextCursor: null
+					};
+				}
+
+				const page = await listDirectChildrenPage(ctx, run.userId, parent._id, {
+					numItems: AGENT_LIST_PAGE_SIZE,
+					cursor: args.cursor ?? null
+				});
+
 				return {
-					threads: await summaries(ctx, await searchChildThreads(ctx, parent, search)),
-					nextCursor: null
+					threads: await summaries(ctx, page.page),
+					nextCursor: page.isDone ? null : page.continueCursor
 				};
 			}
 
-			const page = await listDirectChildrenPage(ctx, run.userId, parent._id, {
-				numItems: AGENT_LIST_PAGE_SIZE,
-				cursor: args.cursor ?? null
-			});
+			const repositoryKeys = args.repositoryKeys ?? [
+				(await getOwnedThreadRecord(ctx.db, run.userId, run.threadId)).repositoryKey
+			];
+
+			const includeSettled = args.includeSettled ?? false;
+			const states: readonly InboxState[] = includeSettled ? INBOX_STATES : ['unsettled'];
+
+			if (search) {
+				const roots = await searchRootThreads(ctx, run.userId, search, repositoryKeys, states);
+
+				return { threads: await summaries(ctx, roots), nextCursor: null };
+			}
+
+			const readPage = async (position: RootListCursor) =>
+				await rootThreadsPage(ctx, run.userId, position.state, repositoryKeys, {
+					numItems: AGENT_LIST_PAGE_SIZE,
+					cursor: position.cursor
+				});
+
+			let position = parseRootCursor(args.cursor);
+			let page = await readPage(position);
+
+			if (
+				page.isDone &&
+				page.page.length === 0 &&
+				position.state === 'unsettled' &&
+				includeSettled
+			) {
+				position = { state: 'settled', cursor: null };
+				page = await readPage(position);
+			}
+
+			const next: RootListCursor | null = !page.isDone
+				? { state: position.state, cursor: page.continueCursor }
+				: position.state === 'unsettled' && includeSettled
+					? { state: 'settled', cursor: null }
+					: null;
 
 			return {
 				threads: await summaries(ctx, page.page),
-				nextCursor: page.isDone ? null : page.continueCursor
+				nextCursor: next && formatRootCursor(next)
 			};
+		} catch (error) {
+			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
-
-		const repositoryKeys = args.repositoryKeys ?? [
-			(await getOwnedThreadRecord(ctx.db, run.userId, run.threadId)).repositoryKey
-		];
-
-		const includeSettled = args.includeSettled ?? false;
-		const states: readonly InboxState[] = includeSettled ? INBOX_STATES : ['unsettled'];
-
-		if (search) {
-			const roots = await searchRootThreads(ctx, run.userId, search, repositoryKeys, states);
-
-			return { threads: await summaries(ctx, roots), nextCursor: null };
-		}
-
-		const readPage = async (position: RootListCursor) =>
-			await rootThreadsPage(ctx, run.userId, position.state, repositoryKeys, {
-				numItems: AGENT_LIST_PAGE_SIZE,
-				cursor: position.cursor
-			});
-
-		let position = parseRootCursor(args.cursor);
-		let page = await readPage(position);
-
-		if (page.isDone && page.page.length === 0 && position.state === 'unsettled' && includeSettled) {
-			position = { state: 'settled', cursor: null };
-			page = await readPage(position);
-		}
-
-		const next: RootListCursor | null = !page.isDone
-			? { state: position.state, cursor: page.continueCursor }
-			: position.state === 'unsettled' && includeSettled
-				? { state: 'settled', cursor: null }
-				: null;
-
-		return {
-			threads: await summaries(ctx, page.page),
-			nextCursor: next && formatRootCursor(next)
-		};
 	}
 });
