@@ -4,231 +4,267 @@ import type { Project } from '$lib/types/sprocket';
 import type { WorkspaceFiles } from '../workspace-api';
 
 export const project: Project = {
-	repositoryKey: 'github.com/maker/esp32-air-sensor',
-	displayName: 'esp32-air-sensor',
-	workspacePath: '/home/maker/esp32-air-sensor',
+	repositoryKey: 'github.com/maker/rp2350-devboard',
+	displayName: 'rp2350-devboard',
+	workspacePath: '/home/maker/rp2350-devboard',
 	localAttachmentAvailability: 'available'
 };
 
-const BOM = `# ESP32-S3 Air Sensor BOM (rev A)
+const BOM = `# RP2350 Wi-Fi dev board BOM (rev A)
 
-Unit prices are LCSC at quantity 10. "JLC" marks parts priced from JLCPCB where LCSC had no stock. Mounting holes and PWR_FLAGs are skipped.
+Distributor list prices. "1 board" and "5 boards" are what you pay after minimum order quantities, so cheap passives cost the same for both. LCSC has no listing for D2, D3, D4, J6 and J7, so those are Digi-Key prices. Fiducials and PWR_FLAGs are skipped.
 
-| Ref(s) | Qty | Part | MPN | LCSC | Unit (USD) | Stock |
-| --- | --- | --- | --- | --- | --- | --- |
-| C1, C4, C7 | 3 | 100 nF 16 V X7R 0402 | CL05B104KO5NNNC | C1525 | 0.0024 | 3,862,200 |
-| C2, C3, C5 | 3 | 22 µF 25 V X5R 0805 | CL21A226MAQNNNE | C45783 | 0.1975 JLC | 3,650,101 JLC |
-| C6 | 1 | 10 µF 10 V X5R 0603 | CL10A106KP8NNNC | C19702 | 0.0170 | 1,240,440 |
-| C8 | 1 | 1 µF 50 V X5R 0603 | CL10A105KB8NNNC | C15849 | 0.0095 JLC | 12,165,673 JLC |
-| D2 | 1 | Red LED 0603 | KT-0603R | C2286 | 0.0077 | 6,248,900 |
-| D3 | 1 | 1N5817 Schottky, DO-41 | 1N5817 | C315569 | 0.0367 | 7,780 |
-| D4, D5, D6 | 3 | ESD diode 3.3 V, SOD-923 | ESD9B3.3ST5G | C96512 | 0.0445 | 93,500 |
-| D7 | 1 | RGB LED PLCC4 3.2×2.8 mm | CLMVC-FKA-CL1D1L71BB7C3C3 | C5187905 | 0.1687 | **0** |
-| FB1 | 1 | Ferrite bead 600 Ω, 0805 | GZ2012D601TF | C1017 | 0.0200 JLC | 336,403 JLC |
-| J1 | 1 | USB-C receptacle, 16 pin | USB4105-GF-A | C3020560 | 0.8366 | 10,069 |
-| J2 | 1 | 2×3 header 2.54 mm, SMD | 2.54-2*3P | C192301 | 0.0445 | 10,790 |
-| J3 | 1 | 2×5 header 2.54 mm, through-hole | PZ254V-12-10P | C492422 | 0.0667 | 127,110 |
-| J4 | 1 | JST SH 4 pin, vertical | BM04B-SRSS-TB(LF)(SN) | C160390 | 0.3541 | 1,825 |
-| R1, R2 | 2 | 5.1 kΩ 1% 0402 | 0402WGF5101TCE | C25905 | 0.0014 | 1,152,100 |
-| R3 | 1 | 1 kΩ 1% 0402 | 0402WGF1001TCE | C11702 | 0.0013 | 17,112,600 |
-| R4, R5 | 2 | 2.2 kΩ 1% 0402 | 0402WGF2201TCE | C25879 | 0.0012 | 1,090,900 |
-| R6, R7, R10 | 3 | 10 kΩ 1% 0402 | 0402WGF1002TCE | C25744 | 0.0015 | 14,349,600 |
-| SW2, SW3 | 2 | Tactile switch, SMD | B3U-1000P | C231329 | 0.1894 | 63,930 |
-| SW4 | 1 | Tactile switch, right angle | B3F-3152 | C231320 | 0.2663 | 6,525 |
-| U1 | 1 | ESP32-S3-WROOM-1, 8 MB / 8 MB | ESP32-S3-WROOM-1-N8R8 | C2913201 | 4.4553 | 2,180 |
-| U2 | 1 | USB ESD protection, SOT-23-6 | USBLC6-2SC6 | C7519 | 0.1585 | 32,225 |
-| U3 | 1 | 3.3 V 800 mA LDO, TO-252 | LM1117DTX-3.3/NOPB | C73181 | 0.8469 | 13,517 |
-| U4 | 1 | Si7021 humidity sensor, DFN-6 | SI7021-A20-GM1R | C132603 | 7.7058 | 379 |
+| Ref(s) | Qty | Part | MPN | Source | Unit (USD) | 1 board | 5 boards |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| C1, C2, C3, C5 | 4 | 10 µF 0603 | GRM188R61E106MA73D | LCSC C91606 | 0.1133 | 0.57 | 2.27 |
+| C4, C23 | 2 | 1 µF 0402 | GRM155R61C105KA12D | LCSC C77006 | 0.0153 | 0.77 | 0.77 |
+| C6, C7, C8, C24 | 4 | 4.7 µF 0402 | GRM155R60J475ME47D | LCSC C82453 | 0.0160 | 0.80 | 0.80 |
+| C9–C19, C22, C25, C26, C28–C30 | 17 | 100 nF 0402 | GRM155R71C104KA88D | LCSC C71629 | 0.0036 | 0.36 | 0.36 |
+| C20, C21 | 2 | 15 pF 0402 | GRM1555C1H150JA01D | LCSC C76950 | 0.0068 | 0.68 | 0.68 |
+| C27 | 1 | 10 µF 0402 | GRM155R60J106ME15D | LCSC C412251 | 0.0584 | 0.58 | 0.58 |
+| D1 | 1 | RGB LED, WS2812B-2020 | WS2812B-2020-V6 | LCSC C52917434 | 0.0852 | 0.43 | 0.43 |
+| D2, D4 | 2 | Green LED 0603 | 150060GS75000 | Digi-Key | 0.1500 | 0.30 | 1.50 |
+| D3 | 1 | Amber LED 0603 | 150060AS75000 | Digi-Key | 0.1500 | 0.15 | 0.75 |
+| J1 | 1 | USB-C receptacle, USB 2.0 | USB4105-GF-A | LCSC C3020560 | 1.0307 | 1.03 | 5.15 |
+| J2 | 1 | JST PH 2-pin, battery | S2B-PH-SM4-TB | LCSC C295747 | 0.2284 | 1.14 | 1.14 |
+| J3 | 1 | JST SH 4-pin, Qwiic | SM04B-SRSS-TB | LCSC C160404 | 0.2167 | 1.08 | 1.08 |
+| J4 | 1 | JST SH 3-pin, debug | SM03B-SRSS-TB | LCSC C160403 | 0.4791 | 2.40 | 2.40 |
+| J5 | 1 | microSD socket | DM3AT-SF-PEJM5 | LCSC C114218 | 1.4040 | 1.40 | 7.02 |
+| J6, J7 | 2 | 1×12 header 2.54 mm | 61301211121 | Digi-Key | 0.5400 | 1.08 | 4.60 |
+| L1 | 1 | 3.3 µH inductor, core regulator | AOTA-B201610S3R3-101-T | LCSC C42411119 | 0.3398 | 1.70 | 1.70 |
+| R1, R2 | 2 | 5.1 kΩ 1% 0402 | RC0402FR-075K1L | LCSC C105872 | 0.0028 | 0.28 | 0.28 |
+| R3, R4 | 2 | 27 Ω 1% 0402 | RC0402FR-0727RL | LCSC C138021 | 0.0040 | 0.40 | 0.40 |
+| R5 | 1 | 1.5 kΩ 1% 0402 | RC0402FR-071K5L | LCSC C114759 | 0.0022 | 0.22 | 0.22 |
+| R6 | 1 | 1.8 kΩ 1% 0402 | RC0402FR-071K8L | LCSC C163481 | 0.0034 | 0.34 | 0.34 |
+| R7, R18, R21, R24–R28 | 8 | 10 kΩ 1% 0402 | RC0402FR-0710KL | LCSC C60490 | 0.0016 | 0.16 | 0.16 |
+| R8, R9, R12, R13, R14 | 5 | 100 kΩ 1% 0402 | RC0402FR-07100KL | LCSC C60491 | 0.0022 | 0.22 | 0.22 |
+| R10, R11, R19, R22, R23 | 5 | 2.2 kΩ 1% 0402 | RC0402FR-072K2L | LCSC C114762 | 0.0028 | 0.28 | 0.28 |
+| R15 | 1 | 33 Ω 1% 0402 | RC0402FR-0733RL | LCSC C138002 | 0.0027 | 0.27 | 0.27 |
+| R16, R17 | 2 | 1 kΩ 1% 0402 | RC0402FR-071KL | LCSC C106235 | 0.0020 | 0.20 | 0.20 |
+| R20, R29 | 2 | 470 Ω 1% 0402 | RC0402FR-07470RL | LCSC C114877 | 0.0017 | 0.17 | 0.17 |
+| R30, R31 | 2 | 100 Ω 1% 0402 | RC0402FR-07100RL | LCSC C106232 | 0.0017 | 0.17 | 0.17 |
+| SW1 | 1 | Tactile switch, BOOT | PTS810 SJM 250 SMTR LFS | LCSC C116501 | 0.6595 | 0.66 | 3.30 |
+| SW2 | 1 | Tactile switch, RESET | PTS810 SJM 250 SMTR LFS | LCSC C116501 | 0.6595 | 0.66 | 3.30 |
+| U1 | 1 | RP2350A, QFN-60 | SC1509-A4 | LCSC C42411118 | 1.3065 | 1.31 | 6.53 |
+| U2 | 1 | 16 MB QSPI flash, WSON-8 | W25Q128JVPIQ | LCSC C190862 | 3.2869 | 3.29 | 16.43 |
+| U3 | 1 | 8 MB QSPI PSRAM, SOP-8 | APS6404L-3SQR-SN | LCSC C5333729 | 4.0125 | 4.01 | 20.06 |
+| U4 | 1 | Li-ion charger with power path | BQ24074RGTR | LCSC C54313 | 2.1391 | 2.14 | 10.70 |
+| U5 | 1 | 3.3 V 1 A LDO, SOT-23-5 | TLV75733PDBVR | LCSC C485517 | 0.2098 | 1.05 | 1.05 |
+| U6 | 1 | USB ESD protection, SOT-23-6 | USBLC6-2SC6 | LCSC C7519 | 0.1639 | 0.82 | 0.82 |
+| U7 | 1 | Raspberry Pi RM2 radio | SC1169 | LCSC C49451547 | 6.6068 | 6.61 | 33.03 |
+| Y1 | 1 | 12 MHz crystal, 3225 | ABM8-272-T3 | LCSC C20625731 | 0.4001 | 2.00 | 2.00 |
 
-Parts for one board come to **$16.12**, or $161.17 for ten.
+All 37 lines are in stock. Parts come to **$39.73** for one board and **$131.16** for five.
 
-## Open items
+## Board cost
 
-- **D7** is out of stock at LCSC and JLCPCB. The in-stock RGB LEDs need a different footprint.
-- **SW2, SW3**: the exact \`B3U-1000P-B\` has no stock, so this uses \`B3U-1000P\`. Check it against the footprint.
-- **J2**: confirm the SMD header's orientation against the vertical footprint.
+PCBWay instant quote: standard build, ENIG, turnkey assembly on the top side. Shipping is not included. PCBWay makes at least 5 bare PCBs, so one board means 5 PCBs with 1 assembled.
+
+| | 1 board | 5 boards |
+| --- | --- | --- |
+| PCB, 5 bare boards | $62.04 | $62.04 |
+| Turnkey assembly | $88.00 | $88.50 |
+| Parts | $39.73 | $131.16 |
+| **Total** | **$189.77** | **$281.70** ($56.34 each) |
+
+The PCB price is $32.20 for the base build plus $29.84 for ENIG. The 5/5 mil tracks and 0.25 mm holes add nothing.
+
+## Notes for the order
+
+- **U5**: Diodes AP2112K-3.3TRG1 is an approved alternate with the same SOT-23-5 pinout.
+- **Passives**: substitutes are allowed at the same value, size, voltage and dielectric.
+- **U1, U7**: ask for X-ray. It has no price in the instant quote.
 `;
 
-const ASSEMBLY = `# Assembly: ESP32-S3 Air Sensor rev A
+const BRING_UP = `# Ordering and bring-up: RP2350 Wi-Fi dev board rev A
 
-Hand assembly for a batch of ten. Allow about 40 minutes per board.
+No board has been built yet. Every check so far is ERC, DRC and datasheet review.
 
-## Tools
+## Ordering from PCBWay
 
-- Hot air station or reflow plate, and a fine-tip iron
-- Solder paste (SAC305) and a stencil for the top side
-- Flux, tweezers, 10× loupe
-- USB-C cable and a 3.3 V USB-serial adapter for J3
+Upload \`fab/rp2350-devboard-gerbers.zip\`, \`fab/bom-pcbway.csv\` and \`fab/centroid-top.csv\`.
 
-## Order of work
+| Setting | Value |
+| --- | --- |
+| Layers | 4, F.Cu / In1.Cu / In2.Cu / B.Cu |
+| Thickness | 1.6 mm, standard stackup, 1 oz on all layers |
+| Min track / spacing | 5/5 mil |
+| Min hole | 0.25 mm |
+| Surface finish | ENIG |
+| Assembly | Turnkey, top side only |
+| X-ray | Ask for it on U1 (QFN-60) and U7 (RM2, LGA pads) |
 
-1. **Paste and place the fine-pitch parts first:** U4 (Si7021, DFN-6), U2 (USBLC6) and J1 (USB-C). Check U4's pin 1 mark against the silkscreen.
-2. **Place the passives:** C1–C8, R1–R10, FB1 and D2–D6. Keep the 22 µF parts (C2, C3, C5) for last because they shade their neighbours under hot air.
-3. **Reflow** at the SAC305 profile, peak 245 °C. Let the board cool before you move it.
-4. **Place U1** (ESP32-S3-WROOM-1). Tack two corner pads, check alignment, then drag-solder the castellations. Don't heat the shield can for long.
-5. **Hand-solder U3** (LM1117, TO-252). Tin the tab pad first.
-6. **Through-hole parts:** J3, SW4 and D3.
-7. **Inspect** each board under the loupe for bridges on U1, J1 and U4.
+Paste this into the order notes:
 
-## Bring-up
+> Machine placement and reflow please, no hand soldering of U1. J1 shell legs are plated through-hole: pin-in-paste or hand solder. J6 and J7 are 1x12 headers fitted on the bottom side, pins pointing down, soldered from the top. L1 is polarised: dot to pad 1, marked on silkscreen. Please quote X-ray for U1 and U7.
 
-1. Power from USB-C without U1's boot strap. 3V3 should read 3.28–3.32 V.
-2. Hold SW2 (BOOT), tap SW3 (RESET), then flash with \`pio run -e esp32s3 -t upload\`.
-3. Open the serial monitor. A healthy board prints the Si7021 serial number and a first reading within 2 s.
-4. Breathe on U4. Relative humidity should climb by 10 % or more.
+## When the boards arrive
+
+1. **Inspect** J6 and J7: they belong on the bottom, pins down, 22.86 mm apart so the board fits a breadboard.
+2. **Check L1.** The dot on the inductor must sit at pad 1 (+1V1). This was checked against the footprint, not a physical part.
+3. **Check the battery lead** before plugging it into J2. Pin 1 is +. Many third-party cells have red and black swapped.
+
+## First power
+
+1. Plug in USB-C with no battery. The green power-good LED should light.
+2. Measure 3V3 on J7.1 and VSYS on J6.2. On USB the charger regulates VSYS to 4.4 V.
+3. Hold BOOT, tap RST and release BOOT. The RP2350 should appear as a USB drive.
+4. Copy \`firmware/build/devboard.uf2\` to the drive. The green LED on the RM2 should blink once a second, and the serial port should print the battery voltage.
+5. Fit a protected cell of 500 mAh or more. The amber LED shows charging.
 
 ## Known issues
 
-- D7 is unpopulated until a replacement RGB LED is chosen. See the BOM.
+- **Charger heat**: U4's thermal pad has no vias. The BQ24074 can dissipate about 0.9 W charging a low cell, so expect it to throttle the charge current.
+- **USB-only power**: the charger limits USB input to 500 mA. Without a battery, Wi-Fi transmit, SD writes and the RGB LED together can brown out 3V3.
+- **Low battery**: 3V3 drops out of regulation below about 3.5 V. Firmware stops Wi-Fi and SD writes near 3.4 V.
+- **Back-feed**: don't feed 3V3 from J7.1 or the Qwiic port. 5 V fed into J6.1 back-feeds a connected USB host.
+- **No battery protection** on the board, and no ESD protection on the Qwiic, debug or microSD lines.
+- **Not verified**: DM3AT card-detect pin numbering (the pins are unused) and PTS810 pad pairing.
 `;
 
 const kicadFiles = {
-	'hardware/air-sensor.kicad_pro': () => import('./kicad/air-sensor.kicad_pro?raw'),
-	'hardware/air-sensor.kicad_sch': () => import('./kicad/air-sensor.kicad_sch?raw'),
-	'hardware/LICENSE': () => import('./kicad/LICENSE?raw')
+	'hardware/rp2350-devboard.kicad_pro': () => import('./kicad/rp2350-devboard.kicad_pro?raw'),
+	'hardware/rp2350-devboard.kicad_sch': () => import('./kicad/rp2350-devboard.kicad_sch?raw')
 };
 
 const textFiles = {
-	'README.md': `# esp32-air-sensor
+	'README.md': `# rp2350-devboard
 
-An outdoor air sensor built around the ESP32-S3 and the Si7021 humidity and temperature sensor.
+A 76.2 × 25.4 mm, 4-layer RP2350A board with Wi-Fi and Bluetooth, laid out for PCBWay turnkey assembly. It plugs into a breadboard.
+
+| Block | Part |
+| --- | --- |
+| MCU | RP2350A, 16 MB flash, 8 MB PSRAM on GPIO8 |
+| Radio | Raspberry Pi RM2 (CYW43439), wired like the Pico 2 W |
+| Power | USB-C, BQ24074 charger with power path, TLV75733 3.3 V LDO |
+| Battery | JST PH 2-pin, VBAT/2 on GPIO28 |
+| I/O | microSD, Qwiic on GPIO4/5, debug, WS2812B on GPIO9, 2×12 headers |
 
 - \`hardware/\`: KiCad schematic and BOM
-- \`firmware/\`: PlatformIO project
-- \`docs/\`: assembly and bring-up notes
+- \`firmware/\`: pico-sdk bring-up firmware
+- \`docs/\`: ordering and bring-up notes
 
-The schematic is adapted from [Mahfuz-Sarker136/ESP32-S3-Custom-Hardware-Development-Board-with-Integrated-Si7021-Sensor](https://github.com/Mahfuz-Sarker136/ESP32-S3-Custom-Hardware-Development-Board-with-Integrated-Si7021-Sensor) under the MIT license. See \`hardware/LICENSE\`.
+One assembled board costs $189.77 from PCBWay, or $56.34 each for five.
 `,
 	'hardware/bom.md': BOM,
-	'docs/assembly.md': ASSEMBLY,
-	'firmware/platformio.ini': `[env:esp32s3]
-platform = espressif32
-board = esp32-s3-devkitc-1
-framework = arduino
-monitor_speed = 115200
-build_flags = -DSENSOR_INTERVAL_S=300
-lib_deps =
-	knolleary/PubSubClient@^2.8
+	'docs/bring-up.md': BRING_UP,
+	'firmware/CMakeLists.txt': `cmake_minimum_required(VERSION 3.13)
 
-[env:native]
-platform = native
-test_framework = unity
+set(PICO_BOARD rp2350_devboard)
+set(PICO_BOARD_HEADER_DIRS \${CMAKE_CURRENT_LIST_DIR}/boards)
+
+include($ENV{PICO_SDK_PATH}/external/pico_sdk_import.cmake)
+
+project(devboard C CXX ASM)
+pico_sdk_init()
+
+add_executable(devboard src/main.c src/battery.c)
+target_link_libraries(devboard pico_stdlib pico_cyw43_arch_none hardware_adc)
+pico_enable_stdio_usb(devboard 1)
+pico_add_extra_outputs(devboard)
 `,
-	'firmware/src/main.cpp': `#include <Arduino.h>
-#include "power.h"
-#include "publish.h"
-#include "si7021.h"
+	'firmware/boards/rp2350_devboard.h': `// Based on pico2_w.h. RM2 GPIO1 and GPIO2 are not connected, so there is no
+// SMPS mode pin, no VBUS sense and no VSYS sense on GPIO29.
 
-Si7021 sensor(Wire);
+#ifndef _BOARDS_RP2350_DEVBOARD_H
+#define _BOARDS_RP2350_DEVBOARD_H
 
-void setup() {
-	Serial.begin(115200);
-	Wire.begin(8, 9);
+pico_board_cmake_set(PICO_PLATFORM, rp2350)
+pico_board_cmake_set(PICO_CYW43_SUPPORTED, 1)
 
-	if (!power::batteryOk()) power::sleepFor(SENSOR_INTERVAL_S * 4);
+#define PICO_RP2350A 1
 
-	const auto reading = sensor.read();
+#define PICO_DEFAULT_UART 0
+#define PICO_DEFAULT_UART_TX_PIN 0
+#define PICO_DEFAULT_UART_RX_PIN 1
 
-	if (reading) publish::reading(*reading, power::batteryMillivolts());
-	power::sleepFor(SENSOR_INTERVAL_S);
-}
+#define PICO_DEFAULT_I2C 0
+#define PICO_DEFAULT_I2C_SDA_PIN 4
+#define PICO_DEFAULT_I2C_SCL_PIN 5
 
-void loop() {}
+#define PICO_DEFAULT_WS2812_PIN 9
+
+#define DEVBOARD_PSRAM_CS_PIN 8
+#define DEVBOARD_VBAT_PIN 28
+#define DEVBOARD_VBAT_ADC_INPUT 2
+
+#define PICO_BOOT_STAGE2_CHOOSE_W25Q080 1
+#define PICO_FLASH_SPI_CLKDIV 2
+pico_board_cmake_set_default(PICO_FLASH_SIZE_BYTES, (16 * 1024 * 1024))
+#define PICO_FLASH_SIZE_BYTES (16 * 1024 * 1024)
+
+#define CYW43_WL_GPIO_COUNT 3
+#define CYW43_WL_GPIO_LED_PIN 0
+#define CYW43_PIN_WL_DYNAMIC 0
+#define CYW43_DEFAULT_PIN_WL_REG_ON 23u
+#define CYW43_DEFAULT_PIN_WL_DATA_OUT 24u
+#define CYW43_DEFAULT_PIN_WL_DATA_IN 24u
+#define CYW43_DEFAULT_PIN_WL_HOST_WAKE 24u
+#define CYW43_DEFAULT_PIN_WL_CLOCK 29u
+#define CYW43_DEFAULT_PIN_WL_CS 25u
+
+pico_board_cmake_set_default(PICO_RP2350_A2_SUPPORTED, 1)
+#define PICO_RP2350_A2_SUPPORTED 1
+
+#endif
 `,
-	'firmware/src/si7021.h': `#pragma once
-#include <Wire.h>
-#include <optional>
+	'firmware/src/main.c': `#include <stdio.h>
+#include "battery.h"
+#include "pico/cyw43_arch.h"
+#include "pico/stdlib.h"
 
-struct Reading {
-	float humidity;
-	float temperature;
-};
+int main(void) {
+	stdio_init_all();
+	battery_init();
 
-class Si7021 {
-public:
-	explicit Si7021(TwoWire &wire) : wire_(wire) {}
-	std::optional<Reading> read();
-
-private:
-	std::optional<uint16_t> measure(uint8_t command);
-	TwoWire &wire_;
-};
-`,
-	'firmware/src/si7021.cpp': `#include "si7021.h"
-
-namespace {
-constexpr uint8_t ADDRESS = 0x40;
-constexpr uint8_t MEASURE_RH = 0xF5;
-constexpr uint8_t READ_TEMP = 0xE0;
-
-uint8_t crc8(uint16_t value) {
-	uint8_t crc = 0;
-	for (uint8_t byte : {uint8_t(value >> 8), uint8_t(value)}) {
-		crc ^= byte;
-		for (int bit = 0; bit < 8; bit++) crc = crc & 0x80 ? (crc << 1) ^ 0x31 : crc << 1;
+	if (cyw43_arch_init()) {
+		printf("RM2 did not start\\n");
+		return 1;
 	}
-	return crc;
-}
-} // namespace
 
-std::optional<uint16_t> Si7021::measure(uint8_t command) {
-	wire_.beginTransmission(ADDRESS);
-	wire_.write(command);
-	if (wire_.endTransmission() != 0) return std::nullopt;
-	delay(23);
-	if (wire_.requestFrom(ADDRESS, uint8_t(3)) != 3) return std::nullopt;
-	const uint16_t raw = wire_.read() << 8 | wire_.read();
-	if (crc8(raw) != wire_.read()) return std::nullopt;
-	return raw;
-}
+	bool led = false;
 
-std::optional<Reading> Si7021::read() {
-	const auto humidity = measure(MEASURE_RH);
-	if (!humidity) return std::nullopt;
-	wire_.beginTransmission(ADDRESS);
-	wire_.write(READ_TEMP);
-	wire_.endTransmission();
-	wire_.requestFrom(ADDRESS, uint8_t(2));
-	const uint16_t temperature = wire_.read() << 8 | wire_.read();
-	return Reading{125.0f * *humidity / 65536 - 6, 175.72f * temperature / 65536 - 46.85f};
+	while (true) {
+		const uint32_t millivolts = battery_millivolts();
+
+		printf("VBAT %lu mV%s\\n", millivolts, battery_low(millivolts) ? ", low" : "");
+		led = !led;
+		cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, led);
+		sleep_ms(1000);
+	}
 }
 `,
-	'firmware/src/power.cpp': `#include "power.h"
-#include <esp_sleep.h>
+	'firmware/src/battery.h': `#pragma once
+#include <stdbool.h>
+#include <stdint.h>
 
-namespace power {
-constexpr int BATTERY_PIN = 4;
-constexpr int CUTOFF_MV = 3000;
-
-int batteryMillivolts() {
-	return analogReadMilliVolts(BATTERY_PIN) * 2;
-}
-
-bool batteryOk() {
-	return batteryMillivolts() > CUTOFF_MV;
-}
-
-void sleepFor(uint32_t seconds) {
-	esp_sleep_enable_timer_wakeup(uint64_t(seconds) * 1'000'000);
-	esp_deep_sleep_start();
-}
-} // namespace power
+void battery_init(void);
+uint32_t battery_millivolts(void);
+bool battery_low(uint32_t millivolts);
 `,
-	'firmware/src/power.h': `#pragma once
-#include <Arduino.h>
+	'firmware/src/battery.c': `#include "battery.h"
+#include "hardware/adc.h"
+#include "pico/stdlib.h"
 
-namespace power {
-int batteryMillivolts();
-bool batteryOk();
-[[noreturn]] void sleepFor(uint32_t seconds);
-} // namespace power
-`,
-	'firmware/src/publish.h': `#pragma once
-#include "si7021.h"
+// Below about 3.5 V the LDO is in dropout, so stop Wi-Fi and SD writes first.
+#define LOW_MILLIVOLTS 3400
 
-namespace publish {
-bool reading(const Reading &reading, int batteryMillivolts);
-} // namespace publish
+void battery_init(void) {
+	adc_init();
+	// Turns the digital input off, which RP2350 erratum E9 needs on a 50 kΩ source.
+	adc_gpio_init(DEVBOARD_VBAT_PIN);
+}
+
+// R13 and R14 halve the cell voltage. ADC_AVDD is the 3V3 rail.
+uint32_t battery_millivolts(void) {
+	adc_select_input(DEVBOARD_VBAT_ADC_INPUT);
+
+	return 2u * adc_read() * 3300u / 4096u;
+}
+
+bool battery_low(uint32_t millivolts) {
+	return millivolts < LOW_MILLIVOLTS;
+}
 `
 };
 
@@ -240,11 +276,11 @@ export const workspaceFiles: WorkspaceFiles = {
 };
 
 export const artifacts: ArtifactEntry[] = [
-	{ key: 'bom', title: 'air-sensor-bom.md' },
-	{ key: 'assembly', title: 'air-sensor-assembly.md' }
+	{ key: 'bom', title: 'rp2350-devboard-bom.md' },
+	{ key: 'bring-up', title: 'rp2350-devboard-bring-up.md' }
 ].map((artifact) => ({ ...artifact, artifactType: artifactPreviewType(artifact.title) }));
 
 export const artifactContents = new Map<string, ArtifactContent>([
 	['bom', { status: 'ready', content: BOM, sourcePath: 'hardware/bom.md' }],
-	['assembly', { status: 'ready', content: ASSEMBLY, sourcePath: 'docs/assembly.md' }]
+	['bring-up', { status: 'ready', content: BRING_UP, sourcePath: 'docs/bring-up.md' }]
 ]);
