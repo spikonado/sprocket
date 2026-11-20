@@ -2,430 +2,432 @@ import type { AgentQuestionAnswer } from '@convex/lib/agentQuestions';
 import { prompt, recordRun, say, think, tool, work, type Step } from './rows';
 import type { DemoThread } from './types';
 
-const ERC =
-	'kicad-cli sch erc --format json --severity-all -o /tmp/erc.json hardware/air-sensor.kicad_sch';
+const SCHEMATIC = 'hardware/rp2350-devboard.kicad_sch';
+const BOARD = 'hardware/rp2350-devboard.kicad_pcb';
 
-const sensorBoard: DemoThread = {
-	id: 'sensor-board',
-	title: 'Clean up ERC and price the BOM',
+const ERC = `kicad-cli sch erc --format json --severity-all --exit-code-violations -o /tmp/erc.json ${SCHEMATIC}`;
+
+const DRC = `kicad-cli pcb drc --format json --severity-all --schematic-parity --exit-code-violations -o /tmp/drc.json ${BOARD}`;
+
+const THERMAL_PADS = `python3 scratch/thermal_vias.py ${BOARD} U1 U4 U5 --net GND`;
+
+const FIRMWARE_BUILD = 'cmake -S firmware -B firmware/build && cmake --build firmware/build';
+
+const orderPack: DemoThread = {
+	id: 'order-pack',
+	title: 'Price the board and get a PCBWay quote',
 	model: 'opus-5.5',
 	effort: 'medium',
 	minutesAgo: 12,
 	runs: [
-		recordRun('run-sensor-board-1', [
+		recordRun('run-order-pack-1', [
 			prompt(
-				'The ESP32-S3 + Si7021 board in hardware/ came from an open source design. Get ERC clean, then price a BOM for 10 boards from LCSC and write up how to assemble them.'
+				'The RP2350 board in hardware/ is routed. Check ERC and DRC, price the BOM for 1 and 5 boards, get a PCBWay turnkey quote, and write up how to order and bring it up.'
 			),
 			work(
 				think(
-					'Planning the board review',
-					'Start with ERC so I know what the schematic actually gets wrong, then export the BOM from the same file so the pricing matches the parts on the sheet.'
+					'Planning the checks',
+					'Run ERC and DRC first so the quote is for a board that is ready to order. Then price the same 37 BOM lines that the fab files use.'
 				),
 				tool('read_skill', '$designing-pcbs'),
 				tool('exec_cmd', ERC),
-				tool(
-					'exec_cmd',
-					"jq -r '.sheets[].violations[] | .type' /tmp/erc.json | sort | uniq -c | sort -rn"
-				),
+				tool('exec_cmd', DRC),
 				think(
-					'Reading the ERC report',
-					'43 findings. The 2 errors are `power_pin_not_driven` on +5V and GND: nothing marks those nets as driven because VBUS on the USB-C symbol is passive. 20 wire stubs overhang their labels, U1 has 10 hidden GND pins typed `power_in`, and 9 embedded symbols are older than the stock library copies.'
+					'Reading the reports',
+					'ERC: 0 errors, 0 warnings. DRC: 0 errors, 0 warnings, 0 unconnected items, and the board matches the schematic. DRC does not check heat, so look at the power parts by hand.'
 				),
-				tool('apply_patch', 'hardware/air-sensor.kicad_sch'),
-				tool('exec_cmd', ERC),
-				tool(
-					'apply_patch',
-					'hardware/air-sensor.kicad_sch\nhardware/sym-lib-table\nhardware/lib/ESP32-S3-WROOM-1-N8R8.kicad_sym'
-				),
-				tool('exec_cmd', `${ERC} --exit-code-violations`)
+				tool('exec_cmd', THERMAL_PADS),
+				think(
+					'Checking the thermal pads',
+					"U1's center pad has 5 vias to ground. U4, the BQ24074, has none, and the nearest GND via is 2.55 mm away. Charging a low cell it can dissipate about 0.9 W, so it will reach its thermal limit and cut the charge current."
+				)
 			),
 			say(
-				'ERC is down from 2 errors and 41 warnings to 0. Next I am exporting the BOM and pricing it.'
+				"ERC and DRC are both clean. DRC can't see one problem: the BQ24074's thermal pad has no vias. Pricing the BOM next."
 			),
 			work(
 				tool(
 					'exec_cmd',
-					'kicad-cli sch export bom --fields "Reference,Value,Footprint,${QUANTITY}" --group-by Value,Footprint -o hardware/bom.csv hardware/air-sensor.kicad_sch'
+					`kicad-cli sch export bom --fields "Reference,Value,MPN,LCSC,\${QUANTITY}" --group-by Value,MPN -o /tmp/bom.csv ${SCHEMATIC}`
 				),
 				tool(
 					'lookup_parts',
-					'ESP32-S3-WROOM-1-N8R8, SI7021-A20-GM1R, LM1117DTX-3.3/NOPB, USBLC6-2SC6, USB4105-GF-A, BM04B-SRSS-TB(LF)(SN), CLMVC-FKA-CL1D1L71BB7C3C3, B3U-1000P-B, B3F-3152, ESD9B3.3ST5G'
+					'SC1509-A4, SC1169, W25Q128JVPIQ, APS6404L-3SQR-SN, BQ24074RGTR, TLV75733PDBVR, USBLC6-2SC6, USB4105-GF-A, DM3AT-SF-PEJM5, ABM8-272-T3, WS2812B-2020-V6, AOTA-B201610S3R3-101-T'
 				),
 				tool(
 					'lookup_parts',
-					'CL05B104KO5NNNC, CL21A226MAQNNNE, CL10A106KP8NNNC, CL10A105KB8NNNC, KT-0603R, 1N5817, GZ2012D601TF, 0402WGF5101TCE, 0402WGF1001TCE, 0402WGF2201TCE, 0402WGF1002TCE'
+					'GRM188R61E106MA73D, GRM155R61C105KA12D, GRM155R60J475ME47D, GRM155R71C104KA88D, GRM1555C1H150JA01D, GRM155R60J106ME15D, S2B-PH-SM4-TB, SM04B-SRSS-TB, SM03B-SRSS-TB, PTS810 SJM 250 SMTR LFS, 150060GS75000, 150060AS75000, 61301211121'
 				),
 				think(
-					'Checking the parts with no stock',
-					'D7 (Cree CLMVC RGB LED) shows 0 at both LCSC and JLCPCB. B3U-1000P-B is also at 0, but B3U-1000P has 63,930 and the same body. Look for a PLCC4 3.2×2.8 RGB LED that drops onto the same footprint.'
+					'Filling the gaps',
+					'LCSC has no listing for the Würth LEDs or the 61301211121 headers, so price D2, D3, D4, J6 and J7 at Digi-Key. Everything else is LCSC, bought up to each minimum order quantity.'
 				),
-				tool('web_search', 'RGB LED PLCC4 3.2x2.8mm common anode in stock LCSC (10 results)'),
-				tool('scrape_url', 'https://www.lcsc.com/product-detail/C5187905.html'),
-				tool('lookup_parts', 'B3U-1000P, 19-237/R6GHBHC-A04/2T, XL-3216RGBC'),
+				tool(
+					'scrape_url',
+					'https://www.digikey.com/en/products/detail/w%C3%BCrth-elektronik/61301211121/4846844'
+				),
 				tool('apply_patch', 'hardware/bom.md'),
 				tool('bind_artifact', 'hardware/bom.md'),
-				tool('apply_patch', 'docs/assembly.md'),
-				tool('bind_artifact', 'docs/assembly.md')
+				tool('apply_patch', 'docs/bring-up.md'),
+				tool('bind_artifact', 'docs/bring-up.md')
 			),
-			say(`ERC is clean and the BOM is priced for 10 boards.
-
-| ERC check | Before | After | Fix |
-| --- | --- | --- | --- |
-| \`power_pin_not_driven\` (error) | 2 | 0 | PWR_FLAG on +5V and GND |
-| \`unconnected_wire_endpoint\` | 20 | 0 | Trimmed the wire stubs back to their labels |
-| \`wired_implicit_power\` | 10 | 0 | U1's hidden GND pins are now passive, as in KiCad's stock symbol |
-| \`lib_symbol_mismatch\` | 9 | 0 | Refreshed \`C_Small\` and the USB-C symbol from the stock library |
-| Library and footprint links | 2 | 0 | Project library for U1, stock \`RF_Module:ESP32-S3-WROOM-1\` footprint |
-
-kicad:hardware/air-sensor.kicad_pro
-
-Parts come to **$16.12 a board**, $161.17 for ten, at LCSC's 10-piece prices. Two lines need a decision from you: D7 has no stock anywhere, and the in-stock RGB LEDs need a smaller footprint. U4 has only 379 in stock, which covers this batch but not a production run. The full list is in [hardware/bom.md](hardware/bom.md).
-
-| Part | Ref | LCSC | Unit | Stock |
-| --- | --- | --- | --- | --- |
-| ESP32-S3-WROOM-1-N8R8 | U1 | C2913201 | $4.46 | 2,180 |
-| SI7021-A20-GM1R | U4 | C132603 | $7.71 | 379 |
-| LM1117DTX-3.3/NOPB | U3 | C73181 | $0.85 | 13,517 |
-| USB4105-GF-A | J1 | C3020560 | $0.84 | 10,069 |
-| USBLC6-2SC6 | U2 | C7519 | $0.16 | 32,225 |
-| CLMVC-FKA-CL1D1L71BB7C3C3 | D7 | C5187905 | $0.17 | **0** |
-| 17 more lines: passives, headers, switches | | | $1.95 | In stock |
+			say(`The BOM and bring-up notes are written. All 37 lines are in stock. Parts come to $39.73 for one board and $131.16 for five. The RM2 ($6.61), PSRAM ($4.01) and flash ($3.29) are about a third of that.
 
 artifact:bom
 
-artifact:assembly`)
+artifact:bring-up
+
+Getting the PCBWay quote now.`),
+			work(
+				tool('read_skill', '$agent-browser'),
+				tool('exec_cmd', 'agent-browser open https://www.pcbway.com/orderonline.aspx'),
+				tool('exec_cmd', 'agent-browser snapshot -i'),
+				think(
+					'Reading the quote',
+					'5 PCBs at 76.2 × 25.4 mm, 4 layers, ENIG: $62.04, of which $29.84 is ENIG. The 5/5 mil tracks and 0.25 mm holes add nothing. Turnkey assembly is $88.00 for one board and $88.50 for five. The $29 new-customer promo would cover one board but not five, because J6 and J7 give 120 through-hole joints, over its 100-joint limit. Quote without it. X-ray has no field in the instant quote.'
+				),
+				tool('apply_patch', 'hardware/bom.md')
+			),
+			say(`PCBWay quoted the board. Shipping and X-ray on U1 and U7 aren't in the instant quote.
+
+| | 1 board | 5 boards |
+| --- | --- | --- |
+| PCB (5 bare boards, ENIG) | $62.04 | $62.04 |
+| Turnkey assembly | $88.00 | $88.50 |
+| Parts | $39.73 | $131.16 |
+| **Total** | **$189.77** | **$281.70** |
+
+Add vias under U4's thermal pad before you order, or the charger will throttle.
+
+kicad:hardware/rp2350-devboard.kicad_pro`)
 		])
 	]
 };
 
-type BatteryPlan = { change: string; lookup: string; reply: string };
+type ThermalPlan = { change: string; tools: Step; reply: string };
 
-const AA_LITHIUM: BatteryPlan = {
+const THERMAL_VIAS: ThermalPlan = {
 	change:
-		'Two L91 cells run from 3.6 V down to about 2.0 V, below what the ESP32-S3 accepts. That needs a buck-boost in place of U3. The TPS63802 has 11 µA quiescent draw and handles 2 A Wi-Fi peaks.',
-	lookup: 'TPS63802DLAR, XFL4020-471MEC, Keystone 2462',
-	reply: `Done. The node now runs from two Energizer L91 AA cells.
+		'Put vias in the pad itself, down to the solid In1 ground plane. The board minimum is 0.25 mm drill and 0.55 mm via, which fits a 2×2 grid on the 1.6 mm pad.',
+	tools: work(
+		tool('apply_patch', BOARD),
+		tool('exec_cmd', DRC),
+		tool('exec_cmd', `kicad-cli pcb export gerbers -o fab/gerbers ${BOARD}`),
+		tool('exec_cmd', 'cd fab && zip -r rp2350-devboard-gerbers.zip gerbers')
+	),
+	reply: `Done. U4's thermal pad now has 4 vias (0.25 mm drill, 0.55 mm via) into the In1 ground plane.
 
-- **U3** is a TPS63802 buck-boost (C2870937) with a 0.47 µH inductor, so the 3.3 V rail holds while the cells fall to 2.0 V.
-- **BT1** is a Keystone 2462 2×AA holder.
-- \`firmware/src/power.cpp\` now cuts off at 2.1 V on the pack instead of 3.0 V.
-
-L91 cells are rated to −40 °C and keep most of their capacity in the cold, so this should last about **200 days**. There is nothing to charge. Swap the cells each autumn.`
+- DRC is clean again.
+- \`fab/gerbers/\` and \`fab/rp2350-devboard-gerbers.zip\` are regenerated. Upload the new zip.
+- The BOM, centroid file and quote don't change.`
 };
 
-const BATTERY_PLANS = new Map<string, BatteryPlan>([
+const THERMAL_PLANS = new Map<string, ThermalPlan>([
+	['thermal-vias', THERMAL_VIAS],
 	[
-		'li-ion-18650',
+		'lower-charge',
 		{
 			change:
-				'A Li-ion cell sits at 3.0–4.2 V, so U3 has to stay, but the LM1117 burns 5 mA on its own. Swap it for an ME6211 (40 µA) and add a divider on GPIO4 to read the cell.',
-			lookup: 'ME6211C33M5G-N, S2B-PH-K-S(LF)(SN), 0402WGF1003TCE',
-			reply: `Done. The node now runs from a protected 18650.
+				'Charge current is set by R6: 1.8 kΩ gives 494 mA, and it scales with 1/R6. 3.6 kΩ gives about 247 mA, so U4 makes roughly half the heat.',
+			tools: work(
+				tool('apply_patch', `${SCHEMATIC}\n${BOARD}\nhardware/bom.md`),
+				tool('exec_cmd', ERC),
+				tool('lookup_parts', 'RC0402FR-073K6L')
+			),
+			reply: `Done. R6 is now 3.6 kΩ (RC0402FR-073K6L), which sets the charge current to about 247 mA.
 
-- **U3** is an ME6211C33 (C82942) in place of the LM1117. Its 40 µA quiescent draw was the real battery killer, not the radio.
-- **J5** is a JST-PH 2-pin battery connector. R11/R12 (1 MΩ each) divide the cell onto GPIO4.
-- \`firmware/src/power.cpp\` skips the reading and sleeps 4× longer below 3.3 V.
-
-At 0.55 mA average that is about **180 days at −10 °C**. The cell must not be charged below 0 °C, so charge it indoors.`
+- Only the value changed, so the copper and Gerbers stay the same.
+- A flat cell takes about twice as long to charge.
+- The BOM line for R6 is updated. Nothing else in the quote moves.`
 		}
 	],
-	['aa-lithium', AA_LITHIUM],
 	[
-		'lifepo4-18650',
+		'leave-it',
 		{
 			change:
-				'LiFePO4 sits at 3.2–3.4 V for most of its discharge, inside the ESP32-S3 range. U3 can be bypassed with a 0 Ω link so the regulator costs nothing.',
-			lookup: 'IFR18650-1500, Keystone 1042, 0603WAF0000T5E',
-			reply: `Done. The node now runs straight from a LiFePO4 18650.
-
-- **U3** is bypassed by R13 (0 Ω). USB still powers the board through D3 for flashing.
-- **BT1** is a Keystone 1042 18650 holder.
-- \`firmware/src/power.cpp\` cuts off at 2.9 V, where LiFePO4 is nearly empty.
-
-A 1,500 mAh cell gives about **110 days**, so plan one recharge mid-winter. It is the safest chemistry of the three outdoors.`
+				'The BQ24074 protects itself: when it gets hot it cuts the charge current. That makes charging slower, not unsafe. Write it down so nobody is surprised.',
+			tools: work(tool('apply_patch', 'docs/bring-up.md\nREADME.md')),
+			reply:
+				'Left the layout as it is. `docs/bring-up.md` now says that U4 throttles when warm, so a flat cell charges slower than the 494 mA setting suggests. If that matters later, the via fix is a layout-only change for rev B.'
 		}
 	]
 ]);
 
-function batteryContinuation(answer: AgentQuestionAnswer): Step[] {
+function thermalContinuation(answer: AgentQuestionAnswer): Step[] {
 	if (answer.optionId === undefined) {
 		return [
 			work(
 				think(
 					'Reading your answer',
-					`You wrote: "${answer.text}". I will plan the power stage around it.`
+					`You wrote: "${answer.text}". I will plan the change around it.`
 				)
 			),
 			say(
-				`Got it: "${answer.text}". I will size the regulator and the battery cutoff around that and rerun ERC before I change anything else.`
+				`Got it: "${answer.text}". I'll make that change, rerun ERC and DRC, and regenerate the fab files if the copper moves.`
 			)
 		];
 	}
 
-	const plan = BATTERY_PLANS.get(answer.optionId);
-	const chosen = plan ?? AA_LITHIUM;
+	const plan = THERMAL_PLANS.get(answer.optionId);
+	const chosen = plan ?? THERMAL_VIAS;
 
 	return [
 		work(
 			think(
-				'Applying the battery choice',
+				'Applying the choice',
 				plan
 					? chosen.change
-					: `You left it to me. Outdoors over a winter, the deciding factors are cold capacity and not needing a charger. Two lithium AA cells win on both. ${chosen.change}`
-			),
-			tool('lookup_parts', chosen.lookup),
-			tool('apply_patch', 'hardware/air-sensor.kicad_sch\nfirmware/src/power.cpp'),
-			tool('exec_cmd', `${ERC} --exit-code-violations`),
-			tool('exec_cmd', 'pio run -d firmware -e esp32s3')
+					: `You left it to me. The board isn't ordered yet, so new Gerbers cost nothing, and vias fix the cause instead of working around it. ${chosen.change}`
+			)
 		),
-		say(plan ? chosen.reply : `I went with two lithium AA cells.\n\n${chosen.reply}`)
+		chosen.tools,
+		say(plan ? chosen.reply : `I added thermal vias.\n\n${chosen.reply}`)
 	];
 }
 
-const batteryChoice: DemoThread = {
-	id: 'battery-choice',
-	title: 'Battery for the outdoor node',
+const chargerThermal: DemoThread = {
+	id: 'charger-thermal',
+	title: "Fix the charger's thermal pad",
 	model: 'sonnet-5.5',
 	effort: 'high',
 	minutesAgo: 3,
 	runs: [
-		recordRun('run-battery-choice-1', [
-			prompt(
-				'The node will live outside on a balcony. Pick a battery that lasts a winter with a reading every 5 minutes.'
-			),
+		recordRun('run-charger-thermal-1', [
+			prompt('U4 has no thermal vias. What are my options before I order?'),
 			work(
+				tool('exec_cmd', THERMAL_PADS),
+				tool('parse_file', 'https://www.ti.com/lit/gpn/bq24074'),
 				think(
-					'Estimating the power budget',
-					'Each wake: about 1.4 s of Wi-Fi and MQTT at ~120 mA, plus the Si7021 conversion. Between wakes, the S3 deep sleeps at ~8 µA, but U3 (LM1117) draws 5 mA quiescent all the time, which dominates everything.'
+					'Weighing the options',
+					'The pad has no vias and the nearest GND via is 2.55 mm away. About 0.9 W while charging a low cell. R6 = 1.8 kΩ sets 494 mA. The USB input is held to 500 mA either way, so a lower charge current only trades charge time for heat.'
 				),
-				tool(
-					'exec_cmd',
-					'python3 tools/power_budget.py --interval 300 --wake-ms 1400 --wake-ma 120 --sleep-ua 8'
-				),
-				tool('web_search', 'Energizer L91 capacity at -20C (10 results)'),
-				tool('web_search', 'LiFePO4 18650 capacity low temperature self discharge (10 results)'),
-				tool('ask_question', 'Which battery should the outdoor node use?')
+				tool('ask_question', 'How should we deal with the heat in U4?')
 			),
-			say(`With the LM1117 replaced, the node averages about **0.55 mA**, or 13 mAh a day. Left as it is, the regulator alone would drain any of these in under a month.
+			say(`U4 (BQ24074) has no vias under its thermal pad, so its heat has nowhere to go but the top copper. There are three ways to handle it.
 
-| Option | Capacity | Cold behaviour | Regulator change | Winter runtime |
-| --- | --- | --- | --- | --- |
-| 18650 Li-ion | 3,000 mAh | −20 % at −10 °C, no charging below 0 °C | Low-Iq LDO | ~180 days |
-| 2× AA lithium (L91) | 3,000 mAh | Rated to −40 °C | Buck-boost | ~200 days |
-| LiFePO4 18650 | 1,500 mAh | Good, flat 3.2 V | None, bypass U3 | ~110 days |
+| Option | Change | Effect |
+| --- | --- | --- |
+| Add thermal vias | 4 vias from the pad to the In1 ground plane | Fixes the cause. Needs a DRC rerun and new Gerbers. |
+| Lower the charge current | R6 from 1.8 kΩ to 3.6 kΩ, about 247 mA | About half the heat. Charging takes twice as long. No layout change. |
+| Leave it | Document it | The charger cuts its own current when hot. Charging is slower but safe. |
 
-Which one should I design for?`)
+Which one should I do?`)
 		])
 	],
 	question: {
-		questionId: 'battery-question',
-		question: 'Which battery should the outdoor node use?',
+		questionId: 'thermal-question',
+		question: 'How should we deal with the heat in U4?',
 		options: [
-			{ id: 'li-ion-18650', label: '18650 Li-ion, rechargeable' },
-			{ id: 'aa-lithium', label: '2× AA lithium (Energizer L91)' },
-			{ id: 'lifepo4-18650', label: 'LiFePO4 18650, no regulator' }
+			{ id: 'thermal-vias', label: 'Add thermal vias under U4' },
+			{ id: 'lower-charge', label: 'Lower the charge current to about 247 mA' },
+			{ id: 'leave-it', label: 'Leave it and document the throttling' }
 		],
-		continueWith: batteryContinuation
+		continueWith: thermalContinuation
 	}
 };
 
-const SI7021_TASK =
-	'Write the Si7021 driver in firmware/src/si7021.{h,cpp}: I2C on GPIO8/9 at 100 kHz, humidity then the cached temperature, CRC-8 check on every read. Add a native unit test for the CRC and the conversions.';
+const BOARD_TASK =
+	"Write firmware/boards/rp2350_devboard.h from pico-sdk's pico2_w.h. Flash is 16 MB. The RM2 is wired like the Pico 2 W on GPIO23/24/25/29, but RM2 GPIO1 and GPIO2 are not connected, so drop the SMPS pin, the VBUS sense on WL_GPIO2 and the VSYS sense on GPIO29. Add defines for PSRAM CS (GPIO8), the WS2812B (GPIO9) and VBAT (GPIO28).";
 
-const POWER_TASK =
-	'Write firmware/src/power.{h,cpp}: deep sleep with a timer wake, battery voltage on GPIO4 through the 1:2 divider, and a low-battery path that skips Wi-Fi. Keep the wake time under 1.5 s.';
+const BATTERY_TASK =
+	'Write firmware/src/battery.{h,c}: read VBAT/2 on GPIO28 (ADC2) through the R13/R14 100 kΩ divider, return millivolts, and flag a low battery below 3.4 V, where firmware should stop Wi-Fi and SD writes.';
 
 const firmware: DemoThread = {
 	id: 'firmware',
-	title: 'Sensor firmware with deep sleep',
+	title: 'Bring-up firmware with pico-sdk',
 	model: 'gpt-6.2-sol',
 	effort: 'high',
 	minutesAgo: 47,
 	runs: [
 		recordRun('run-firmware-1', [
 			prompt(
-				'Write the firmware: read the Si7021 every 5 minutes, deep sleep in between, publish over MQTT. Split the work up so it goes faster.'
+				'Write bring-up firmware with pico-sdk: blink the LED on the RM2 and print the battery voltage over USB. Split the work up so it goes faster.'
 			),
 			work(
 				think(
 					'Splitting the firmware work',
-					'The sensor driver and the sleep/power path touch different files and can be tested on their own. I will hand each to a subagent and write `main.cpp` and the MQTT publish path myself.'
+					'The board header and the battery reader touch different files and can be checked on their own. I will hand each to a subagent and write `main.c` and `CMakeLists.txt` myself.'
 				),
-				tool('spawn_subagent', SI7021_TASK),
-				tool('spawn_subagent', POWER_TASK),
-				tool(
-					'apply_patch',
-					'firmware/platformio.ini\nfirmware/src/main.cpp\nfirmware/src/publish.cpp\nfirmware/src/publish.h'
-				),
-				tool('poll_subagent', 'firmware-si7021'),
-				tool('poll_subagent', 'firmware-power'),
-				tool('exec_cmd', 'pio run -d firmware -e esp32s3'),
-				tool('exec_cmd', 'pio test -d firmware -e native')
+				tool('spawn_subagent', BOARD_TASK),
+				tool('spawn_subagent', BATTERY_TASK),
+				tool('apply_patch', 'firmware/CMakeLists.txt\nfirmware/src/main.c'),
+				tool('poll_subagent', 'firmware-board'),
+				tool('poll_subagent', 'firmware-battery'),
+				tool('exec_cmd', FIRMWARE_BUILD)
 			),
-			say(`The firmware builds and the native tests pass.
+			say(`The firmware builds against pico-sdk and writes \`firmware/build/devboard.uf2\`.
 
 | Part | Files | Done by |
 | --- | --- | --- |
-| Si7021 driver with CRC check | \`si7021.h\`, \`si7021.cpp\`, \`test/test_si7021\` | Subagent |
-| Deep sleep and battery check | \`power.h\`, \`power.cpp\` | Subagent |
-| Wake, read, publish, sleep | \`main.cpp\`, \`publish.cpp\` | Me |
+| Board header from \`pico2_w.h\` | \`boards/rp2350_devboard.h\` | Subagent |
+| Battery voltage on GPIO28 | \`battery.h\`, \`battery.c\` | Subagent |
+| LED blink and serial log | \`main.c\`, \`CMakeLists.txt\` | Me |
 
-- **Wake time:** 1.31 s from timer wake to deep sleep on a cached Wi-Fi channel and BSSID.
-- **Flash:** 812 KB of 3 MB, so OTA fits with two app slots.
-- **Tests:** 9 passed in \`pio test -e native\`, covering the CRC and both conversions at the datasheet's example values.
+Three limits of the board that the firmware works around:
 
-Next step is flashing a board once the first batch is assembled.`)
+- **No USB detect.** No GPIO sees VBUS or the charger status, so \`battery_low\` goes by voltage only.
+- **No battery fitted.** On USB alone, GPIO28 reads a false 3.6 to 4.2 V while the charger looks for a cell.
+- **Near the cutoff.** With the cell below about 3.5 V, 3V3 is out of regulation. ADC_AVDD is on 3V3, so readings there run a little high.
+
+It hasn't run on hardware yet. No board has been built.`)
 		])
 	]
 };
 
-const firmwareSi7021: DemoThread = {
-	id: 'firmware-si7021',
+const firmwareBoard: DemoThread = {
+	id: 'firmware-board',
 	parentId: 'firmware',
-	title: 'Si7021 driver',
+	title: 'Board header for pico-sdk',
 	model: 'gpt-6.1-terra',
 	effort: 'medium',
 	minutesAgo: 49,
 	runs: [
-		recordRun('run-firmware-si7021-1', [
-			prompt(SI7021_TASK),
+		recordRun('run-firmware-board-1', [
+			prompt(BOARD_TASK),
 			work(
-				tool('scrape_url', 'https://www.silabs.com/documents/public/data-sheets/Si7021-A20.pdf'),
-				think(
-					'Reading the datasheet',
-					'Measure RH with 0xF5 (no hold), wait ≥ 23 ms, read 3 bytes with the CRC. Temperature from the same conversion is 0xE0, no CRC. CRC-8 polynomial is 0x31, init 0x00.'
-				),
 				tool(
-					'apply_patch',
-					'firmware/src/si7021.h\nfirmware/src/si7021.cpp\nfirmware/test/test_si7021/test_si7021.cpp'
+					'scrape_url',
+					'https://raw.githubusercontent.com/raspberrypi/pico-sdk/master/src/boards/include/boards/pico2_w.h'
 				),
-				tool('exec_cmd', 'pio test -d firmware -e native -f test_si7021')
+				think(
+					'Comparing with the Pico 2 W',
+					'`pico2_w.h` sets 4 MB of flash, `CYW43_WL_GPIO_SMPS_PIN 1`, `CYW43_WL_GPIO_VBUS_PIN 2`, `CYW43_USES_VSYS_PIN` and `PICO_VSYS_PIN 29`. Here GPIO29 is only the RM2 clock and WL_GPIO1 and WL_GPIO2 are not connected. Keep the GPIO23/24/25/29 pins and the LED on WL_GPIO0.'
+				),
+				tool('apply_patch', 'firmware/boards/rp2350_devboard.h'),
+				tool('exec_cmd', FIRMWARE_BUILD)
 			),
 			say(
-				'The driver is in `si7021.cpp`. It reads humidity with the no-hold command, reuses that conversion for temperature, and returns nothing on a CRC mismatch. 9 native tests pass, including the datasheet example of 0x7C80 → 54.8 % RH.'
+				"`boards/rp2350_devboard.h` is in. It keeps the Pico 2 W's RM2 pins and the LED on WL_GPIO0, sets 16 MB of flash, and drops the SMPS, VBUS and VSYS defines. It adds `DEVBOARD_PSRAM_CS_PIN` (8), `PICO_DEFAULT_WS2812_PIN` (9) and `DEVBOARD_VBAT_PIN` (28). I2C0 stays on GPIO4/5, which is the Qwiic port."
 			)
 		])
 	]
 };
 
-const firmwarePower: DemoThread = {
-	id: 'firmware-power',
+const firmwareBattery: DemoThread = {
+	id: 'firmware-battery',
 	parentId: 'firmware',
-	title: 'Deep sleep and battery check',
+	title: 'Battery voltage on GPIO28',
 	model: 'gpt-6.1-terra',
 	effort: 'medium',
 	minutesAgo: 50,
 	runs: [
-		recordRun('run-firmware-power-1', [
-			prompt(POWER_TASK),
+		recordRun('run-firmware-battery-1', [
+			prompt(BATTERY_TASK),
 			work(
-				tool('apply_patch', 'firmware/src/power.h\nfirmware/src/power.cpp'),
-				tool('exec_cmd', 'pio run -d firmware -e esp32s3'),
+				tool('parse_file', 'https://datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf'),
 				think(
-					'Checking the wake budget',
-					'Most of the wake is Wi-Fi association. Caching the channel and BSSID in RTC memory skips the scan and saves ~600 ms.'
+					'Reading the ADC notes',
+					'Erratum E9: a pad with its digital input enabled leaks current, which skews a high-impedance source. The divider looks like 50 kΩ from GPIO28. `adc_gpio_init(28)` turns the input buffer off.'
 				),
-				tool('apply_patch', 'firmware/src/power.cpp')
+				tool('apply_patch', 'firmware/src/battery.h\nfirmware/src/battery.c'),
+				tool('exec_cmd', FIRMWARE_BUILD)
 			),
 			say(
-				'`power::sleepFor` arms the RTC timer and enters deep sleep. `power::batteryMillivolts` reads GPIO4 through the divider with the calibrated ADC. Below 3.0 V the node skips Wi-Fi and sleeps 4× longer. Wi-Fi channel and BSSID are cached in RTC memory, which brings the wake down to about 1.3 s.'
+				"`battery_millivolts` reads ADC2 and doubles it for the R13/R14 divider. `battery_init` calls `adc_gpio_init(28)` so erratum E9 can't skew the reading. `battery_low` is true below 3.4 V. The divider draws about 21 µA from the cell all the time, and firmware can't switch it off."
 			)
 		])
 	]
 };
 
-const otaUpdates: DemoThread = {
-	id: 'ota-updates',
-	title: 'OTA updates with rollback',
+const psram: DemoThread = {
+	id: 'psram',
+	title: 'Enable the 8 MB PSRAM',
 	model: 'kimi-k3.1-pro',
 	effort: 'high',
 	minutesAgo: 1,
 	runs: [],
 	liveRun: [
-		prompt(
-			'Add OTA updates over Wi-Fi. If a new build cannot read the sensor after boot, roll back to the previous one.'
-		),
+		prompt('Bring up the 8 MB PSRAM on GPIO8 and add a read/write test at boot.'),
 		work(
 			think(
-				'Planning the OTA path',
-				'ESP-IDF already supports rollback: mark the new app as pending verify, then confirm it only after the first good Si7021 reading. If the board resets before that, the bootloader falls back to the old slot.'
+				'Planning the PSRAM setup',
+				'The APS6404L sits on QSPI chip select 1, which is GPIO8. GPIO8 resets with a pull-down, and R19 (2.2 kΩ) holds CS high against it. Turn the pad pull-down off before switching GPIO8 to XIP_CS1, then set up the QMI M1 window and put the chip in quad mode.'
 			),
-			tool('exec_cmd', 'grep -n "partitions\\|board_build" firmware/platformio.ini'),
-			tool('apply_patch', 'firmware/partitions.csv\nfirmware/platformio.ini'),
-			tool('apply_patch', 'firmware/src/ota.h\nfirmware/src/ota.cpp\nfirmware/src/main.cpp'),
-			tool('exec_cmd', 'pio run -d firmware -e esp32s3'),
+			tool('parse_file', 'https://datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf'),
+			tool(
+				'parse_file',
+				'https://cdn-shop.adafruit.com/product-files/6130/APM_PSRAM_E3_QSPI+%28APS6404L-3SQR+KGD_PKG%29+v2.7.pdf'
+			),
+			tool(
+				'apply_patch',
+				'firmware/src/psram.h\nfirmware/src/psram.c\nfirmware/src/main.c\nfirmware/CMakeLists.txt'
+			),
+			tool('exec_cmd', FIRMWARE_BUILD),
 			think(
-				'Checking the image size',
-				'Two 1.5 MB app slots fit in the 8 MB flash with room for NVS and a coredump partition. The build is 861 KB with the HTTPS client, so there is headroom.'
+				'Checking the chip select',
+				'R19 was 10 kΩ in the first schematic. Against the GPIO8 pull-down, CS could sit at 2.58 V, under the 2.9 V the PSRAM needs to stay deselected. 2.2 kΩ fixes that in hardware, so firmware only has to drop the pull-down before the QMI drives the pin.'
 			),
-			tool('exec_cmd', 'pio test -d firmware -e native')
+			tool('exec_cmd', 'grep -n "psram" firmware/build/devboard.map | head')
 		),
-		say(`OTA is in, with rollback.
+		say(`The PSRAM is mapped at \`0x11000000\`.
 
-- **Partitions:** two 1.5 MB app slots plus NVS and coredump, in \`firmware/partitions.csv\`.
-- **Update check:** on every 12th wake (once an hour), the node fetches \`manifest.json\` over HTTPS and compares versions.
-- **Rollback:** a new image boots as *pending verify*. \`ota::confirm()\` runs only after the first good Si7021 reading. Any reset before that boots the previous slot.
+- \`psram_init()\` turns off GPIO8's pull-down, switches it to XIP_CS1, and sets up the QMI M1 window for the APS6404L in quad mode.
+- \`main.c\` writes a pattern over all 8 MB at boot, reads it back, and prints the result.
 
-The build is 861 KB and all 9 native tests still pass.`)
+It builds. It hasn't run on hardware, since no board has been built.`)
 	]
 };
 
-const usbEsd: DemoThread = {
-	id: 'usb-esd',
-	title: 'Check USB-C ESD protection',
+const usbPort: DemoThread = {
+	id: 'usb-port',
+	title: 'Check the USB-C port',
 	model: 'gpt-6.1-terra',
 	effort: 'medium',
 	settled: true,
 	minutesAgo: 60 * 26,
 	runs: [
-		recordRun('run-usb-esd-1', [
-			prompt('Is the USB-C port protected well enough for a board people plug in outdoors?'),
+		recordRun('run-usb-port-1', [
+			prompt('Is the USB-C port wired right, and is it protected?'),
 			work(
-				tool('parse_file', 'https://www.st.com/resource/en/datasheet/usblc6-2.pdf'),
-				tool(
-					'exec_cmd',
-					'kicad-cli sch export netlist -o /tmp/air-sensor.net hardware/air-sensor.kicad_sch'
-				),
-				tool('exec_cmd', 'grep -A6 "USBLC6" /tmp/air-sensor.net')
+				tool('exec_cmd', `kicad-cli sch export netlist -o /tmp/devboard.net ${SCHEMATIC}`),
+				tool('exec_cmd', 'grep -B2 -A8 "USBLC6\\|USB4105" /tmp/devboard.net'),
+				tool('parse_file', 'https://www.st.com/resource/en/datasheet/cd00050750.pdf')
 			),
-			say(
-				'Yes. U2 (USBLC6-2SC6) clamps D+ and D− and is rated to ±15 kV air discharge under IEC 61000-4-2, and VBUS goes through its supply pin. D4–D6 cover the buttons and header lines. The one gap is CC1/CC2, which only have the 5.1 kΩ pull-downs. That is fine for a sink-only device.'
-			)
+			say(`Yes for normal use. U6 (USBLC6-2SC6) clamps D+ and D−, with 27 Ω series resistors toward the RP2350. Each CC pin has its own 5.1 kΩ to ground, so USB-C chargers will supply 5 V. The pair is 0.22 mm with a 0.15 mm gap over solid ground, about 90.7 Ω differential, and D+ and D− match within 0.05 mm. That is plenty for full speed USB.
+
+Two limits:
+
+- VBUS on J6.1 is tied straight to the connector, so 5 V fed into that pin back-feeds a connected host.
+- U6 breaks down at 6 V, so the port is not 28 V tolerant even though the BQ24074 input is.`)
 		])
 	]
 };
 
-const enclosure: DemoThread = {
-	id: 'enclosure',
-	title: 'Pick an IP65 enclosure',
+const batteryPick: DemoThread = {
+	id: 'battery-pick',
+	title: 'Pick a battery for J2',
 	model: 'sonnet-5.5',
 	effort: 'high',
 	settled: true,
 	minutesAgo: 60 * 50,
 	runs: [
-		recordRun('run-enclosure-1', [
-			prompt('Find an IP65 enclosure that fits the board and lets air reach the sensor.'),
+		recordRun('run-battery-pick-1', [
+			prompt('What LiPo should I plug into J2?'),
 			work(
-				tool('web_search', 'IP65 enclosure 80x60mm with membrane vent (10 results)'),
-				tool('scrape_url', 'https://www.hammfg.com/electronics/small-case/plastic/1554'),
-				tool('lookup_parts', '1554B2GYCL, 1554VENT')
+				tool('parse_file', 'https://www.ti.com/lit/gpn/bq24074'),
+				tool('exec_cmd', 'cat scratch/jst-polarity.md'),
+				tool('web_search', 'protected 1S LiPo JST PH 2.0 plug 1000 mAh (10 results)')
 			),
-			say(
-				'Hammond **1554B2GYCL** (85 × 60 × 40 mm, IP66) fits the board with 6 mm to spare on each side. Add a **1554VENT** membrane vent on the bottom face so humidity reaches U4 without letting water in. Mount the board with U4 nearest the vent.'
-			)
+			say(`A single-cell LiPo with its own protection circuit, 500 mAh or larger, on a JST PH 2.0 plug.
+
+- **Protection:** the board has none, and the BQ24074 has no low-battery cutoff.
+- **500 mAh or more:** R6 sets the charge current to 494 mA, which stays under 1C from 500 mAh up.
+- **Polarity:** J2 pin 1 is +, marked on the silkscreen. Many third-party cells have red and black swapped, so check before you plug one in.
+
+The battery divider on GPIO28 draws about 21 µA all the time, about 15 mAh a month, so unplug the cell for long storage.`)
 		])
 	]
 };
 
-export const DEFAULT_THREAD_ID = sensorBoard.id;
+export const DEFAULT_THREAD_ID = orderPack.id;
 
 export const threads: DemoThread[] = [
-	sensorBoard,
-	batteryChoice,
+	orderPack,
+	chargerThermal,
 	firmware,
-	firmwareSi7021,
-	firmwarePower,
-	otaUpdates,
-	usbEsd,
-	enclosure
+	firmwareBoard,
+	firmwareBattery,
+	psram,
+	usbPort,
+	batteryPick
 ];
