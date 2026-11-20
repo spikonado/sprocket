@@ -143,6 +143,7 @@ export default function DemoApp({
 	const currentThreadIdRef = useLatest(currentThreadId);
 	const [theme, setTheme] = useState(initialTheme);
 	const [settledOpen, setSettledOpen] = useState(false);
+	const [search, setSearch] = useState('');
 	const [narrow, setNarrow] = useState(() => matchMedia(NARROW).matches);
 	const [sidebarOpen, setSidebarOpen] = useState(!narrow);
 	const [prompt, setPrompt] = useState('');
@@ -266,7 +267,9 @@ export default function DemoApp({
 						state={state}
 						signedInUserId={state.userId}
 						localApi={null}
-						sections={state.sections()}
+						sections={state.sections(search)}
+						search={search}
+						onSearchChange={setSearch}
 						projects={[project]}
 						models={modelCatalog.models}
 						selectedProjects={[]}

@@ -136,9 +136,17 @@ export class DemoState implements Store<number> {
 		return this.#threads.get(threadId)?.run ?? { status: 'idle' };
 	}
 
-	sections(): InboxSectionData[] {
-		return this.#cached('sections', () => {
-			const roots = this.#records().filter((thread) => thread.parentThreadId === undefined);
+	sections(search: string): InboxSectionData[] {
+		const query = search.trim().toLowerCase();
+
+		return this.#cached(`sections:${query}`, () => {
+			const matches = (thread: Thread) =>
+				(thread.title ?? '').toLowerCase().includes(query) ||
+				this.children(thread._id).some(matches);
+
+			const roots = this.#records().filter(
+				(thread) => thread.parentThreadId === undefined && matches(thread)
+			);
 
 			return [
 				section(
