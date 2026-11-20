@@ -250,6 +250,7 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) claim_id: String,
     pub(crate) user_id: String,
     pub(crate) thread_id: String,
+    pub(crate) repository_key: String,
     pub(crate) live: Arc<LiveCompletionHub>,
     pub(crate) prompt: Message,
     pub(crate) base_instructions: String,
@@ -749,7 +750,8 @@ async fn run_with_completion_model(
         .tool(tools.spawn_subagent)
         .tool(tools.control_subagent)
         .tool(tools.poll_subagent)
-        .tool(tools.list_subagents)
+        .tool(tools.list_threads)
+        .tool(tools.download_threads)
         .tool(tools.set_cwd);
     let agent = if offer_github_tools {
         agent.tool(tools.link_prs).tool(tools.poll_pr)

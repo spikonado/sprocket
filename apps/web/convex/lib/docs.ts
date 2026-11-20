@@ -71,7 +71,8 @@ export const vGetContextResult = v.object({
 		.extend({
 			startedAt: v.number(),
 			fastMode: v.boolean(),
-			parentThreadId: v.optional(v.id('threadRecords'))
+			parentThreadId: v.optional(v.id('threadRecords')),
+			repositoryKey: v.string()
 		}),
 	providerPreferences: v.object({
 		enabledProviders: v.array(vCompletionProvider),

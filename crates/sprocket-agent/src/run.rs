@@ -632,7 +632,7 @@ async fn load_prior_history(
 ) -> anyhow::Result<PriorHistory> {
     let user_id = &context.run.user_id;
     let thread_id = &context.run.thread_id;
-    let remote = runtime.transcript_state_for_run(run_id).await?;
+    let remote = runtime.transcript_state_for_run(run_id, thread_id).await?;
     let state = remote.to_state(thread_id)?;
     let (mut parts, current_run_had_context_handoff) =
         load_context_parts(store, user_id, thread_id, &state, run_id, |start, end| {
@@ -966,6 +966,7 @@ pub async fn run_agent(
                     claim_id: claim_id.clone(),
                     user_id: context.run.user_id.clone(),
                     thread_id: request.thread_id.clone(),
+                    repository_key: context.run.repository_key.clone(),
                     live: live.clone(),
                     prompt,
                     base_instructions: system_prompt,

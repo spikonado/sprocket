@@ -65,6 +65,37 @@
 	flex: none;
 }
 
+.inbox-thread-search {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 8px;
+	padding: 7px 10px;
+	border: 1px solid var(--hairline);
+	border-radius: 6px;
+	color: var(--muted-foreground);
+}
+
+.inbox-thread-search:focus-within {
+	border-color: var(--accent-strong);
+}
+
+.inbox-thread-search input {
+	min-width: 0;
+	flex: 1;
+	background: transparent;
+	color: var(--foreground);
+	font-size: 13px;
+	outline: none;
+}
+
+.inbox-search-empty {
+	padding: 10px;
+	color: var(--muted-foreground);
+	font-size: 12px;
+	text-align: center;
+}
+
 .inbox-project-menu {
 	position: absolute;
 	display: block;

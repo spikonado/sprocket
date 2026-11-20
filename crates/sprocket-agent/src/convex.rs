@@ -242,9 +242,11 @@ impl RuntimeClient {
     pub(crate) async fn transcript_state_for_run(
         &self,
         run_id: &str,
+        thread_id: &str,
     ) -> anyhow::Result<RemoteTranscriptState> {
-        self.query_json("transcript:getStateForRun", self.run_args(run_id))
-            .await
+        let mut args = self.run_args(run_id);
+        args.insert("threadId".into(), thread_id.to_owned().into());
+        self.query_json("transcript:getStateForRun", args).await
     }
 
     pub(crate) async fn transcript_parts_page_for_run(
@@ -255,6 +257,7 @@ impl RuntimeClient {
         end: u32,
     ) -> anyhow::Result<Vec<TranscriptPart>> {
         let mut args = self.run_args(run_id);
+        args.insert("threadId".into(), thread_id.to_owned().into());
         args.insert("start".into(), Value::Float64(f64::from(start)));
         args.insert("end".into(), Value::Float64(f64::from(end)));
         args.insert("order".into(), "desc".to_owned().into());

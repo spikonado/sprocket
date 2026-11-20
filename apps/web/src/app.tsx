@@ -484,6 +484,7 @@ export default function App({
 	const sidebarVisible = sidebarOpen || (settingsOpen && viewportWidth >= 768);
 	const [projectFilter, setProjectFilter] = useState<string[]>([]);
 	const [settledInboxOpen, setSettledInboxOpen] = useState(false);
+	const [threadSearch, setThreadSearch] = useState('');
 	const [pendingProjectLaunches, setPendingProjectLaunches] = useState<string[]>([]);
 	const [initialProjectLaunchResolved, setInitialProjectLaunchResolved] = useState(false);
 	const credentialsOpen = settingsOpen && settingsPage === 'credentials';
@@ -670,7 +671,8 @@ export default function App({
 	const inbox = useThreadInbox({
 		enabled: authReady,
 		repositoryKeys: inboxProjectKeys,
-		settledOpen: settledInboxOpen
+		settledOpen: settledInboxOpen,
+		search: threadSearch
 	});
 
 	const currentActiveThread = dataForThread(activeThreadQuery.data, currentThreadId);
@@ -2482,6 +2484,8 @@ export default function App({
 							currentThreadId={currentThreadId}
 							settledOpen={settledInboxOpen}
 							onSettledOpenChange={setSettledInboxOpen}
+							search={threadSearch}
+							onSearchChange={setThreadSearch}
 							mutationsEnabled={authReady}
 							theme={workspaceTheme}
 							onThemeChange={(theme) => void handleThemeChange(theme)}

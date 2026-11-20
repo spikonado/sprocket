@@ -94,6 +94,8 @@ function props(records: Thread[]) {
 		],
 		models: [{ id: 'model', label: 'Model Name', provider: 'openai' }],
 		selectedProjects: [],
+		search: '',
+		onSearchChange: vi.fn(),
 		currentThreadId: null,
 		signedInUserId: null,
 		localApi: null,
@@ -1127,3 +1129,20 @@ it.each([
 		expect(settle.disabled).toBe(true);
 	}
 );
+
+it('clears the thread search with Escape', async () => {
+	const input = { ...props([thread()]), search: 'rover' };
+	const view = renderView(<Harness {...input} />);
+	const search = view.getByRole('searchbox', { name: 'Search threads' });
+	expect(search).toHaveProperty('value', 'rover');
+	fireEvent.change(search, { target: { value: 'rovers' } });
+	expect(input.onSearchChange).toHaveBeenLastCalledWith('rovers');
+	fireEvent.keyDown(search, { key: 'Escape' });
+	expect(input.onSearchChange).toHaveBeenLastCalledWith('');
+});
+
+it('explains when a search matches nothing', async () => {
+	const input = { ...props([]), search: ' rover ' };
+	const view = renderView(<Harness {...input} />);
+	expect(view.getByRole('status').textContent).toBe('No unsettled threads match your search.');
+});

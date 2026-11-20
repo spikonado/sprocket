@@ -1,8 +1,9 @@
 import { query, type MutationCtx, type QueryCtx } from '@convex/_generated/server';
 import { v, type Infer } from 'convex/values';
 import type { Doc, Id } from '@convex/_generated/dataModel';
-import { getOwnedThreadRecord } from '@convex/lib/access';
+import { getOwnedThreadRecord, getOwnedThreadRecordByString } from '@convex/lib/access';
 import { getExecutionRunRecord, getUserId } from '@convex/lib/auth';
+import { toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { imageUploadByStorageId } from '@convex/lib/imageUploads';
 import {
 	vAttachmentFileDownloadResult,
@@ -67,14 +68,25 @@ export const getPartsPage = query({
 export const getStateForRun = query({
 	args: {
 		runId: v.id('runs'),
-		executionSecret: v.string()
+		executionSecret: v.string(),
+		/** Any thread of the run's user. Defaults to the run's thread. */
+		threadId: v.optional(v.string())
 	},
 	returns: vTranscriptStateResult,
 	handler: async (ctx, args) => {
-		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
-		const thread = await ctx.db.get('threadRecords', run.threadId);
+		try {
+			const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
 
-		return await transcriptStateResult(ctx, run.threadId, thread);
+			const thread = await getOwnedThreadRecordByString(
+				ctx.db,
+				run.userId,
+				args.threadId ?? run.threadId
+			);
+
+			return await transcriptStateResult(ctx, thread._id, thread);
+		} catch (error) {
+			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
+		}
 	}
 });
 
@@ -82,23 +94,29 @@ export const getPartsPageForRun = query({
 	args: {
 		runId: v.id('runs'),
 		executionSecret: v.string(),
+		/** Any thread of the run's user. Defaults to the run's thread. */
+		threadId: v.optional(v.string()),
 		start: v.number(),
 		end: v.number(),
 		order: v.optional(v.union(v.literal('asc'), v.literal('desc')))
 	},
 	returns: vTranscriptPartsResult,
 	handler: async (ctx, args) => {
-		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
+		try {
+			const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
 
-		const parts = await loadTranscriptPartsPage(
-			ctx,
-			run.threadId,
-			args.start,
-			args.end,
-			args.order
-		);
+			const { _id: threadId } = await getOwnedThreadRecordByString(
+				ctx.db,
+				run.userId,
+				args.threadId ?? run.threadId
+			);
 
-		return { threadId: run.threadId, parts };
+			const parts = await loadTranscriptPartsPage(ctx, threadId, args.start, args.end, args.order);
+
+			return { threadId, parts };
+		} catch (error) {
+			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
+		}
 	}
 });
 

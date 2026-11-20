@@ -1,9 +1,11 @@
-import type { Id } from '@convex/_generated/dataModel';
-import { mutation, query, type MutationCtx } from '@convex/_generated/server';
+import type { Doc, Id } from '@convex/_generated/dataModel';
+import { mutation, query, type MutationCtx, type QueryCtx } from '@convex/_generated/server';
 import { paginationOptsValidator, paginationResultValidator } from 'convex/server';
 import { v } from 'convex/values';
-import { getOwnedThreadRecord } from '@convex/lib/access';
-import { getUserId } from '@convex/lib/auth';
+import { getOwnedThreadRecord, getOwnedThreadRecordByString } from '@convex/lib/access';
+import { getExecutionRunRecord, getUserId } from '@convex/lib/auth';
+import { toAgentToolConvexError } from '@convex/lib/agentErrors';
+import { INBOX_STATES, type InboxState } from '@convex/lib/inboxState';
 import schema from '@convex/schema';
 import {
 	listDirectChildrenPage,
@@ -12,8 +14,18 @@ import {
 	threadAncestryIds,
 	unsettleRoot
 } from '@convex/lib/threadHierarchy';
+import {
+	rootThreadsPage,
+	searchChildThreads,
+	searchRootThreads,
+	threadSummary
+} from '@convex/lib/threadListing';
+import { vListThreadsPayload, vListThreadsResult } from '@convex/lib/validators';
 
 const MAX_ATOMIC_MOVE_DESCENDANTS = 1000;
+const AGENT_LIST_PAGE_SIZE = 32;
+
+type RootListCursor = { state: InboxState; cursor: string | null };
 
 async function renameOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>, title: string) {
 	const trimmedTitle = title.trim();
@@ -190,5 +202,106 @@ export const ancestorChain = query({
 		if (thread.parentThreadId === undefined) return [];
 
 		return await threadAncestryIds(ctx.db, thread);
+	}
+});
+
+function parseRootCursor(cursor: string | undefined): RootListCursor {
+	if (cursor === undefined) return { state: 'unsettled', cursor: null };
+
+	const separator = cursor.indexOf(':');
+	const state = INBOX_STATES.find((candidate) => candidate === cursor.slice(0, separator));
+
+	if (separator < 0 || !state) throw new Error('Invalid cursor.');
+
+	return { state, cursor: cursor.slice(separator + 1) || null };
+}
+
+function formatRootCursor(position: RootListCursor) {
+	return `${position.state}:${position.cursor ?? ''}`;
+}
+
+async function summaries(ctx: QueryCtx, threads: Doc<'threadRecords'>[]) {
+	return await Promise.all(threads.map((thread) => threadSummary(ctx, thread)));
+}
+
+/** Lists or searches the run's user's threads for the `list_threads` agent tool. */
+export const listForRun = query({
+	args: {
+		runId: v.id('runs'),
+		executionSecret: v.string(),
+		...vListThreadsPayload.fields
+	},
+	returns: vListThreadsResult,
+	handler: async (ctx, args) => {
+		try {
+			const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
+			const search = args.query?.trim();
+
+			if (args.parentThreadId !== undefined) {
+				const parent = await getOwnedThreadRecordByString(ctx.db, run.userId, args.parentThreadId);
+
+				if (search) {
+					return {
+						threads: await summaries(ctx, await searchChildThreads(ctx, parent, search)),
+						nextCursor: null
+					};
+				}
+
+				const page = await listDirectChildrenPage(ctx, run.userId, parent._id, {
+					numItems: AGENT_LIST_PAGE_SIZE,
+					cursor: args.cursor ?? null
+				});
+
+				return {
+					threads: await summaries(ctx, page.page),
+					nextCursor: page.isDone ? null : page.continueCursor
+				};
+			}
+
+			const repositoryKeys = args.repositoryKeys ?? [
+				(await getOwnedThreadRecord(ctx.db, run.userId, run.threadId)).repositoryKey
+			];
+
+			const includeSettled = args.includeSettled ?? false;
+			const states: readonly InboxState[] = includeSettled ? INBOX_STATES : ['unsettled'];
+
+			if (search) {
+				const roots = await searchRootThreads(ctx, run.userId, search, repositoryKeys, states);
+
+				return { threads: await summaries(ctx, roots), nextCursor: null };
+			}
+
+			const readPage = async (position: RootListCursor) =>
+				await rootThreadsPage(ctx, run.userId, position.state, repositoryKeys, {
+					numItems: AGENT_LIST_PAGE_SIZE,
+					cursor: position.cursor
+				});
+
+			let position = parseRootCursor(args.cursor);
+			let page = await readPage(position);
+
+			if (
+				page.isDone &&
+				page.page.length === 0 &&
+				position.state === 'unsettled' &&
+				includeSettled
+			) {
+				position = { state: 'settled', cursor: null };
+				page = await readPage(position);
+			}
+
+			const next: RootListCursor | null = !page.isDone
+				? { state: position.state, cursor: page.continueCursor }
+				: position.state === 'unsettled' && includeSettled
+					? { state: 'settled', cursor: null }
+					: null;
+
+			return {
+				threads: await summaries(ctx, page.page),
+				nextCursor: next && formatRootCursor(next)
+			};
+		} catch (error) {
+			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
+		}
 	}
 });

@@ -211,6 +211,17 @@ impl<'a> ToolDisplayInput<'a> {
             .into(),
             "poll_subagent" => field("threadId").unwrap_or("Child agent").into(),
             "list_subagents" | "list_subagent_models" => String::new(),
+            "list_threads" => field("query").unwrap_or_default().into(),
+            "download_threads" => input
+                .get("threadIds")
+                .and_then(Value::as_array)
+                .map(|ids| {
+                    ids.iter()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_else(|| "Threads".into()),
             "check_docs" => field("query")
                 .or_else(|| field("path"))
                 .unwrap_or("Docs")
@@ -340,6 +351,8 @@ fn label(name: &str) -> Option<String> {
             "poll_pr" => "Polled PRs",
             "list_subagents" => "Listed Subagents",
             "list_subagent_models" => "Listed Subagent Models",
+            "list_threads" => "Listed Threads",
+            "download_threads" => "Downloaded Threads",
             "check_docs" => "Checked Docs",
             "bind_artifact" | "add_artifact" => "Bound Artifact",
             "create_artifact" => "Created Artifact",
