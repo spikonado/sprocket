@@ -13,7 +13,6 @@ function notices(props: Partial<ComponentProps<typeof ConversationNotices>> = {}
 			key={key}
 			error={null}
 			runError={null}
-			outOfUsage={false}
 			reconnecting={false}
 			syncing={false}
 			catalogError={false}
@@ -111,14 +110,6 @@ describe('Conversation notices', () => {
 		const alert = within(group).getByRole('alert');
 		expect(alert.textContent).toContain(usageLimit);
 		expect(alert.textContent).toContain("Run couldn't continue");
-	});
-
-	it('shows a run that ran out of usage as out of usage instead of the run failure', () => {
-		const message = 'Usage limit reached. Try again in 3h 20m.';
-		render(composer(notices({ runError: message, outOfUsage: true })));
-		const alert = screen.getByRole('alert');
-		expect(alert.textContent).toContain("You're out of usage");
-		expect(alert.textContent).toContain(message);
 	});
 
 	it('keeps distinct failures and reconnection status visible, then clears them on recovery', () => {

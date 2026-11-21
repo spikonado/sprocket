@@ -66,7 +66,7 @@ export async function gatewayQuotaStatus(
 	return {
 		tier,
 		exhausted: true,
-		message: `Usage limit reached. Try again in ${formatRetryAfter(window.end - now)}.`
+		message: `Your Sprocket usage limit has been reached. It resets in ${formatRetryAfter(window.end - now)}. Upgrade your plan, or switch to another provider.`
 	};
 }
 

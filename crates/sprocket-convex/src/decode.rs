@@ -15,7 +15,6 @@ pub enum ConvexErrorCode {
     SubmissionOwnedByAnotherExecutor,
     SubmissionOwnedByAnotherRun,
     MachineNotActive,
-    UsageLimitReached,
 }
 
 static CODE_MESSAGES: LazyLock<Vec<(ConvexErrorCode, String)>> = LazyLock::new(|| {

@@ -46,6 +46,10 @@ Released agents omit `deferPrompt` from `agentRuntime.createGatewayRun` and `sub
 
 Released agents send `text` to `agentRuntime.finalizeExecutorRun`, `finalizeFailedStart` and `finalizeClaimFailure`. All three accept and ignore it. Remove the argument once those agents age out.
 
+### Usage-limit failure kind
+
+Released v0.5.x agents send `failureKind: 'usage_limit'` to `agentRuntime.finalizeExecutorRun` when `issueGatewayCredential` throws the `USAGE_LIMIT_REACHED` code, and prefer that failure when every provider fails. The mutation accepts and ignores the argument, and `issueGatewayCredential` keeps throwing `{ code, message }`. Once those agents age out, remove the argument and throw the message alone.
+
 ### Retired transcript section summaries
 
 Released agents send `sections` to `agentRuntime.finalizeCompletionCall`. The mutation accepts and ignores it. Remove the argument and `sectionOrder` once agents that send it age out. Transcript parts still keep `work`, and tool jobs still accept their section assignments, because supported clients use those fields to display history.
@@ -99,6 +103,10 @@ Released agents start `list_subagents` jobs and call `subagents:listChildren` fo
 ### Completion provider defaults
 
 Older `threadRecords` and `runs` rows lack `completionProvider`, so the schema keeps it optional. Convex readers, including provider handoffs and subagent settings, and the Rust agent's `RunSnapshot` treat a missing value as `spikonado`. `migrations:backfillThreadCompletionProviders` and `migrations:backfillRunCompletionProviders` set it, and the Convex Production workflow runs them after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports both done on production, make the field required, drop the `?? 'spikonado'` reads and the Rust default, and remove the migrations.
+
+### Stored usage-limit failure kinds
+
+Older `runs` rows carry `failureKind: 'usage_limit'`, so the schema uses `vStoredRunFailureKind` and `projectSelectedThreadLifecycle` reports only `abandoned`. `migrations:clearUsageLimitFailureKinds` clears it, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, store `vRunFailureKind` and remove `vStoredRunFailureKind` and the migration.
 
 ### Migration records
 

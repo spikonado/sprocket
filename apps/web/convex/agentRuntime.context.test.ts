@@ -794,7 +794,7 @@ describe('agentRuntime context accounting', () => {
 		).resolves.toBe(false);
 	});
 
-	it('reports a run that ran out of usage before it began', async () => {
+	it("reports a released agent's usage-limit failure as a plain run error", async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'usage-limit-secret';
@@ -822,7 +822,7 @@ describe('agentRuntime context accounting', () => {
 			asUser.query(api.chat.selectedThreadLifecycle, { threadId })
 		).resolves.toMatchObject({
 			phase: 'failed',
-			run: { lastError: 'Usage limit reached.', failureKind: 'usage_limit', promptUnsent: true }
+			run: { lastError: 'Usage limit reached.', promptUnsent: true }
 		});
 	});
 
