@@ -9,37 +9,19 @@ Use `kicad-cli` for checks and exports.
 ## Set up the connector
 
 - Check that KiCad is under "Installed connectors" in the workspace instructions. If it isn't, ask the user to install it in Settings → Connectors.
-- The connector puts `kicad-python`, `kicad-cli`, `kicad`, `kipy-api`, `kicad-route`, and `kicad-view` on PATH. Call them by name.
-- Run every script with `kicad-python`, whose venv has kipy and the routing tools' packages. System `python3` and PyPI's `kicad-python` lack them or are too old.
-- `kipy-api <module>`, like `kipy-api board`, lists the installed kipy's classes, method signatures, and enums. Check it before writing kipy code.
-- `kicad-view` renders one area of a board as a PNG. Use it to look at placement, routing, and DRC findings.
-- KiCad's libraries are in `$SPROCKET_KICAD_LIBRARIES`. Search for parts there.
+- Run every script with `kicad-python`, whose venv has kipy and the routing tools. System `python3` and PyPI's `kicad-python` lack them or are too old.
+- Check `kipy-api <module>`, like `kipy-api board`, before writing kipy code. It lists the installed kipy's classes, methods, and enums.
+- Look at placement, routing, and DRC findings with `kicad-view`, which renders one area of a board as a PNG.
+- KiCad's stock libraries are in `$SPROCKET_KICAD_LIBRARIES`.
 - kipy uses nm, and DRC JSON and `kicad-view` use mm. All three use absolute board coordinates, not coordinates relative to the board origin.
-- KiCadRoutingTools is in `$SPROCKET_KICAD_ROUTING_TOOLS`. `kicad-route` runs its `py_router/route.py`.
-  Run its other scripts with `kicad-python "$SPROCKET_KICAD_ROUTING_TOOLS/<script>"` and read their `--help`.
-  Use them before writing your own:
-
-  | Script                                                        | Use                                                                               |
-  | ------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-  | `py_router/copy_board.py`                                     | Copy a board with its `.kicad_pro` and `.kicad_dru`                               |
-  | `py_tools/board_brief.py`, `py_tools/board_context.py`        | Footprints, pads, and courtyards of a board                                       |
-  | `py_tools/check_assembly.py`                                  | Whether a placement can be assembled                                              |
-  | `py_router/route_planes.py`                                   | GND stitching vias and board-edge via fences                                      |
-  | `py_router/route_diff.py`                                     | Differential pairs                                                                |
-  | `py_router/qfn_fanout.py`, `py_router/bga_fanout.py`          | Escape routing for fine-pitch ICs                                                 |
-  | `py_tools/route_review.py`                                    | After a route: open nets, costly nets, congested areas, and the parts to move     |
-  | `py_tools/check_reachability.py`, `py_tools/net_forensics.py` | Why a pad or net won't route                                                      |
-  | `py_tools/check_join.py`                                      | Check a hand-drawn track and via path against all copper                          |
-  | `py_router/check_weird.py`                                    | Copper hygiene: removable segments, soft joints, dangling vias, narrow pad joints |
-  | `py_tools/kicad_unconnected.py`                               | Exact unconnected count from DRC                                                  |
-  | `py_tools/render_power.py`, `py_tools/analyze_power_paths.py` | Power paths and their copper                                                      |
-  | `py_tools/render_nets.py`                                     | Compare chosen nets across several routed boards                                  |
-  | `py_tools/pdf_text.py`                                        | Find, print, and render pages of a datasheet PDF                                  |
+- KiCadRoutingTools is in `$SPROCKET_KICAD_ROUTING_TOOLS`, and `kicad-route` runs its `py_router/route.py`.
+  The scripts this skill names are in its `py_router/` or `py_tools/`. Read a script's `--help` before its first run.
+  Before writing a board script, look for one in the Project Structure section of its `README.md`.
 
 ## Before editing
 
 - Before the first save of an existing project, compare the file header's `generator_version` with `kicad-cli version`.
-  If the file is older, ask the user once, because saving upgrades the format. An older KiCad then opens only copies exported with `kicad-cli pcb downgrade` or `sch downgrade`.
+  If the file is older, ask the user once, because saving upgrades the format and their KiCad may no longer open it.
 - Open existing files with `open_document`. `create_document` replaces an existing file on save.
 
 ## Known traps
@@ -48,8 +30,6 @@ Use `kicad-cli` for checks and exports.
   Call `sym.proto.ClearField("definition")` before updating schematic symbols.
   Clearing it on a board footprint wipes its pads.
 - Copies of a placed symbol made with `create_items` fork its library link into `R_1`..`R_4`. Place one with `place_symbol_from_library`, then create copies from its proto.
-- DRC reports hundreds of `connection_width` violations after a zone fill, because a new `Zone()` has 0 clearance and 0 mm thermal spokes.
-  Set its clearance and a full pad connection, as in [Copper pours](#copper-pours).
 - KiCad's Cleanup Tracks & Vias and other `run_action` calls fail in headless mode. Use the steps in [Finishing the copper](#finishing-the-copper).
 - The Gerber job file lists placeholder dielectrics because kipy reads the stackup with `board.get_stackup()` but can't write it.
   With the board closed, edit the `(stackup …)` block inside `(setup)` in the `.kicad_pcb`, then reopen it and check `get_stackup()`.
@@ -61,7 +41,6 @@ Use `kicad-cli` for checks and exports.
 - `get_pads()` returns paste-only pads with no net. Skip SMD pads without a net when matching pads to nets.
 - `save()` fails with `failed to save schematic` for a sheet with a relative filename. Create the sheet with an absolute path, then rename it to the basename.
 - Schematic items have no bounding box handler. Measure text with `get_text_extents`.
-- Hierarchical net names start with the sheet path, like `/charger/CHG_PMID`. Match both forms when filtering nets.
 - Teardrop counts change between refills. Refill twice before comparing DRC runs.
 - Deleting every item that DRC flags as dangling opens T-junctions. Delete an item only when the net's connectivity stays the same without it.
 
@@ -86,7 +65,7 @@ ERC passes on designs that would damage parts. Before calling the schematic done
 
 ## Custom library parts
 
-Look for a part in the stock libraries before drawing it.
+Draw a part only when the stock libraries lack it.
 kipy can't edit libraries, so write custom symbols and footprints as text:
 
 - Copy the header and structure of a stock file, and keep its format version.
@@ -99,12 +78,12 @@ kipy can't edit libraries, so write custom symbols and footprints as text:
 ## Manufacturer constraints
 
 Before laying out a board, ask the user which manufacturer and service tier they will order from, and read its capabilities page.
-Write its minimums with `board.set_design_rules()`, which saves them in the `.kicad_pro`.
-Keep net class widths and clearances above them.
+Set its minimums as the board's design rules, and keep net class widths and clearances above them.
 
 ## Grounding
 
-- Use one unbroken ground plane under the whole board.
+- Use one unbroken ground plane under the whole board, with no other pours or traces on its layer.
+  On boards with 4 or more layers, it is the inner layer next to `F.Cu`. On 2-layer boards, it is `B.Cu`, and only short jumpers may cross it.
   Above tens of kHz, return current flows in the plane directly under its trace, so placement keeps noisy currents away from quiet ones.
   Place the power stage, digital, and analog parts in separate areas, and route each area's signals only over that area, on every layer.
 - Connect pins labeled AGND, DGND, PGND, or SGND to that plane right at the pin. The labels name currents inside the chip.
@@ -117,7 +96,7 @@ Keep net class widths and clearances above them.
 ## Placing parts
 
 - Copy the datasheet's layout for placement-sensitive blocks, like ESD protection, crystals, and switching regulator passives.
-- When the vendor publishes layout files for an IC's reference design, like Raspberry Pi's RP2350 minimal design, copy its core with kipy instead of redrawing it: the IC, its regulator, crystal, flash, USB, and decoupling parts with their tracks and vias.
+- When the vendor publishes layout files for an IC's reference design, copy its core with kipy instead of redrawing it: the IC, its regulator, crystal, flash, USB, and decoupling parts with their tracks and vias.
   Pair each reference footprint with the part on this board that replaces it, and map each reference net to this board's net on the same pad number.
   Then apply one rigid transform and the net map to every copied track, arc, and via, and lock them.
 - Put each decoupling capacitor at the supply pin it serves, with its pad facing the pin about 1 mm away.
@@ -132,9 +111,9 @@ Keep net class widths and clearances above them.
 
 Before routing, give every copper layer a GND zone over the whole board at priority 0.
 Put pours of other nets, like power planes and the AGND island, above it at higher priorities, so GND fills the copper they leave.
-Keep one layer as a solid ground plane with no other pours or traces.
-On boards with 4 or more layers, it is the inner layer next to `F.Cu`. On 2-layer boards, it is `B.Cu`, and only short jumpers may cross it.
 Keep switch node copper as small as its current allows, because its area radiates.
+
+A new `Zone()` has 0 clearance and 0 mm thermal spokes, so DRC reports hundreds of `connection_width` violations after a fill. Set its clearance and a full pad connection:
 
 ```python
 from kipy.board_types import Zone
@@ -165,12 +144,11 @@ Give switch nodes a net class as wide as their current needs.
 Right after placement, the pours, and the keepouts, and before the schematic is final, judge the placement with a trial route:
 
 1. Run `kicad-route board.kicad_pcb trial.kicad_pcb --quick 2`, then `route_review.py trial.kicad_pcb`.
+   Use `--quick 2` for every experiment, because a full run takes minutes longer.
 2. Move the parts it names and repeat until the open and costly nets are few.
 3. Where crossing nets connect to interchangeable pins, like MCU GPIOs, propose pin swaps to the user.
-   Once they agree, `--swappable-nets 'GPIO*' --schematic-dir proj/` swaps the pins and writes the swaps to the schematic.
+   Once they agree, `kicad-route --swappable-nets` swaps the pins, and `--schematic-dir` writes the swaps to the schematic.
    Finish this step before the first full route.
-
-Use `--quick 2` for experiments, because a full run takes minutes longer.
 
 Then route in this order:
 
@@ -178,7 +156,7 @@ Then route in this order:
    `qfn_fanout.py` helps, but check its result in `kicad-view`.
 2. Route differential pairs with `route_diff.py --impedance <ohms>`, then check them with `check_impedance.py`.
    `route_diff.py` pairs nets only when the last character that isn't a digit or `_` is `P`/`N` or `+`/`-`, like `USB_D+`/`USB_D-` or `ETH_TXP`/`ETH_TXN`. Rename nets like `USB_DM` and `USB_DP_MCU` in the schematic first.
-3. Lock the copper from the steps above: set `locked = True` on its tracks, arcs, and vias, and send them to `update_items`. The router never rips locked copper.
+3. Lock the tracks, arcs, and vias from the steps above, so the router never rips them.
 4. Route everything else in one run with `--keep-input-copper`. Plan buses and nets that share a destination as bundles with `--bus`.
    Routing block by block leaves more nets open than one global run.
 
@@ -194,8 +172,7 @@ The exit code doesn't say whether every net is routed, so run [DRC](#checks) on 
 For each round of fixes:
 
 - Route only what is still open: the nets DRC lists as unconnected with `--nets`.
-- Read the run's last `JSON_SUMMARY_MIN` and `JSON_IMPROVEMENT_GATE` lines.
-  When the gate rejects a run, `kicad-route` writes the input board back, and the same command gets the same result.
+- When the improvement gate in the log rejects a run, `kicad-route` writes the input board back, and the same command gets the same result.
   The gate accepts a run that opens a different net than it closes, so compare the open net names too.
 - When two runs fail on the same nets, move parts or swap pins before the next run. Net order and other flag variants don't fix them.
 - Commit the board after each stage that passes DRC, so a bad run is one `git checkout` away. When you can't commit, keep snapshots with `copy_board.py`.
@@ -203,7 +180,7 @@ For each round of fixes:
 
 Routes and DRC on a full board take minutes to hours:
 
-- Start them with `exec_cmd` and a short `yieldTimeMs`, then wait with `poll_cmd`. Read their logs with `grep -a`.
+- Read their logs with `grep -a`.
 - On machines with less than 32 GB of RAM, run one router, DRC, or solver at a time.
 - Keep a `STATE.md` in the scratch directory that lists running jobs, what each variant tests, and the scratch scripts, so the work survives context compaction.
 
@@ -236,7 +213,7 @@ Once DRC shows 0 unconnected items, finish the copper in this order and run DRC 
 Give every component's footprint a 3D model whose file exists, so the 3D render shows each component's body.
 When KiCad's libraries lack one, download the part's STEP model from its manufacturer or distributor, save it in `proj/lib/3d/`, and reference it as `${KIPRJMOD}/lib/3d/…`.
 
-- `uvx easyeda2kicad --3d --lcsc_id C… --output proj/lib/3d/<name>` writes LCSC's 3D model to `<name>.3dshapes/`. Check its dimensions against the drawing.
+- `uvx easyeda2kicad --3d` downloads LCSC's model for a part's LCSC number. Check its dimensions against the drawing.
 - Generated STEP files differ byte for byte between runs. Regenerate them only when the geometry changes.
 
 ## Checks
