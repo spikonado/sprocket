@@ -26,7 +26,6 @@ it('keeps settings navigation and theme controls without an inbox close button',
 		'Account',
 		'AI Usage',
 		'Providers',
-		'BYOK/BYOS',
 		'Version Control',
 		'Connectors',
 		'Payments'

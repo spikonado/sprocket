@@ -18,7 +18,7 @@ pub(crate) const USAGE_LIMIT_CODE: &str = "muse_subscription_usage_limit";
 pub(crate) const ERROR_CODE: &str = "muse_code_error";
 const PLAN_REQUIRED: &str = "Muse Wonder Full needs the Power Usage or Maximum Usage plan of a Muse Code subscription. Upgrade it in Meta's Accounts Center, or switch to another provider.";
 const SIGNED_OUT: &str =
-    "Muse Code isn't signed in to a Muse Code subscription. Sign in in Settings > BYOK/BYOS.";
+    "Muse Code isn't signed in to a Muse Code subscription. Sign in in Settings > Providers.";
 
 /// Runs Meta models through the local Muse Code CLI on the user's subscription.
 #[derive(Clone)]

@@ -134,11 +134,11 @@ impl CliInstall {
         match self.detect().await {
             Detected::Usable(path, _) => Ok(path),
             Detected::Outdated(version) => bail!(
-                "{name} {version} is older than {minimum_version}, which Sprocket needs. Update it in Settings > BYOK/BYOS."
+                "{name} {version} is older than {minimum_version}, which Sprocket needs. Update it in Settings > Providers."
             ),
             Detected::Missing => {
                 bail!(
-                    "{name} isn't installed on this computer. Install it in Settings > BYOK/BYOS."
+                    "{name} isn't installed on this computer. Install it in Settings > Providers."
                 )
             }
         }

@@ -1650,7 +1650,7 @@ it('deletes the API key of a provider removed from the providers page', async ()
 	expect(removeApiKey).toHaveBeenCalledWith({ provider: 'openrouter' });
 });
 
-it('checks Claude Code again when BYOK/BYOS opens', async () => {
+it('checks Claude Code again when Providers opens', async () => {
 	const client = createConvexFixtures();
 
 	const fetchClaudeCodeStatus = vi
@@ -1660,6 +1660,6 @@ it('checks Claude Code again when BYOK/BYOS opens', async () => {
 
 	await renderApp(client, createRuntime(createLocalApi({ fetchClaudeCodeStatus })));
 	fireEvent.click((await screen.findAllByRole('button', { name: 'Settings' }))[0]!);
-	fireEvent.click(screen.getByRole('button', { name: 'BYOK/BYOS' }));
+	fireEvent.click(screen.getByRole('button', { name: 'Providers' }));
 	expect(await screen.findByRole('button', { name: 'Sign in with Claude' })).toBeTruthy();
 });

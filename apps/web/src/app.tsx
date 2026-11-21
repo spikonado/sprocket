@@ -487,14 +487,14 @@ export default function App({
 	const [threadSearch, setThreadSearch] = useState('');
 	const [pendingProjectLaunches, setPendingProjectLaunches] = useState<string[]>([]);
 	const [initialProjectLaunchResolved, setInitialProjectLaunchResolved] = useState(false);
-	const credentialsOpen = settingsOpen && settingsPage === 'credentials';
+	const providersOpen = settingsOpen && settingsPage === 'providers';
 
 	const cliUserId = authReady ? signedInUserId : null;
 
 	const claudeCode = useLocalCliStatus({
 		localApi,
 		userId: cliUserId,
-		refreshKey: credentialsOpen,
+		refreshKey: providersOpen,
 		fetchStatus: (api, userId) => api.fetchClaudeCodeStatus(userId),
 		failureMessage: 'Couldn’t check Claude Code on this computer.'
 	});
@@ -502,7 +502,7 @@ export default function App({
 	const muse = useLocalCliStatus({
 		localApi,
 		userId: cliUserId,
-		refreshKey: credentialsOpen,
+		refreshKey: providersOpen,
 		fetchStatus: (api, userId) => api.fetchMuseStatus(userId),
 		failureMessage: 'Couldn’t check Muse on this computer.'
 	});
@@ -2550,36 +2550,35 @@ export default function App({
 						) : settingsPage === 'aiUsage' ? (
 							<SettingsAiUsage modelCatalog={modelCatalog} />
 						) : settingsPage === 'providers' ? (
-							<SettingsProviders
-								onRemove={removeProvider}
-								onOpenCredentials={() => setSettingsPage('credentials')}
-							/>
-						) : settingsPage === 'credentials' && signedInUserId ? (
-							<SettingsCredentials
-								userId={signedInUserId}
-								localApi={localApi}
-								apiKeysSaved={apiKeysSaved}
-								claudeTokenSaved={claudeTokenSaved}
-								claudeCodeStatus={claudeCode.status}
-								claudeCodeStatusError={claudeCode.error}
-								museStatus={muse.status}
-								museStatusError={muse.error}
-								chatGptStatus={chatGptStatus}
-								chatGptLoading={chatGptStatusResource.status === 'loading'}
-								chatGptStatusError={chatGptStatusError}
-								loading={providerConfiguration.status === 'loading'}
-								loadError={providerConfigurationError}
-								onChatGptStatusChange={setChatGptStatus}
-								onClaudeCodeStatusChange={claudeCode.update}
-								onMuseStatusChange={muse.update}
-								onConfigurationChange={handleProviderConfigurationChange}
-								onProviderConnected={(provider) =>
-									void enableProvider({ provider }).catch(() => {})
-								}
-								onProviderRemoved={(provider) =>
-									void removeProviderFromOrder({ provider }).catch(() => {})
-								}
-							/>
+							<SettingsProviders onRemove={removeProvider}>
+								{signedInUserId && (
+									<SettingsCredentials
+										userId={signedInUserId}
+										localApi={localApi}
+										apiKeysSaved={apiKeysSaved}
+										claudeTokenSaved={claudeTokenSaved}
+										claudeCodeStatus={claudeCode.status}
+										claudeCodeStatusError={claudeCode.error}
+										museStatus={muse.status}
+										museStatusError={muse.error}
+										chatGptStatus={chatGptStatus}
+										chatGptLoading={chatGptStatusResource.status === 'loading'}
+										chatGptStatusError={chatGptStatusError}
+										loading={providerConfiguration.status === 'loading'}
+										loadError={providerConfigurationError}
+										onChatGptStatusChange={setChatGptStatus}
+										onClaudeCodeStatusChange={claudeCode.update}
+										onMuseStatusChange={muse.update}
+										onConfigurationChange={handleProviderConfigurationChange}
+										onProviderConnected={(provider) =>
+											void enableProvider({ provider }).catch(() => {})
+										}
+										onProviderRemoved={(provider) =>
+											void removeProviderFromOrder({ provider }).catch(() => {})
+										}
+									/>
+								)}
+							</SettingsProviders>
 						) : settingsPage === 'payments' ? (
 							<SettingsPayments onOpenThread={openPurchaseThread} />
 						) : settingsPage === 'versionControl' ? (

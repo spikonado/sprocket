@@ -44,7 +44,7 @@ A provider is where Sprocket sends model requests. Spikonado, Sprocket's own pro
 | Morph                  | API key. See [Morph](#morph).                                                                       |
 | Muse Code Subscription | Sign in with Muse through the Muse CLI. Sprocket can install the Muse CLI for you.                  |
 
-Add keys and subscriptions in **Settings → BYOK/BYOS**. Sprocket checks each API key with its provider before saving it.
+Add keys and subscriptions in **Settings → Providers**, under **Connect providers**. Sprocket checks each API key with its provider before saving it.
 
 Claude and Muse sign-in run on the computer that runs Sprocket. Open Sprocket on that computer to install them or sign in.
 
@@ -56,7 +56,7 @@ Morph serves Kimi K3.1 Pro and DeepSeek V4.1 Flash 1017. Pay-as-you-go keys and 
 
 In **Settings → Providers**, drag providers into the order you want and turn each on or off. At least one provider must stay on.
 
-Connecting a provider in **Settings → BYOK/BYOS** adds it to the end of the list. Removing a provider from either page takes it off the list and deletes what Sprocket saved for it: an API key, the Claude token, or every ChatGPT sign-in. Spikonado and Muse can't be removed, since Sprocket holds no credential for them. Turn them off instead. If you remove the last provider that's on, Sprocket turns Spikonado back on.
+Connecting a provider adds it to the end of the list. Removing a provider takes it off the list and deletes what Sprocket saved for it: an API key, the Claude token, or every ChatGPT sign-in. Spikonado and Muse can't be removed, since Sprocket holds no credential for them. Turn them off instead. If you remove the last provider that's on, Sprocket turns Spikonado back on.
 
 For each request, Sprocket uses the first enabled provider that offers the model. Sprocket retries server errors. If the provider still fails or rate-limits the request, Sprocket moves the run to the next enabled provider. If no enabled provider offers the model, the run fails with an error that points to **Settings → Providers**.
 
