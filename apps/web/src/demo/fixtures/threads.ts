@@ -9,7 +9,14 @@ const ERC = `kicad-cli sch erc --format json --severity-all --exit-code-violatio
 
 const DRC = `kicad-cli pcb drc --format json --severity-all --schematic-parity --exit-code-violations -o /tmp/drc.json ${BOARD}`;
 
-const THERMAL_PADS = `python3 scratch/thermal_vias.py ${BOARD} U1 U4 U5 --net GND`;
+const VIAS_IN_PADS = `python3 scratch/vias_in_pads.py ${BOARD} --smd-only`;
+
+const REGENERATE_FAB = [
+	tool('exec_cmd', DRC),
+	tool('exec_cmd', `kicad-cli pcb export gerbers -o fab/gerbers ${BOARD}`),
+	tool('exec_cmd', 'cd fab && zip -r rp2350-devboard-gerbers.zip gerbers'),
+	tool('apply_patch', 'hardware/bom.md\ndocs/assembly.md')
+];
 
 const FIRMWARE_BUILD = 'cmake -S firmware -B firmware/build && cmake --build firmware/build';
 
@@ -27,23 +34,23 @@ const orderPack: DemoThread = {
 			work(
 				think(
 					'Planning the checks',
-					'Run ERC and DRC first so the quote is for a board that is ready to order. Then price the same 37 BOM lines that the fab files use.'
+					'Run ERC and DRC first so the quote is for a board that is ready to order. Then price the same 38 placed BOM lines that the fab files use.'
 				),
 				tool('read_skill', '$designing-pcbs'),
 				tool('exec_cmd', ERC),
 				tool('exec_cmd', DRC),
 				think(
 					'Reading the reports',
-					'ERC: 0 errors, 0 warnings. DRC: 0 errors, 0 warnings, 0 unconnected items, and the board matches the schematic. DRC does not check heat, so look at the power parts by hand.'
+					"ERC: 0 errors, 0 warnings. DRC: 0 errors, 0 unconnected items, and the board matches the schematic. The only note is R7: its silk line touched U3's pin-1 mark and was trimmed, so it no longer matches its library footprint. DRC doesn't price the via process, so check for vias in pads by hand."
 				),
-				tool('exec_cmd', THERMAL_PADS),
+				tool('exec_cmd', VIAS_IN_PADS),
 				think(
-					'Checking the thermal pads',
-					"U1's center pad has 5 vias to ground. U4, the BQ24074, has none, and the nearest GND via is 2.55 mm away. Charging a low cell it can dissipate about 0.9 W, so it will reach its thermal limit and cut the charge current."
+					'Checking the vias',
+					'82 vias sit in or touch SMD pads, on the decoupling caps, U1, U2, U3 and J1. Open barrels there would wick solder away from the joints, so the order needs resin-filled, capped vias.'
 				)
 			),
 			say(
-				"ERC and DRC are both clean. DRC can't see one problem: the BQ24074's thermal pad has no vias. Pricing the BOM next."
+				"ERC and DRC are both clean. DRC can't see one cost: 82 vias sit in or touch SMD pads, so PCBWay has to fill and cap them. Pricing the BOM next."
 			),
 			work(
 				tool(
@@ -52,26 +59,22 @@ const orderPack: DemoThread = {
 				),
 				tool(
 					'lookup_parts',
-					'SC1509-A4, SC1169, W25Q128JVPIQ, APS6404L-3SQR-SN, BQ24074RGTR, TLV75733PDBVR, USBLC6-2SC6, USB4105-GF-A, DM3AT-SF-PEJM5, ABM8-272-T3, WS2812B-2020-V6, AOTA-B201610S3R3-101-T'
+					'RP2350A, RMC20452T, W25Q128JVSIQ, APS6404L-3SQR-SN, BQ24074RGTR, TPS63001DRCR, USBLC6-2SC6, USB4105-GF-A, 1040310811, ABM8-272-T3, WS2812B-2020-V6, AOTA-B201610S3R3-101-T, DFE252012F-2R2M=P2'
 				),
 				tool(
 					'lookup_parts',
-					'GRM188R61E106MA73D, GRM155R61C105KA12D, GRM155R60J475ME47D, GRM155R71C104KA88D, GRM1555C1H150JA01D, GRM155R60J106ME15D, S2B-PH-SM4-TB, SM04B-SRSS-TB, SM03B-SRSS-TB, PTS810 SJM 250 SMTR LFS, 150060GS75000, 150060AS75000, 61301211121'
+					'CL05B104KO5NNNC, CL05A475MP5NRNC, CL05C150JB5NNNC, CL21A475KAQNNNE, CL10A106KP8NNNC, CL21A226MAQNNNE, LTST-C191KFKT, DMG2305UX-7, DMG1012T-7, S2B-PH-SM4-TB(LF)(SN), SM04B-SRSS-TB(LF)(SN), PTS810SJM250SMTRLFS'
 				),
 				think(
-					'Filling the gaps',
-					'LCSC has no listing for the Würth LEDs or the 61301211121 headers, so price D2, D3, D4, J6 and J7 at Digi-Key. Everything else is LCSC, bought up to each minimum order quantity.'
-				),
-				tool(
-					'scrape_url',
-					'https://www.digikey.com/en/products/detail/w%C3%BCrth-elektronik/61301211121/4846844'
+					'Checking stock',
+					"All 38 placed lines are in stock at LCSC, bought up to each minimum order quantity. Digi-Key lists C25 and C26's CL21A226MAQNNNE as discontinued, but LCSC still has it. L1 is thin, so note a substitute."
 				),
 				tool('apply_patch', 'hardware/bom.md'),
 				tool('bind_artifact', 'hardware/bom.md'),
-				tool('apply_patch', 'docs/bring-up.md'),
-				tool('bind_artifact', 'docs/bring-up.md')
+				tool('apply_patch', 'docs/assembly.md'),
+				tool('bind_artifact', 'docs/assembly.md')
 			),
-			say(`The BOM and bring-up notes are written. All 37 lines are in stock. Parts come to $39.73 for one board and $131.16 for five. The RM2 ($6.61), PSRAM ($4.01) and flash ($3.29) are about a third of that.
+			say(`The BOM and assembly notes are written. All 38 placed lines are in stock. Parts come to $37.60 for one board and $122.01 for five. The RM2 ($6.61), PSRAM ($4.01) and flash ($2.28) are about a third of that.
 
 artifact:bom
 
@@ -84,76 +87,73 @@ Getting the PCBWay quote now.`),
 				tool('exec_cmd', 'agent-browser snapshot -i'),
 				think(
 					'Reading the quote',
-					'5 PCBs at 76.2 × 25.4 mm, 4 layers, ENIG: $62.04, of which $29.84 is ENIG. The 5/5 mil tracks and 0.25 mm holes add nothing. Turnkey assembly is $88.00 for one board and $88.50 for five. The $29 new-customer promo would cover one board but not five, because J6 and J7 give 120 through-hole joints, over its 100-joint limit. Quote without it. X-ray has no field in the instant quote.'
+					'5 PCBs at 28 × 78.54 mm, 4 layers, ENIG: $156.77. That is $32.20 base, $29.84 ENIG and $94.73 for resin-filled, capped vias. Tented it would be $62.04. Assembly is the $88.00 minimum for one board and for five, since there are 82 SMD parts and no through-hole joints. The $29 new-customer promo would apply too. Quote without it.'
 				),
 				tool('apply_patch', 'hardware/bom.md')
 			),
-			say(`PCBWay quoted the board. Shipping and X-ray on U1 and U7 aren't in the instant quote.
+			say(`PCBWay quoted the board. Shipping isn't included.
 
 | | 1 board | 5 boards |
 | --- | --- | --- |
-| PCB (5 bare boards, ENIG) | $62.04 | $62.04 |
-| Turnkey assembly | $88.00 | $88.50 |
-| Parts | $39.73 | $131.16 |
-| **Total** | **$189.77** | **$281.70** |
+| PCB (5 bare boards, ENIG) | $156.77 | $156.77 |
+| Turnkey assembly | $88.00 | $88.00 |
+| Parts | $37.60 | $122.01 |
+| **Total** | **$282.37** | **$366.78** |
 
-Add vias under U4's thermal pad before you order, or the charger will throttle.
+$94.73 of the PCB price is the filled vias. Moving the 82 vias off their pads would bring the PCB down to $62.04.
 
 kicad:hardware/rp2350-devboard.kicad_pro`)
 		])
 	]
 };
 
-type ThermalPlan = { change: string; tools: Step; reply: string };
+type ViaPlan = { change: string; tools: Step; reply: string };
 
-const THERMAL_VIAS: ThermalPlan = {
+const MOVE_VIAS: ViaPlan = {
 	change:
-		'Put vias in the pad itself, down to the solid In1 ground plane. The board minimum is 0.25 mm drill and 0.55 mm via, which fits a 2×2 grid on the 1.6 mm pad.',
-	tools: work(
-		tool('apply_patch', BOARD),
-		tool('exec_cmd', DRC),
-		tool('exec_cmd', `kicad-cli pcb export gerbers -o fab/gerbers ${BOARD}`),
-		tool('exec_cmd', 'cd fab && zip -r rp2350-devboard-gerbers.zip gerbers')
-	),
-	reply: `Done. U4's thermal pad now has 4 vias (0.25 mm drill, 0.55 mm via) into the In1 ground plane.
+		'Move each in-pad via beside its pad on a short track, keeping the 0.6/0.3 mm via size. The tight spots are the decoupling caps around U1 and J1. The 0.2 mm thermal vias in the U1, U5 and U6 exposed pads stay, since the paste is windowed there.',
+	tools: work(tool('apply_patch', BOARD), tool('exec_cmd', VIAS_IN_PADS), ...REGENERATE_FAB),
+	reply: `Done. None of the signal vias touch an SMD pad now, so the board can be ordered with tented vias.
 
 - DRC is clean again.
 - \`fab/gerbers/\` and \`fab/rp2350-devboard-gerbers.zip\` are regenerated. Upload the new zip.
-- The BOM, centroid file and quote don't change.`
+- The PCB drops to $62.04, so one board is $187.64 and five are $272.05 ($54.41 each).
+- \`docs/assembly.md\` now asks for tented vias.`
 };
 
-const THERMAL_PLANS = new Map<string, ThermalPlan>([
-	['thermal-vias', THERMAL_VIAS],
+const VIA_PLANS = new Map<string, ViaPlan>([
+	['move-vias', MOVE_VIAS],
 	[
-		'lower-charge',
+		'move-and-reroute',
 		{
-			change:
-				'Charge current is set by R6: 1.8 kΩ gives 494 mA, and it scales with 1/R6. 3.6 kΩ gives about 247 mA, so U4 makes roughly half the heat.',
+			change: `${MOVE_VIAS.change} Then fix the review's four major findings: QSPI_SD3 straight to U2 pin 7, SD_CLK and SD_D3 down the right side with the other SD lines, VBAT from U5's BAT pins at full width, and D+ joined at J1's A6 and B6.`,
 			tools: work(
-				tool('apply_patch', `${SCHEMATIC}\n${BOARD}\nhardware/bom.md`),
-				tool('exec_cmd', ERC),
-				tool('lookup_parts', 'RC0402FR-073K6L')
+				tool('apply_patch', BOARD),
+				tool('exec_cmd', VIAS_IN_PADS),
+				tool('exec_cmd', `python3 scratch/net_lengths.py ${BOARD}`),
+				...REGENERATE_FAB
 			),
-			reply: `Done. R6 is now 3.6 kΩ (RC0402FR-073K6L), which sets the charge current to about 247 mA.
+			reply: `Done. The vias are off the pads and the four major review findings are rerouted.
 
-- Only the value changed, so the copper and Gerbers stay the same.
-- A flat cell takes about twice as long to charge.
-- The BOM line for R6 is updated. Nothing else in the quote moves.`
+- QSPI_SD3 no longer loops out to the left edge, and SD_CLK and SD_D3 follow the other SD lines down the right side.
+- VBAT leaves U5's BAT pins at 0.4 mm on F.Cu, with no 0.15 mm neck.
+- D+ joins A6 and B6 at J1, so there is no stub in either plug orientation.
+- DRC is clean, and \`fab/\` is regenerated. The PCB drops to $62.04, so five boards are $272.05.`
 		}
 	],
 	[
-		'leave-it',
+		'keep-filled',
 		{
 			change:
-				'The BQ24074 protects itself: when it gets hot it cuts the charge current. That makes charging slower, not unsafe. Write it down so nobody is surprised.',
-			tools: work(tool('apply_patch', 'docs/bring-up.md\nREADME.md')),
+				"Filled, capped vias are a standard PCBWay process, and the fab notes already ask for them. The $94.73 is per order, so it doesn't grow with five boards.",
+			tools: work(tool('apply_patch', 'docs/assembly.md')),
 			reply:
-				'Left the layout as it is. `docs/bring-up.md` now says that U4 throttles when warm, so a flat cell charges slower than the 494 mA setting suggests. If that matters later, the via fix is a layout-only change for rev B.'
+				'Left the layout as it is. `docs/assembly.md` already asks for resin-filled, capped vias, and I added the line for the order remarks. Moving the vias off the pads is a layout-only change for rev B.'
 		}
 	]
 ]);
 
-function thermalContinuation(answer: AgentQuestionAnswer): Step[] {
+function viaContinuation(answer: AgentQuestionAnswer): Step[] {
 	if (answer.optionId === undefined) {
 		return [
 			work(
@@ -163,13 +163,13 @@ function thermalContinuation(answer: AgentQuestionAnswer): Step[] {
 				)
 			),
 			say(
-				`Got it: "${answer.text}". I'll make that change, rerun ERC and DRC, and regenerate the fab files if the copper moves.`
+				`Got it: "${answer.text}". I'll make that change, rerun DRC, and regenerate the fab files if the copper moves.`
 			)
 		];
 	}
 
-	const plan = THERMAL_PLANS.get(answer.optionId);
-	const chosen = plan ?? THERMAL_VIAS;
+	const plan = VIA_PLANS.get(answer.optionId);
+	const chosen = plan ?? MOVE_VIAS;
 
 	return [
 		work(
@@ -177,60 +177,60 @@ function thermalContinuation(answer: AgentQuestionAnswer): Step[] {
 				'Applying the choice',
 				plan
 					? chosen.change
-					: `You left it to me. The board isn't ordered yet, so new Gerbers cost nothing, and vias fix the cause instead of working around it. ${chosen.change}`
+					: `You left it to me. The board isn't ordered yet, and the filled vias are about a quarter of the five-board cost. ${chosen.change}`
 			)
 		),
 		chosen.tools,
-		say(plan ? chosen.reply : `I added thermal vias.\n\n${chosen.reply}`)
+		say(plan ? chosen.reply : `I moved the vias off the pads.\n\n${chosen.reply}`)
 	];
 }
 
-const chargerThermal: DemoThread = {
-	id: 'charger-thermal',
-	title: "Fix the charger's thermal pad",
+const viaCost: DemoThread = {
+	id: 'via-cost',
+	title: 'Cut the filled-via cost',
 	model: 'sonnet-5.5',
 	effort: 'high',
 	minutesAgo: 3,
 	runs: [
-		recordRun('run-charger-thermal-1', [
-			prompt('U4 has no thermal vias. What are my options before I order?'),
+		recordRun('run-via-cost-1', [
+			prompt('Filled vias are $94.73 of the PCB price. What are my options before I order?'),
 			work(
-				tool('exec_cmd', THERMAL_PADS),
-				tool('parse_file', 'https://www.ti.com/lit/gpn/bq24074'),
+				tool('exec_cmd', VIAS_IN_PADS),
+				tool('exec_cmd', 'cat review/findings.json'),
 				think(
 					'Weighing the options',
-					'The pad has no vias and the nearest GND via is 2.55 mm away. About 0.9 W while charging a low cell. R6 = 1.8 kΩ sets 494 mA. The USB input is held to 500 mA either way, so a lower charge current only trades charge time for heat.'
+					"82 vias touch SMD pads. Tented vias bring the PCB from $156.77 to $62.04, so five boards drop from $366.78 to $272.05. PCBWay's via-in-pad option prices the same as filling every via, so it saves nothing. The review also lists four major routing findings, and a layout pass could fix those at the same time."
 				),
-				tool('ask_question', 'How should we deal with the heat in U4?')
+				tool('ask_question', 'How should we handle the vias in pads?')
 			),
-			say(`U4 (BQ24074) has no vias under its thermal pad, so its heat has nowhere to go but the top copper. There are three ways to handle it.
+			say(`82 vias sit in or touch SMD pads, so PCBWay has to fill and cap every via. There are three ways to handle it.
 
 | Option | Change | Effect |
 | --- | --- | --- |
-| Add thermal vias | 4 vias from the pad to the In1 ground plane | Fixes the cause. Needs a DRC rerun and new Gerbers. |
-| Lower the charge current | R6 from 1.8 kΩ to 3.6 kΩ, about 247 mA | About half the heat. Charging takes twice as long. No layout change. |
-| Leave it | Document it | The charger cuts its own current when hot. Charging is slower but safe. |
+| Move the vias | Each in-pad via moves beside its pad | PCB $62.04, five boards $272.05. Needs DRC and new Gerbers. |
+| Move them and reroute | Also fix QSPI_SD3, SD_CLK and SD_D3, the VBAT neck and the USB D+ loop | Same saving, and fixes the review's four major findings. More layout work. |
+| Keep filled vias | Order as is | Five boards stay at $366.78. No layout change. |
 
 Which one should I do?`)
 		])
 	],
 	question: {
-		questionId: 'thermal-question',
-		question: 'How should we deal with the heat in U4?',
+		questionId: 'via-question',
+		question: 'How should we handle the vias in pads?',
 		options: [
-			{ id: 'thermal-vias', label: 'Add thermal vias under U4' },
-			{ id: 'lower-charge', label: 'Lower the charge current to about 247 mA' },
-			{ id: 'leave-it', label: 'Leave it and document the throttling' }
+			{ id: 'move-vias', label: 'Move the vias off the pads' },
+			{ id: 'move-and-reroute', label: 'Move them and fix the major routing findings' },
+			{ id: 'keep-filled', label: 'Keep filled, capped vias' }
 		],
-		continueWith: thermalContinuation
+		continueWith: viaContinuation
 	}
 };
 
 const BOARD_TASK =
-	"Write firmware/boards/rp2350_devboard.h from pico-sdk's pico2_w.h. Flash is 16 MB. The RM2 is wired like the Pico 2 W on GPIO23/24/25/29, but RM2 GPIO1 and GPIO2 are not connected, so drop the SMPS pin, the VBUS sense on WL_GPIO2 and the VSYS sense on GPIO29. Add defines for PSRAM CS (GPIO8), the WS2812B (GPIO9) and VBAT (GPIO28).";
+	"Write firmware/boards/rp2350_devboard.h from pico-sdk's pico2_w.h. Flash is 16 MB. The RM2 is wired like the Pico 2 W on GPIO23/24/25/29, with WL_GPIO1 on U6's PS/SYNC and WL_GPIO2 sensing VBUS, but WL_GPIO0 has no LED and GPIO29 has no VSYS sense. Add defines for PSRAM CS (GPIO8), microSD card detect (GPIO9), the WS2812B (GPIO22) and VBAT (GPIO28).";
 
 const BATTERY_TASK =
-	'Write firmware/src/battery.{h,c}: read VBAT/2 on GPIO28 (ADC2) through the R13/R14 100 kΩ divider, return millivolts, and flag a low battery below 3.4 V, where firmware should stop Wi-Fi and SD writes.';
+	'Write firmware/src/battery.{h,c}: read VBAT/2 on GPIO28 (ADC2) through the R14/R15 470 kΩ divider, return millivolts, and flag a low battery below 3.3 V.';
 
 const firmware: DemoThread = {
 	id: 'firmware',
@@ -241,16 +241,19 @@ const firmware: DemoThread = {
 	runs: [
 		recordRun('run-firmware-1', [
 			prompt(
-				'Write bring-up firmware with pico-sdk: blink the LED on the RM2 and print the battery voltage over USB. Split the work up so it goes faster.'
+				'Write bring-up firmware with pico-sdk: blink the RGB LED and print the battery voltage over USB. Split the work up so it goes faster.'
 			),
 			work(
 				think(
 					'Splitting the firmware work',
-					'The board header and the battery reader touch different files and can be checked on their own. I will hand each to a subagent and write `main.c` and `CMakeLists.txt` myself.'
+					'The board header and the battery reader touch different files and can be checked on their own. I will hand each to a subagent and write `main.c`, the WS2812 PIO program and `CMakeLists.txt` myself.'
 				),
 				tool('spawn_subagent', BOARD_TASK),
 				tool('spawn_subagent', BATTERY_TASK),
-				tool('apply_patch', 'firmware/CMakeLists.txt\nfirmware/src/main.c'),
+				tool(
+					'apply_patch',
+					'firmware/CMakeLists.txt\nfirmware/src/main.c\nfirmware/src/ws2812.pio'
+				),
 				tool('poll_subagent', 'firmware-board'),
 				tool('poll_subagent', 'firmware-battery'),
 				tool('exec_cmd', FIRMWARE_BUILD)
@@ -261,13 +264,13 @@ const firmware: DemoThread = {
 | --- | --- | --- |
 | Board header from \`pico2_w.h\` | \`boards/rp2350_devboard.h\` | Subagent |
 | Battery voltage on GPIO28 | \`battery.h\`, \`battery.c\` | Subagent |
-| LED blink and serial log | \`main.c\`, \`CMakeLists.txt\` | Me |
+| RGB blink and serial log | \`main.c\`, \`ws2812.pio\`, \`CMakeLists.txt\` | Me |
 
-Three limits of the board that the firmware works around:
+Three things about the board that shape the firmware:
 
-- **No USB detect.** No GPIO sees VBUS or the charger status, so \`battery_low\` goes by voltage only.
-- **No battery fitted.** On USB alone, GPIO28 reads a false 3.6 to 4.2 V while the charger looks for a cell.
-- **Near the cutoff.** With the cell below about 3.5 V, 3V3 is out of regulation. ADC_AVDD is on 3V3, so readings there run a little high.
+- **No RM2 LED.** WL_GPIO0 is not connected, so the blink drives the WS2812B on GPIO22.
+- **No battery fitted.** GPIO28 still reads a voltage while the charger looks for a cell, so the log also prints USB state from WL_GPIO2.
+- **Divider drain.** R14 and R15 draw about 4.5 µA from the cell all the time, and firmware can't switch them off.
 
 It hasn't run on hardware yet. No board has been built.`)
 		])
@@ -291,13 +294,13 @@ const firmwareBoard: DemoThread = {
 				),
 				think(
 					'Comparing with the Pico 2 W',
-					'`pico2_w.h` sets 4 MB of flash, `CYW43_WL_GPIO_SMPS_PIN 1`, `CYW43_WL_GPIO_VBUS_PIN 2`, `CYW43_USES_VSYS_PIN` and `PICO_VSYS_PIN 29`. Here GPIO29 is only the RM2 clock and WL_GPIO1 and WL_GPIO2 are not connected. Keep the GPIO23/24/25/29 pins and the LED on WL_GPIO0.'
+					"`pico2_w.h` sets 4 MB of flash, `CYW43_WL_GPIO_LED_PIN 0`, `CYW43_WL_GPIO_SMPS_PIN 1`, `CYW43_WL_GPIO_VBUS_PIN 2`, `CYW43_USES_VSYS_PIN` and `PICO_VSYS_PIN 29`. Here WL_GPIO1 drives U6's PS/SYNC like the Pico 2 W's SMPS pin, and WL_GPIO2 sees VBUS through R22/R23. WL_GPIO0 is unconnected and GPIO29 is only WL_CLK."
 				),
 				tool('apply_patch', 'firmware/boards/rp2350_devboard.h'),
 				tool('exec_cmd', FIRMWARE_BUILD)
 			),
 			say(
-				"`boards/rp2350_devboard.h` is in. It keeps the Pico 2 W's RM2 pins and the LED on WL_GPIO0, sets 16 MB of flash, and drops the SMPS, VBUS and VSYS defines. It adds `DEVBOARD_PSRAM_CS_PIN` (8), `PICO_DEFAULT_WS2812_PIN` (9) and `DEVBOARD_VBAT_PIN` (28). I2C0 stays on GPIO4/5, which is the Qwiic port."
+				'`boards/rp2350_devboard.h` is in. It keeps the RM2 pins, the SMPS pin on WL_GPIO1 and VBUS sense on WL_GPIO2, sets 16 MB of flash, and drops the LED and VSYS defines. It adds `DEVBOARD_PSRAM_CS_PIN` (8), `DEVBOARD_SD_DET_PIN` (9), `PICO_DEFAULT_WS2812_PIN` (22) and `DEVBOARD_VBAT_PIN` (28). I2C0 stays on GPIO4/5, which is the Qwiic port.'
 			)
 		])
 	]
@@ -317,13 +320,13 @@ const firmwareBattery: DemoThread = {
 				tool('parse_file', 'https://datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf'),
 				think(
 					'Reading the ADC notes',
-					'Erratum E9: a pad with its digital input enabled leaks current, which skews a high-impedance source. The divider looks like 50 kΩ from GPIO28. `adc_gpio_init(28)` turns the input buffer off.'
+					'Erratum E9: a pad with its digital input enabled leaks current, which skews a high-impedance source. The R14/R15 divider looks like 235 kΩ from GPIO28. `adc_gpio_init(28)` turns the input buffer off.'
 				),
 				tool('apply_patch', 'firmware/src/battery.h\nfirmware/src/battery.c'),
 				tool('exec_cmd', FIRMWARE_BUILD)
 			),
 			say(
-				"`battery_millivolts` reads ADC2 and doubles it for the R13/R14 divider. `battery_init` calls `adc_gpio_init(28)` so erratum E9 can't skew the reading. `battery_low` is true below 3.4 V. The divider draws about 21 µA from the cell all the time, and firmware can't switch it off."
+				"`battery_millivolts` reads ADC2 and doubles it for the R14/R15 divider. `battery_init` calls `adc_gpio_init(28)` so erratum E9 can't skew the reading. `battery_low` is true below 3.3 V, which leaves margin above the 3.0 V cell where U6 still holds 3V3. Q2 only connects the divider while 3V3 is up, so readings are valid whenever firmware runs."
 			)
 		])
 	]
@@ -341,30 +344,27 @@ const psram: DemoThread = {
 		work(
 			think(
 				'Planning the PSRAM setup',
-				'The APS6404L sits on QSPI chip select 1, which is GPIO8. GPIO8 resets with a pull-down, and R19 (2.2 kΩ) holds CS high against it. Turn the pad pull-down off before switching GPIO8 to XIP_CS1, then set up the QMI M1 window and put the chip in quad mode.'
+				'The APS6404L (U3) sits on QSPI chip select 1, which is GPIO8. GPIO8 resets with a pull-down, and R7 (2.2 kΩ) holds CE# high against it. Switch GPIO8 to XIP_CS1, then set up the QMI M1 window and put the chip in quad mode.'
 			),
 			tool('parse_file', 'https://datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf'),
-			tool(
-				'parse_file',
-				'https://cdn-shop.adafruit.com/product-files/6130/APM_PSRAM_E3_QSPI+%28APS6404L-3SQR+KGD_PKG%29+v2.7.pdf'
-			),
+			tool('parse_file', 'https://www.pjrc.com/store/APS6404L_3SQR.pdf'),
 			tool(
 				'apply_patch',
 				'firmware/src/psram.h\nfirmware/src/psram.c\nfirmware/src/main.c\nfirmware/CMakeLists.txt'
 			),
 			tool('exec_cmd', FIRMWARE_BUILD),
 			think(
-				'Checking the chip select',
-				'R19 was 10 kΩ in the first schematic. Against the GPIO8 pull-down, CS could sit at 2.58 V, under the 2.9 V the PSRAM needs to stay deselected. 2.2 kΩ fixes that in hardware, so firmware only has to drop the pull-down before the QMI drives the pin.'
+				'Checking the errata',
+				"Erratum RP2350-E14: the bootrom's `connect_internal_flash()` sets up the pads for GPIO0 instead of GPIO8. Clear GPIO8's pad isolation after that call, or CS1 never reaches the pin."
 			),
 			tool('exec_cmd', 'grep -n "psram" firmware/build/devboard.map | head')
 		),
 		say(`The PSRAM is mapped at \`0x11000000\`.
 
-- \`psram_init()\` turns off GPIO8's pull-down, switches it to XIP_CS1, and sets up the QMI M1 window for the APS6404L in quad mode.
+- \`psram_init()\` clears GPIO8's pad isolation for erratum E14, switches it to XIP_CS1, and sets up the QMI M1 window for the APS6404L in quad mode at the flash clock divider.
 - \`main.c\` writes a pattern over all 8 MB at boot, reads it back, and prints the result.
 
-It builds. It hasn't run on hardware, since no board has been built.`)
+PSRAM_CS runs 39.1 mm with 4 vias, so keep the clock where it is until you've checked signal quality on a real board. It builds, but it hasn't run on hardware.`)
 	]
 };
 
@@ -381,14 +381,17 @@ const usbPort: DemoThread = {
 			work(
 				tool('exec_cmd', `kicad-cli sch export netlist -o /tmp/devboard.net ${SCHEMATIC}`),
 				tool('exec_cmd', 'grep -B2 -A8 "USBLC6\\|USB4105" /tmp/devboard.net'),
-				tool('parse_file', 'https://www.st.com/resource/en/datasheet/cd00050750.pdf')
+				tool('parse_file', 'https://www.st.com/resource/en/datasheet/usblc6-2.pdf')
 			),
-			say(`Yes for normal use. U6 (USBLC6-2SC6) clamps D+ and D−, with 27 Ω series resistors toward the RP2350. Each CC pin has its own 5.1 kΩ to ground, so USB-C chargers will supply 5 V. The pair is 0.22 mm with a 0.15 mm gap over solid ground, about 90.7 Ω differential, and D+ and D− match within 0.05 mm. That is plenty for full speed USB.
+			say(`The wiring is right. U4 (USBLC6-2SC6) clamps D+ and D−, with 27 Ω series resistors R3 and R4 toward the RP2350. CC1 and CC2 each have their own 5.1 kΩ (R8, R9), so USB-C chargers will supply 5 V. D+ is on A6 and B6 and D− on A7 and B7, so both plug orientations work. The pair is 0.2 mm with a 0.15 mm gap, about 100 Ω differential.
 
-Two limits:
+The layout has three weak spots:
 
-- VBUS on J6.1 is tied straight to the connector, so 5 V fed into that pin back-feeds a connected host.
-- U6 breaks down at 6 V, so the port is not 28 V tolerant even though the BQ24074 input is.`)
+- D+ from A6 loops 18 mm under J1 before joining B6 at U4. That leaves an 18 mm stub in one plug orientation.
+- D+ passes 0.23 mm from the switch-node pad of L2, the buck-boost inductor.
+- U5 and U6 sit about 24 mm from J1, so VBUS runs 34 mm with 7 vias.
+
+Also, 5 V fed into J6 pin 2 while a host is plugged in pushes current back into the host.`)
 		])
 	]
 };
@@ -404,17 +407,18 @@ const batteryPick: DemoThread = {
 		recordRun('run-battery-pick-1', [
 			prompt('What LiPo should I plug into J2?'),
 			work(
-				tool('parse_file', 'https://www.ti.com/lit/gpn/bq24074'),
+				tool('parse_file', 'https://www.ti.com/lit/ds/symlink/bq24074.pdf'),
 				tool('exec_cmd', 'cat scratch/jst-polarity.md'),
 				tool('web_search', 'protected 1S LiPo JST PH 2.0 plug 1000 mAh (10 results)')
 			),
-			say(`A single-cell LiPo with its own protection circuit, 500 mAh or larger, on a JST PH 2.0 plug.
+			say(`A single-cell LiPo with its own protection circuit, 450 mAh or larger, on a JST PH 2.0 plug.
 
-- **Protection:** the board has none, and the BQ24074 has no low-battery cutoff.
-- **500 mAh or more:** R6 sets the charge current to 494 mA, which stays under 1C from 500 mAh up.
-- **Polarity:** J2 pin 1 is +, marked on the silkscreen. Many third-party cells have red and black swapped, so check before you plug one in.
+- **Protection:** the board has a reverse-battery FET (Q1) but no cell protection.
+- **450 mAh or more:** R11 sets the charge current to 445 mA, which stays under 1C from about 450 mAh up.
+- **Polarity:** J2 pin 1 is GND and pin 2 is +. Vendors differ, so check before you plug one in. Q1 only blocks a reversed cell while USB is unplugged.
+- **Heavy loads:** VBAT necks to 0.15 mm between U5's BAT pins and Q1, on a path that can carry 1.5 A. Widen it in rev B before you draw high current from the cell.
 
-The battery divider on GPIO28 draws about 21 µA all the time, about 15 mAh a month, so unplug the cell for long storage.`)
+The battery divider on GPIO28 draws about 4.5 µA all the time, about 3 mAh a month.`)
 		])
 	]
 };
@@ -423,7 +427,7 @@ export const DEFAULT_THREAD_ID = orderPack.id;
 
 export const threads: DemoThread[] = [
 	orderPack,
-	chargerThermal,
+	viaCost,
 	firmware,
 	firmwareBoard,
 	firmwareBattery,
