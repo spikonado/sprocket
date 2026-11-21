@@ -1,16 +1,17 @@
 import { useEffect, useEffectEvent, useState } from 'react';
 import { captureException, observeSection, setAnalyticsUser, track } from '@/lib/analytics/client';
 import {
+	billingRefusalMessage,
 	clearCheckoutAttempt,
 	fetchCheckoutStatus,
 	fetchCustomerPortalUrl,
 	fetchMySubscription,
+	isTransientFailure,
 	loadPricingSession,
 	readCheckoutAttempt,
 	signInForCheckout,
 	signOutOfPricing,
-	startCheckout,
-	billingRefusalMessage
+	startCheckout
 } from '@/lib/pricing/billing';
 import {
 	buildCreditPackCards,
@@ -29,6 +30,8 @@ import type {
 import { cn } from '@/utils';
 
 type User = { id: string; email: string };
+
+type Notice = { text: string; error: boolean; retryParams?: URLSearchParams };
 
 const SUPPORT_EMAIL = 'aarav@spikonado.com';
 const SUPPORT_HREF = `mailto:${SUPPORT_EMAIL}?subject=Sprocket%20billing%20support`;
@@ -73,7 +76,7 @@ export default function PricingPlans({ catalog }: { catalog: PublicPricingCatalo
 	const [subscription, setSubscription] = useState<MySubscription | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [busy, setBusy] = useState<{ buttonFor: string | null; label: string } | null>(null);
-	const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
+	const [notice, setNotice] = useState<Notice | null>(null);
 	const [pending, setPending] = useState(false);
 
 	const cards = catalog ? buildPlanCards(catalog) : [];
@@ -83,12 +86,14 @@ export default function PricingPlans({ catalog }: { catalog: PublicPricingCatalo
 	const changesPlanInPortal =
 		subscription !== null && subscription.tier !== 'free' && subscription.billingManaged;
 
-	function fail(cause: unknown, fallback: string) {
+	function fail(cause: unknown, fallback: string, retryParams?: URLSearchParams) {
 		setBusy(null);
-		const message = billingRefusalMessage(cause);
+		const transient = isTransientFailure(cause);
+		const message = transient ? cause.message : billingRefusalMessage(cause);
 		setNotice({
 			text: message ?? (cause instanceof Error ? cause.message : fallback),
-			error: true
+			error: true,
+			retryParams: transient ? retryParams : undefined
 		});
 
 		if (!message) captureException(cause, fallback);
@@ -308,7 +313,10 @@ export default function PricingPlans({ catalog }: { catalog: PublicPricingCatalo
 		return !card.prices[interval];
 	}
 
-	const initialize = useEffectEvent(async (params: URLSearchParams) => {
+	async function loadPage(params: URLSearchParams) {
+		setNotice(null);
+		setLoading(true);
+
 		try {
 			const signedInUser = await loadAccount();
 			const purchase = readPurchase(params);
@@ -335,11 +343,13 @@ export default function PricingPlans({ catalog }: { catalog: PublicPricingCatalo
 
 			await recoverAttempt(signedInUser);
 		} catch (error) {
-			fail(error, 'Could not load your account.');
+			fail(error, 'Could not load your account.', params);
 		} finally {
 			setLoading(false);
 		}
-	});
+	}
+
+	const initialize = useEffectEvent(loadPage);
 
 	useEffect(() => {
 		const url = new URL(window.location.href);
@@ -362,6 +372,8 @@ export default function PricingPlans({ catalog }: { catalog: PublicPricingCatalo
 
 		return () => window.removeEventListener('pageshow', onPageShow);
 	}, []);
+
+	const retryParams = notice?.retryParams;
 
 	return (
 		<>
@@ -400,6 +412,19 @@ export default function PricingPlans({ catalog }: { catalog: PublicPricingCatalo
 							role={notice.error ? 'alert' : 'status'}
 						>
 							{notice.text}
+							{retryParams && (
+								<>
+									{' '}
+									<button
+										type="button"
+										className={linkClass}
+										disabled={!!busy}
+										onClick={() => void loadPage(retryParams)}
+									>
+										Try again
+									</button>
+								</>
+							)}
 						</p>
 					)}
 

@@ -1,3 +1,4 @@
+import { dropExceptionsOutsideApp } from '@sprocket/error-tracking';
 import { PUBLIC_POSTHOG_KEY } from 'astro:env/client';
 import posthog from 'posthog-js';
 import type { AnalyticsEvents } from '@/lib/analytics/events';
@@ -37,6 +38,7 @@ function ensurePosthog(): typeof posthog | undefined {
 			disable_capture_url_hashes: false,
 			strict_script_versioning: true,
 			capture_exceptions: true,
+			before_send: dropExceptionsOutsideApp,
 			capture_performance: { web_vitals: true, network_timing: true },
 			// Links API route events and errors to the browser's person and session replay.
 			tracing_headers: [window.location.hostname]
