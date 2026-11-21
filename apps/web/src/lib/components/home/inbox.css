@@ -226,6 +226,14 @@
 	font-size: 14px;
 }
 
+/* app.css forces inputs to 16px on touch screens, so the rows beside the search match it. */
+@media (pointer: coarse) {
+	.inbox-primary-navigation,
+	.inbox-primary-navigation:hover {
+		font-size: 16px;
+	}
+}
+
 [data-theme='dark'] .inbox-primary-navigation,
 [data-theme='dark'] .inbox-primary-navigation:hover {
 	color: var(--foreground);
