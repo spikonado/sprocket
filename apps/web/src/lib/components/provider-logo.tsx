@@ -35,7 +35,13 @@ export default function ProviderLogo({
 	const label = providerLabel(provider);
 
 	if (label === 'Spikonado') {
-		return <img src="/logo.svg" alt="" className={cn('size-4 shrink-0', className)} />;
+		return (
+			<img
+				src={`${import.meta.env.BASE_URL}logo.svg`}
+				alt=""
+				className={cn('size-4 shrink-0', className)}
+			/>
+		);
 	}
 
 	if (label === 'OpenAI') {

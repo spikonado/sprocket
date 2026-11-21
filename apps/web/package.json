@@ -7,6 +7,7 @@
 	"scripts": {
 		"dev": "convex dev --start 'vite dev'",
 		"build": "vite build",
+		"build:demo": "vite build --config vite.demo.config.ts",
 		"test": "vitest --run",
 		"check": "bun check --no-script && bun check --no-script -p convex",
 		"check:anti-slop": "bun check --no-script -p tsconfig.anti-slop.json"

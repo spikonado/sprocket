@@ -62,7 +62,7 @@ type PaginatedOptions = {
 };
 
 export class ConvexTestClient extends ConvexReactClient {
-	#queryFixtures = new Map<string, FixtureReader>();
+	#queryHandlers = new Map<string, FixtureReader>();
 	#paginatedFixtures = new Map<string, FixtureReader>();
 	#actionHandlers = new Map<string, FixtureReader>();
 	#mutationFixtures = new Map<string, FixtureReader>();
@@ -76,9 +76,7 @@ export class ConvexTestClient extends ConvexReactClient {
 		query: Query,
 		result: FunctionReturnType<Query>
 	): void {
-		const name = getFunctionName(query);
-		this.#queryFixtures.set(name, fixtureReader(result));
-		this.#queryListeners.get(name)?.forEach((listener) => listener());
+		this.handleQuery(query, () => result);
 	}
 
 	registerPaginatedQuery<Query extends QueryReference>(
@@ -87,6 +85,15 @@ export class ConvexTestClient extends ConvexReactClient {
 	): void {
 		const name = getFunctionName(query);
 		this.#paginatedFixtures.set(name, fixtureReader(page));
+		this.#queryListeners.get(name)?.forEach((listener) => listener());
+	}
+
+	handleQuery<Query extends QueryReference>(
+		query: Query,
+		handler: (args: FunctionArgs<Query>) => FunctionReturnType<Query>
+	): void {
+		const name = getFunctionName(query);
+		this.#queryHandlers.set(name, fixtureReader(handler));
 		this.#queryListeners.get(name)?.forEach((listener) => listener());
 	}
 
@@ -115,14 +122,19 @@ export class ConvexTestClient extends ConvexReactClient {
 		query: Query,
 		...argsAndOptions: ArgsAndOptions<Query, WatchQueryOptions>
 	): Watch<FunctionReturnType<Query>> {
-		void argsAndOptions;
 		const name = getFunctionName(query);
 
 		return {
 			onUpdate: (callback) => this.#listen(name, callback),
-			localQueryResult: () => this.#queryFixtures.get(name)?.read<FunctionReturnType<Query>>(),
+			localQueryResult: () => this.#queryHandler(query)?.(argsAndOptions[0] ?? {}),
 			journal: () => undefined
 		};
+	}
+
+	#queryHandler<Query extends QueryReference>(query: Query) {
+		return this.#queryHandlers
+			.get(getFunctionName(query))
+			?.read<(args: FunctionArgs<Query>) => FunctionReturnType<Query>>();
 	}
 
 	#listen(name: string, callback: () => void) {
@@ -163,13 +175,11 @@ export class ConvexTestClient extends ConvexReactClient {
 		query: Query,
 		...args: OptionalRestArgs<Query>
 	): Promise<FunctionReturnType<Query>> {
-		void args;
-		const name = getFunctionName(query);
-		const reader = this.#queryFixtures.get(name);
+		const handler = this.#queryHandler(query);
 
-		if (!reader) throw new Error(`No query fixture registered for ${name}`);
+		if (!handler) throw new Error(`No query fixture registered for ${getFunctionName(query)}`);
 
-		return Promise.resolve(reader.read<FunctionReturnType<Query>>());
+		return Promise.resolve(handler(args[0] ?? {}));
 	}
 
 	override mutation<Mutation extends MutationReference>(
@@ -188,11 +198,7 @@ export class ConvexTestClient extends ConvexReactClient {
 	}
 
 	#localStore: OptimisticLocalStore = {
-		getQuery: (query, ...args) => {
-			void args;
-
-			return this.#queryFixtures.get(getFunctionName(query))?.read();
-		},
+		getQuery: (query, ...args) => this.#queryHandler(query)?.(args[0] ?? {}),
 		getAllQueries: () => [],
 		setQuery: (query, _args, value) => {
 			if (value !== undefined) this.registerQuery(query, value);

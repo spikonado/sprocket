@@ -1,5 +1,6 @@
 {
 	"extends": ["astro/tsconfigs/strict", "@sprocket/typescript-config/react.json"],
+	"exclude": ["dist", "public/demo"],
 	"compilerOptions": {
 		"types": ["bun"],
 		"paths": {

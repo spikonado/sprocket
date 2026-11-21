@@ -6,7 +6,7 @@ const HOUR_MS = 60 * 60 * 1000;
 
 const DAY_MS = 24 * HOUR_MS;
 
-const emptyCounts: TokenCounts = {
+export const emptyCounts: TokenCounts = {
 	inputTokens: 0,
 	cacheReadTokens: 0,
 	cacheWriteTokens: 0,
