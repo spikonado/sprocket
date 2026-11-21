@@ -370,6 +370,26 @@ describe('installed and hosted auth', () => {
 		expect(get(authState).user).toBeNull();
 	});
 
+	it('keeps the signed-out state clean when a pending local session fails after sign-out', async () => {
+		stubInstalledWindow();
+		stubFetch({
+			token: () => jsonResponse(200, { accessToken: 'native-token', user: nativeUser }),
+			nativeSessionDelete: () => jsonResponse(200, { ok: true })
+		});
+		await initializeAuth(convexClient);
+		authState.update((current) => ({ ...current, nativeSession: 'unavailable' }));
+		const pending = deferred<void>();
+		ensureLocalSession.mockImplementationOnce(async () => {
+			await pending.promise;
+			throw new Error('Local session request timed out');
+		});
+		const token = getConvexAccessToken({ forceRefreshToken: true });
+		await signOut();
+		pending.resolve();
+		await expect(token).resolves.toBeNull();
+		expect(get(authState)).toMatchObject({ user: null, error: null });
+	});
+
 	it('signs in through PKCE then the native session without a second AuthKit redirect', async () => {
 		const { location } = stubInstalledWindow();
 

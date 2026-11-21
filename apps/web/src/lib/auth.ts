@@ -1261,7 +1261,7 @@ export async function getConvexAccessToken(options: { forceRefreshToken: boolean
 
 			if (token || generation === authGeneration) return token;
 		} catch (error) {
-			if (authState.getSnapshot().nativeSession === 'mismatch') return null;
+			if (!isCurrentFetch() || authState.getSnapshot().nativeSession === 'mismatch') return null;
 			authState.update((current) => ({
 				...current,
 				error:
