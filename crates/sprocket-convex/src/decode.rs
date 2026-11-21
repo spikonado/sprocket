@@ -3,8 +3,7 @@ use convex::{ConvexError, FunctionResult, Value};
 use serde::{Deserialize, de::Deserializer};
 use std::sync::LazyLock;
 
-/// Codes from `apps/web/convex/lib/agentErrorCodes.json`, or the `code` of a
-/// `ConvexError({ code, message })` whose message varies.
+/// Codes from `apps/web/convex/lib/agentErrorCodes.json`.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ConvexErrorCode {
