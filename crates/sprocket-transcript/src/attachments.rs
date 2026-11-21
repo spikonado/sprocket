@@ -106,7 +106,7 @@ where
         if let Err(error) = tokio::fs::remove_file(staged).await
             && error.kind() != std::io::ErrorKind::NotFound
         {
-            eprintln!("sprocket-transcript: failed to remove staged attachment: {error}");
+            tracing::warn!("failed to remove staged attachment: {error}");
         }
     } else {
         store

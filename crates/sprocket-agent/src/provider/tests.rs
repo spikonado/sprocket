@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use super::test_support::coded_convex_error;
 use super::transcript_sink::{
     apply_completed_text, apply_completed_tool_call, durable_items_json, visible_live_parts,
 };
@@ -300,22 +301,6 @@ fn edited_calls_reload_the_edited_fields_without_stale_native_data() {
     assert_eq!(call.function.name, "new_tool");
     assert_eq!(call.function.arguments_value(), json!({"new": true}));
     assert!(call.native.as_ref().unwrap().item.get("secret").is_none());
-}
-
-fn coded_convex_error(code: &str) -> anyhow::Error {
-    let data = [("code", code), ("message", "Convex failure.")]
-        .into_iter()
-        .map(|(key, value)| (key.to_string(), value.into()))
-        .collect();
-    sprocket_convex::decode_function_result::<()>(
-        convex::FunctionResult::ConvexError(convex::ConvexError {
-            message: String::new(),
-            data: convex::Value::Object(data),
-        }),
-        "agentRuntime:registerCompletionAttempt",
-    )
-    .unwrap_err()
-    .context("completion provider failed")
 }
 
 #[test]

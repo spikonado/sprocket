@@ -1,6 +1,6 @@
 mod commands;
 
-use std::io::ErrorKind;
+use std::io::{ErrorKind, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -21,6 +21,7 @@ const DESKTOP_EXECUTABLE_FILE: &str = "desktop-executable";
 const DESKTOP_WORKSPACE_ARG: &str = "--sprocket-workspace";
 const RESTART_EXIT_CODE: u8 = 75;
 const RESTARTED_ENV: &str = "SPROCKET_RESTARTED";
+const DEFAULT_LOG_FILTER: &str = "error,sprocket_agent=info,sprocket_transcript=warn";
 #[derive(Debug, Parser)]
 #[command(
     name = "sprocket",
@@ -95,11 +96,15 @@ fn entry() -> anyhow::Result<u8> {
         take_env_flag(RESTARTED_ENV)
     };
 
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(DEFAULT_LOG_FILTER))
+        .add_directive("sprocket_server=error".parse()?);
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
-        .with_env_filter(
-            EnvFilter::from_default_env().add_directive("sprocket_server=error".parse()?),
-        )
+        .with_ansi(std::io::stderr().is_terminal())
+        .with_env_filter(filter)
+        // tracing-subscriber reports failed writes with eprintln!, which panics once stderr is a closed pipe.
+        .log_internal_errors(false)
         .init();
 
     let cli = Cli::parse();

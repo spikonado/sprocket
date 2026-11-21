@@ -24,7 +24,7 @@ Released clients reject unknown completion providers. `uiPreferences.getMyEnable
 
 ### OpenAI-only credential actions
 
-Released UIs call `providerCredentials:saveOpenAiKey` and `removeOpenAiKey`, and released agents call `issueOpenAiCredential`. They wrap `saveApiKey`, `removeApiKey` and `issueApiKey` with `provider: 'openai'`. Once the UIs and agents that call them age out, remove the three actions.
+Released UIs call `providerCredentials:saveOpenAiKey` and `removeOpenAiKey`, and released agents call `issueOpenAiCredential`. They wrap `saveApiKey`, `removeApiKey` and `issueApiKey` with `provider: 'openai'`, except that `issueOpenAiCredential` throws string `data` instead of `PROVIDER_NOT_CONFIGURED`, because v0.4 agents read only string error data. Once the UIs and agents that call them age out, remove the three actions.
 
 ### Firecrawl request endpoints
 
@@ -48,7 +48,7 @@ Released agents send `text` to `agentRuntime.finalizeExecutorRun`, `finalizeFail
 
 ### Usage-limit failure kind
 
-Released v0.5.x agents send `failureKind: 'usage_limit'` to `agentRuntime.finalizeExecutorRun` when `issueGatewayCredential` throws the `USAGE_LIMIT_REACHED` code, and prefer that failure when every provider fails. The mutation accepts and ignores the argument, and `issueGatewayCredential` keeps throwing `{ code, message }`. Once those agents age out, remove the argument and throw the message alone.
+Released v0.5.x agents send `failureKind: 'usage_limit'` to `agentRuntime.finalizeExecutorRun` when `issueGatewayCredential` throws the `USAGE_LIMIT_REACHED` code, and prefer that failure when every provider fails. The mutation accepts and ignores the argument. Once those agents age out, remove the argument.
 
 ### Retired transcript section summaries
 

@@ -134,10 +134,7 @@ pub(super) async fn execute_cloud_tool_job(
         .tool_call_tracker
         .claim_dispatch(kind, &payload)
         .ok_or_else(|| tool_failure("tool dispatch is missing its invocation assignment"))?;
-    eprintln!(
-        "sprocket-agent: starting cloud tool {} for run {}",
-        kind, context.run_id
-    );
+    tracing::info!("starting cloud tool {} for run {}", kind, context.run_id);
     let mut run_updates = context
         .runtime
         .run_finished_subscription(&context.run_id)
@@ -171,10 +168,7 @@ pub(super) async fn execute_cloud_tool_job(
                 match RuntimeClient::decode_run_finished_update(update) {
                     Ok(false) => {}
                     Ok(true) => {
-                        eprintln!(
-                            "sprocket-agent: cancelled cloud tool {} for run {}",
-                            kind, context.run_id
-                        );
+                        tracing::info!("cancelled cloud tool {} for run {}", kind, context.run_id);
                         return Err(cancelled_error());
                     }
                     Err(error) => {
@@ -195,10 +189,7 @@ pub(super) async fn execute_cloud_tool_job(
                 context.runtime.record_parts(snapshot.part).await;
                 match snapshot.status.as_str() {
                     "completed" => {
-                        eprintln!(
-                            "sprocket-agent: completed cloud tool {} for run {}",
-                            kind, context.run_id
-                        );
+                        tracing::info!("completed cloud tool {} for run {}", kind, context.run_id);
                         return snapshot.result.ok_or_else(|| {
                             tool_failure("completed executor job did not include a result")
                         });
@@ -288,10 +279,7 @@ where
     F: FnOnce(WorkspaceCancellation, String) -> Fut,
     Fut: std::future::Future<Output = Result<serde_json::Value, ToolExecutionError>>,
 {
-    eprintln!(
-        "sprocket-agent: starting tool {} for run {}",
-        kind, context.run_id
-    );
+    tracing::info!("starting tool {} for run {}", kind, context.run_id);
     let mut run_updates = context
         .runtime
         .run_finished_subscription(&context.run_id)
@@ -359,25 +347,16 @@ async fn finish_job(
     args.insert("returnParts".to_string(), true.into());
     let (function, outcome) = match outcome {
         Ok((output, result)) => {
-            eprintln!(
-                "sprocket-agent: completed tool {} for run {}",
-                kind, context.run_id
-            );
+            tracing::info!("completed tool {} for run {}", kind, context.run_id);
             args.insert("result".to_string(), result);
             ("executor:complete", Ok(output))
         }
         Err(error) if error.kind() == ToolErrorKind::Cancelled => {
-            eprintln!(
-                "sprocket-agent: cancelled tool {} for run {}",
-                kind, context.run_id
-            );
+            tracing::info!("cancelled tool {} for run {}", kind, context.run_id);
             return Err(error);
         }
         Err(error) => {
-            eprintln!(
-                "sprocket-agent: failed tool {} for run {}: {}",
-                kind, context.run_id, error
-            );
+            tracing::info!("failed tool {} for run {}: {}", kind, context.run_id, error);
             args.insert("error".to_string(), error.to_string().into());
             ("executor:fail", Err(error))
         }

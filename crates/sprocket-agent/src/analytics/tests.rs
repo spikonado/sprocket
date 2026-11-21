@@ -12,6 +12,8 @@ use super::{
     is_sprocket_fixable, tools_called,
 };
 use crate::chatgpt::ChatGptNotConnected;
+use crate::provider::provider_failures;
+use crate::provider::test_support::coded_convex_error;
 use crate::types::CompletionProvider;
 
 #[test]
@@ -123,4 +125,27 @@ fn only_sprocket_failures_are_reportable() {
     assert!(!is_sprocket_fixable(&anyhow::Error::new(
         ChatGptNotConnected
     )));
+    assert!(!is_sprocket_fixable(&coded_convex_error(
+        "USAGE_LIMIT_REACHED"
+    )));
+    let not_configured = || {
+        (
+            CompletionProvider::Claude,
+            coded_convex_error("PROVIDER_NOT_CONFIGURED"),
+        )
+    };
+    assert!(!is_sprocket_fixable(&provider_failures(vec![
+        not_configured(),
+        (
+            CompletionProvider::Chatgpt,
+            anyhow!(PromptError::Report(ProviderError::Truncated.report())),
+        ),
+    ])));
+    assert!(is_sprocket_fixable(&provider_failures(vec![
+        not_configured(),
+        (
+            CompletionProvider::Openai,
+            anyhow!("Agent stream ended without a final response."),
+        ),
+    ])));
 }

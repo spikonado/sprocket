@@ -81,10 +81,9 @@ impl TranscriptStore {
                     match tokio::fs::remove_file(&path).await {
                         Ok(()) => removed += 1,
                         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                        Err(error) => eprintln!(
-                            "sprocket-agent: failed to expire {}: {error}",
-                            path.display()
-                        ),
+                        Err(error) => {
+                            tracing::warn!("failed to expire {}: {error}", path.display())
+                        }
                     }
                 }
             }

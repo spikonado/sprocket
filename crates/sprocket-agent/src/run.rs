@@ -94,7 +94,7 @@ fn restore_cwd(workspace_root: &Path, saved: Option<&str>) -> PathBuf {
             resolve_directory(workspace_root, saved)
                 .map(simplified_path)
                 .inspect_err(|error| {
-                    eprintln!("sprocket-agent: resetting cwd to the workspace root: {error:#}")
+                    tracing::warn!("resetting cwd to the workspace root: {error:#}")
                 })
                 .ok()
         })
@@ -139,7 +139,7 @@ where
     match timed(attempt()).await {
         Ok(value) => Ok(value),
         Err(first_error) => {
-            eprintln!("sprocket-agent: {what} failed; retrying: {first_error}");
+            tracing::warn!("{what} failed; retrying: {first_error}");
             sleep(FAILURE_CLEANUP_RETRY_DELAY).await;
             timed(attempt()).await.map_err(|retry_error| {
                 anyhow!("{what} failed after retry: {retry_error}; initial cleanup failed: {first_error}")
@@ -188,8 +188,8 @@ async fn finalize_claim_failure(
     )
     .await?;
     if !accepted {
-        eprintln!(
-            "sprocket-agent: claim failure cleanup skipped for run {run_id}; run no longer belongs to this active claim"
+        tracing::info!(
+            "claim failure cleanup skipped for run {run_id}; run no longer belongs to this active claim"
         );
     }
     Ok(())
@@ -249,18 +249,15 @@ async fn finalize_provider_result(
 ) -> anyhow::Result<()> {
     match provider_result {
         AgentProviderResult::Completed => {
-            eprintln!("sprocket-agent: model completed {}", run_id);
+            tracing::info!("model completed {}", run_id);
             finalize_run(runtime, run_id, claim_id, RunStatus::Completed, None).await
         }
         AgentProviderResult::Cancelled => {
-            eprintln!("sprocket-agent: run cancelled {}", run_id);
+            tracing::info!("run cancelled {}", run_id);
             finalize_run(runtime, run_id, claim_id, RunStatus::Cancelled, None).await
         }
         AgentProviderResult::Superseded { error } => {
-            eprintln!(
-                "sprocket-agent: provider attempt superseded {}: {error}",
-                run_id
-            );
+            tracing::info!("provider attempt superseded {}: {error}", run_id);
             abort_after_claim(
                 runtime,
                 run_id,
@@ -270,7 +267,7 @@ async fn finalize_provider_result(
             .await
         }
         AgentProviderResult::Failed { error } => {
-            eprintln!("sprocket-agent: model failed {run_id}: {error}");
+            tracing::warn!("model failed {run_id}: {error}");
 
             match finalize_run(runtime, run_id, claim_id, RunStatus::Failed, Some(&error)).await {
                 Ok(()) => Err(error),
@@ -290,7 +287,7 @@ async fn acknowledge_stop(
     match finalize_run(runtime, run_id, claim_id, RunStatus::Cancelled, None).await {
         Ok(()) => Ok(()),
         Err(error) => {
-            eprintln!("sprocket-agent: stop acknowledgement for run {run_id}: {error}");
+            tracing::warn!("stop acknowledgement for run {run_id}: {error}");
             Ok(())
         }
     }
@@ -305,9 +302,10 @@ async fn claim_run(
     let start = match start_run_once(runtime, run_id, claim_id).await {
         Ok(start) => start,
         Err(first_error) => {
-            eprintln!(
-                "sprocket-agent: claim attempt failed for run {}; retrying with the same claim: {}",
-                run_id, first_error
+            tracing::warn!(
+                "claim attempt failed for run {}; retrying with the same claim: {}",
+                run_id,
+                first_error
             );
             request_started_at = Instant::now();
             match start_run_once(runtime, run_id, claim_id).await {
@@ -329,11 +327,11 @@ async fn claim_run(
         }
     };
     if !start.claimed {
-        eprintln!("sprocket-agent: run {} already claimed or finished", run_id);
+        tracing::info!("run {} already claimed or finished", run_id);
         return Ok(None);
     }
 
-    eprintln!("sprocket-agent: marked run running {}", run_id);
+    tracing::info!("marked run running {}", run_id);
     Ok(Some(ClaimLease::new(
         request_started_at,
         start.lease_duration_ms,
@@ -407,9 +405,7 @@ where
                     });
                 }
                 first_error.get_or_insert_with(|| error.to_string());
-                eprintln!(
-                    "sprocket-agent: claim renewal failed for run {run_id}; retrying: {error}"
-                );
+                tracing::warn!("claim renewal failed for run {run_id}; retrying: {error}");
                 sleep(RUN_CLAIM_RENEW_RETRY_DELAY).await;
             }
         }
@@ -475,7 +471,7 @@ where
 }
 
 pub async fn start_agent_run(request: RunAgentRequest) -> anyhow::Result<AgentRun> {
-    eprintln!("sprocket-agent: starting thread {}", request.thread_id);
+    tracing::info!("starting thread {}", request.thread_id);
     let chatgpt_client = if request.completion_provider == crate::types::CompletionProvider::Chatgpt
     {
         request
@@ -523,11 +519,12 @@ pub async fn start_agent_run(request: RunAgentRequest) -> anyhow::Result<AgentRu
     let mut request = request;
     request.thread_id = created_run.thread_id.clone();
     if created_run.created {
-        eprintln!("sprocket-agent: created run {}", created_run.run_id);
+        tracing::info!("created run {}", created_run.run_id);
     } else {
-        eprintln!(
-            "sprocket-agent: resuming submission {} as run {}",
-            request.submission_id, created_run.run_id
+        tracing::info!(
+            "resuming submission {} as run {}",
+            request.submission_id,
+            created_run.run_id
         );
     }
     let run_id = created_run.run_id;
@@ -554,8 +551,8 @@ pub async fn finalize_failed_start(
                 | ConvexErrorCode::SubmissionOwnedByAnotherRun
         )
     ) {
-        eprintln!(
-            "sprocket-agent: submission {} already belongs to an active run; standing down",
+        tracing::info!(
+            "submission {} already belongs to an active run; standing down",
             request.submission_id
         );
         return Ok(());
@@ -572,27 +569,27 @@ pub async fn finalize_failed_start(
         match result {
             Ok(Ok(FailedStartCleanup::Finalized)) => return Ok(()),
             Ok(Ok(FailedStartCleanup::Pending)) => {
-                eprintln!(
-                    "sprocket-agent: startup failure cleanup has not observed submission {}; retrying",
+                tracing::warn!(
+                    "startup failure cleanup has not observed submission {}; retrying",
                     request.submission_id
                 );
             }
             Ok(Ok(FailedStartCleanup::StandDown)) => {
-                eprintln!(
-                    "sprocket-agent: submission {} already belongs to an active run; standing down",
+                tracing::info!(
+                    "submission {} already belongs to an active run; standing down",
                     request.submission_id
                 );
                 return Ok(());
             }
             Ok(Err(error)) => {
-                eprintln!(
-                    "sprocket-agent: startup failure cleanup for submission {} failed; retrying: {error}",
+                tracing::warn!(
+                    "startup failure cleanup for submission {} failed; retrying: {error}",
                     request.submission_id
                 );
             }
             Err(_) => {
-                eprintln!(
-                    "sprocket-agent: startup failure cleanup for submission {} timed out; retrying",
+                tracing::warn!(
+                    "startup failure cleanup for submission {} timed out; retrying",
                     request.submission_id
                 );
             }
@@ -741,7 +738,7 @@ pub async fn run_agent(
         Ok(context) => context,
         Err(error) => return abort_before_start(&runtime, &run_id, error).await,
     };
-    eprintln!("sprocket-agent: loaded run context {}", run_id);
+    tracing::info!("loaded run context {}", run_id);
     let transcript_dir = store.thread_dir(&context.run.user_id, &context.run.thread_id);
     let cwd = restore_cwd(&workspace_root, context.cwd.as_deref());
 
@@ -787,8 +784,8 @@ pub async fn run_agent(
         ),
         Ok(None) => (ProviderSwitch::None, capabilities.supports_images),
         Err(error) => {
-            eprintln!(
-                "sprocket-agent: provider switch context handoff failed ({error:#}); continuing on the selected provider without it"
+            tracing::warn!(
+                "provider switch context handoff failed ({error:#}); continuing on the selected provider without it"
             );
             (ProviderSwitch::WithoutHandoff, capabilities.supports_images)
         }
@@ -845,7 +842,7 @@ pub async fn run_agent(
         let workspace_skills =
             load_workspace_skills(&workspace_root, &default_user_skills_dirs(), BUILTIN_SKILLS);
         for warning in &workspace_skills.warnings {
-            eprintln!("sprocket-agent: {warning}");
+            tracing::warn!("{warning}");
         }
         let skills: Arc<[WorkspaceSkill]> = workspace_skills.skills.into();
         let is_continuation = context.run.continuation_of_run_id.is_some()
@@ -906,7 +903,7 @@ pub async fn run_agent(
         prompt
     };
 
-    eprintln!("sprocket-agent: prepared assistant response {}", run_id);
+    tracing::info!("prepared assistant response {}", run_id);
 
     let Some(lease) = claim_run(&runtime, &run_id, &claim_id).await? else {
         return Ok(());
@@ -917,8 +914,8 @@ pub async fn run_agent(
         return Ok(());
     }
 
-    eprintln!(
-        "sprocket-agent: selected completion provider {} for run {run_id}",
+    tracing::info!(
+        "selected completion provider {} for run {run_id}",
         context.run.completion_provider.as_str()
     );
 

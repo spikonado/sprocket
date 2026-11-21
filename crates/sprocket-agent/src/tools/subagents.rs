@@ -914,8 +914,8 @@ where
         if attempt == CONTROL_MAX_ATTEMPTS {
             return Err(tool_error(failure));
         }
-        eprintln!(
-            "sprocket-agent: {CONTROL} transport attempt {attempt} for thread {thread_id} \
+        tracing::warn!(
+            "{CONTROL} transport attempt {attempt} for thread {thread_id} \
              failed; retrying: {failure:#}"
         );
         tokio::select! {

@@ -391,10 +391,7 @@ fn load_index(dir: &Path) -> anyhow::Result<ThreadIndex> {
             }
             // Damaged chunks are downloaded again.
             Some(Err(error)) => {
-                eprintln!(
-                    "sprocket-transcript: discarding {}: {error:#}",
-                    path.display()
-                );
+                tracing::warn!("discarding {}: {error:#}", path.display());
                 remove_path(&path)?;
             }
             // Temporary files left by an interrupted write.
