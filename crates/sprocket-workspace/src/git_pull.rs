@@ -17,15 +17,21 @@ pub async fn pull_fast_forward(
     tool_environment: Vec<(OsString, OsString)>,
 ) -> anyhow::Result<()> {
     let mut git = Command::new("git");
-    git.args(["pull", "--no-rebase", "--ff-only", "--quiet"])
-        .current_dir(checkout)
-        .envs(tool_environment)
-        .envs(agent_environment().await)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
+    git.args([
+        "pull",
+        "--no-rebase",
+        "--ff-only",
+        "--no-autostash",
+        "--quiet",
+    ])
+    .current_dir(checkout)
+    .envs(tool_environment)
+    .envs(agent_environment().await)
+    .env("GIT_TERMINAL_PROMPT", "0")
+    .stdin(Stdio::null())
+    .stdout(Stdio::null())
+    .stderr(Stdio::piped())
+    .kill_on_drop(true);
     hide_console_window(&mut git);
     let output = tokio::time::timeout(PULL_TIMEOUT, git.output())
         .await
