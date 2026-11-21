@@ -152,6 +152,7 @@ export default function InboxSidebar({
 	const menuTriggerRef = useRef<HTMLElement | null>(null);
 	const renameInputRef = useRef<HTMLInputElement | null>(null);
 	const projectMenuRef = useRef<HTMLDetailsElement | null>(null);
+	const searchInputRef = useRef<HTMLInputElement | null>(null);
 	const onSettledOpenChangeRef = useLatest(onSettledOpenChange);
 
 	const closeMenu = useCallback(() => {
@@ -486,8 +487,9 @@ export default function InboxSidebar({
 					</button>
 				</div>
 				<label className="inbox-thread-search">
-					<Search size={14} aria-hidden="true" />
+					<Search size={15} aria-hidden="true" />
 					<input
+						ref={searchInputRef}
 						type="search"
 						value={search}
 						onChange={(event) => onSearchChange(event.currentTarget.value)}
@@ -498,7 +500,22 @@ export default function InboxSidebar({
 						}}
 						aria-label="Search threads"
 						placeholder="Search threads"
+						autoComplete="off"
+						spellCheck={false}
 					/>
+					{search && (
+						<button
+							className="inbox-icon inbox-thread-search-clear"
+							type="button"
+							aria-label="Clear search"
+							onClick={() => {
+								onSearchChange('');
+								searchInputRef.current?.focus();
+							}}
+						>
+							<X size={14} />
+						</button>
+					)}
 				</label>
 			</div>
 

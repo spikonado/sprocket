@@ -1130,7 +1130,7 @@ it.each([
 	}
 );
 
-it('clears the thread search with Escape', async () => {
+it('clears the thread search with Escape or the clear button', async () => {
 	const input = { ...props([thread()]), search: 'rover' };
 	const view = renderView(<Harness {...input} />);
 	const search = view.getByRole('searchbox', { name: 'Search threads' });
@@ -1139,6 +1139,10 @@ it('clears the thread search with Escape', async () => {
 	expect(input.onSearchChange).toHaveBeenLastCalledWith('rovers');
 	fireEvent.keyDown(search, { key: 'Escape' });
 	expect(input.onSearchChange).toHaveBeenLastCalledWith('');
+	input.onSearchChange.mockClear();
+	fireEvent.click(view.getByRole('button', { name: 'Clear search' }));
+	expect(input.onSearchChange).toHaveBeenCalledWith('');
+	expect(document.activeElement).toBe(search);
 });
 
 it('explains when a search matches nothing', async () => {

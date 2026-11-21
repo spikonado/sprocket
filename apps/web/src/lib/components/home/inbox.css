@@ -69,15 +69,22 @@
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	margin-top: 8px;
-	padding: 7px 10px;
-	border: 1px solid var(--hairline);
-	border-radius: 6px;
+	margin-top: 2px;
+	padding: 0 4px 0 9px;
+	height: 36px;
+	border-radius: 5px;
 	color: var(--muted-foreground);
+	cursor: text;
+	transition: background 120ms ease;
+}
+
+.inbox-thread-search:hover {
+	background: var(--hover-fill);
 }
 
 .inbox-thread-search:focus-within {
-	border-color: var(--accent-strong);
+	background: var(--hover-fill-strong);
+	color: var(--foreground);
 }
 
 .inbox-thread-search input {
@@ -85,14 +92,33 @@
 	flex: 1;
 	background: transparent;
 	color: var(--foreground);
-	font-size: 13px;
+	font-size: 14px;
 	outline: none;
 }
 
-.inbox-search-empty {
-	padding: 10px;
+.inbox-thread-search input::placeholder {
 	color: var(--muted-foreground);
-	font-size: 12px;
+}
+
+.inbox-thread-search input::-webkit-search-cancel-button {
+	appearance: none;
+}
+
+.inbox-thread-search-clear {
+	flex: none;
+	width: 24px;
+	height: 24px;
+	border-radius: 4px;
+}
+
+.inbox-thread-search-clear:hover {
+	background: var(--hover-fill-strong);
+}
+
+.inbox-search-empty {
+	padding: 16px 10px;
+	color: var(--muted-foreground);
+	font-size: 13px;
 	text-align: center;
 }
 
