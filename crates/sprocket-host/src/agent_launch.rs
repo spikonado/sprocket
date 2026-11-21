@@ -284,8 +284,8 @@ async fn launch_agent_inner(
                         .record_message_sent(&attachment_key, crate::now_ms())
                         .await
                 {
-                    eprintln!(
-                        "sprocket-server: failed to save project message recency for run {run_id}: {error:#}"
+                    tracing::error!(
+                        "failed to save project message recency for run {run_id}: {error:#}"
                     );
                 }
                 let _ = start_result_sender.send(Ok(LaunchedRun {
@@ -333,14 +333,14 @@ async fn launch_agent_inner(
                 }
                 drop(artifact_watch);
                 if let Err(error) = result {
-                    eprintln!("sprocket-server: agent run failed: {error:#}");
+                    tracing::error!("agent run failed: {error:#}");
                 }
             }
             Err(error) => {
                 let failure =
                     LaunchError::Internal(anyhow!("failed to start agent run: {error:#}"));
                 if let Err(Err(error)) = start_result_sender.send(Err(failure)) {
-                    eprintln!("sprocket-server: detached agent launch failed: {error}");
+                    tracing::error!("detached agent launch failed: {error}");
                 }
             }
         }

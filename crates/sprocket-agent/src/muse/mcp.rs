@@ -60,7 +60,7 @@ pub(super) fn serve(
         .with_state(server);
     let server = tokio::spawn(async move {
         if let Err(error) = axum::serve(listener, router).await {
-            eprintln!("sprocket-agent: Muse's MCP server stopped ({error})");
+            tracing::warn!("Muse's MCP server stopped ({error})");
         }
     });
     Ok(McpEndpoint {

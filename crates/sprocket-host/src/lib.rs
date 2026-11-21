@@ -344,7 +344,7 @@ impl Host {
                 interval.tick().await;
                 let cutoff = std::time::SystemTime::now() - Duration::from_secs(24 * 60 * 60);
                 if let Err(error) = transcript.prune_pending_attachments(cutoff).await {
-                    eprintln!("sprocket-server: failed to expire pending attachments: {error}");
+                    tracing::error!("failed to expire pending attachments: {error}");
                 }
             }
         });

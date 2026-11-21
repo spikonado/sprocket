@@ -14,6 +14,8 @@ pub enum ConvexErrorCode {
     SubmissionOwnedByAnotherExecutor,
     SubmissionOwnedByAnotherRun,
     MachineNotActive,
+    UsageLimitReached,
+    ProviderNotConfigured,
 }
 
 static CODE_MESSAGES: LazyLock<Vec<(ConvexErrorCode, String)>> = LazyLock::new(|| {
@@ -90,20 +92,20 @@ fn decode<T: for<'de> Deserialize<'de>>(
         }
         FunctionResult::ErrorMessage(message) => {
             let message = clean_function_error_message(&message);
-            (code_for_message(&message), message)
+            (message.as_deref().and_then(code_for_message), message)
         }
         FunctionResult::ConvexError(error) => {
             let message = clean_function_error_message(convex_error_text(&error));
             (
-                error_code(&error).or_else(|| code_for_message(&message)),
+                error_code(&error).or_else(|| message.as_deref().and_then(code_for_message)),
                 message,
             )
         }
     };
-    let message = if labeled {
-        format!("{function}: {message}")
-    } else {
-        message
+    let message = match message {
+        Some(message) if labeled => format!("{function}: {message}"),
+        Some(message) => message,
+        None => format!("{function} failed without a readable error."),
     };
     Err(ConvexFunctionError { code, message }.into())
 }
@@ -132,7 +134,7 @@ fn error_code(error: &ConvexError) -> Option<ConvexErrorCode> {
     serde_json::from_value(serde_json::Value::String(code.clone())).ok()
 }
 
-fn clean_function_error_message(raw: &str) -> String {
+fn clean_function_error_message(raw: &str) -> Option<String> {
     let mut content: Vec<&str> = Vec::new();
     for line in raw.lines() {
         let trimmed = line.trim();
@@ -151,10 +153,7 @@ fn clean_function_error_message(raw: &str) -> String {
         }
         content.push(message);
     }
-    if content.is_empty() {
-        return "The server failed without a readable error.".to_string();
-    }
-    content.join(" ")
+    (!content.is_empty()).then(|| content.join(" "))
 }
 
 fn value_to_plain_json(value: Value) -> serde_json::Value {

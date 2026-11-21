@@ -532,7 +532,7 @@ pub(crate) async fn inline_image_url(block: &mut Value) {
                 "data": STANDARD.encode(bytes),
             });
         }
-        Err(error) => eprintln!("sprocket-agent: couldn't download an image ({error:#})"),
+        Err(error) => tracing::warn!("couldn't download an image ({error:#})"),
     }
 }
 
@@ -710,8 +710,8 @@ impl<C: Cli> TurnStream<C> {
                         session.live.expect_turn(&turn);
                     }
                     Err(error) => {
-                        eprintln!(
-                            "sprocket-agent: {error:#}; replaying the conversation in a new {} session",
+                        tracing::warn!(
+                            "{error:#}; replaying the conversation in a new {} session",
                             C::NAME
                         );
                         spawn_fresh(&run, &mut state, &turn)?;
@@ -834,8 +834,8 @@ impl<C: Cli> TurnStream<C> {
     }
 
     fn restart_fresh(&mut self, reason: &str) -> Option<Bytes> {
-        eprintln!(
-            "sprocket-agent: {} could not resume its session ({reason}); replaying the conversation",
+        tracing::warn!(
+            "{} could not resume its session ({reason}); replaying the conversation",
             C::NAME
         );
         self.resumed = false;

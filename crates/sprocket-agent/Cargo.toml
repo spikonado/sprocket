@@ -39,6 +39,7 @@ tempfile.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "sync", "time", "fs", "io-util", "net", "process", "rt"] }
 tokio-tungstenite.workspace = true
+tracing.workspace = true
 url.workspace = true
 uuid = { workspace = true, features = ["v7"] }
 zstd = { version = "0.13.4", default-features = false }

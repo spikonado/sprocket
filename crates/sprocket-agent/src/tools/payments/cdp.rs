@@ -355,7 +355,7 @@ impl Pump {
             }
             if self.arming.remove(&id) {
                 if let Some(error) = message.pointer("/error/message").and_then(Value::as_str) {
-                    eprintln!("sprocket-agent: could not intercept a checkout frame: {error}");
+                    tracing::warn!("could not intercept a checkout frame: {error}");
                 }
                 self.release_settled();
             }

@@ -122,7 +122,7 @@ impl RunOutput {
                 }
             }
             if let Err(error) = saved {
-                eprintln!("sprocket-agent: could not cache returned transcript parts: {error:#}");
+                tracing::warn!("could not cache returned transcript parts: {error:#}");
                 state.output_error = Some(format!("Could not cache local run output: {error}"));
             }
         });
