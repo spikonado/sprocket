@@ -152,9 +152,9 @@ Right after placement, the pours, and the keepouts, and before the schematic is 
 Then route in this order:
 
 1. Draw the critical copper yourself: switch nodes, crystal nets, and a fan-out that takes each fine-pitch IC pin to a via outside the pad ring, never in a pad.
-   `qfn_fanout.py` helps, but check its result in `kicad-view`.
+   `check_fanout.py --component U1` names the pins the placement cages. `qfn_fanout.py` helps, but check its result in `kicad-view`.
 2. Route differential pairs with `route_diff.py --impedance <ohms>`, then check them with `check_impedance.py`.
-   `route_diff.py` pairs nets only when the last character that isn't a digit or `_` is `P`/`N` or `+`/`-`, like `USB_D+`/`USB_D-` or `ETH_TXP`/`ETH_TXN`. Rename nets like `USB_DM` and `USB_DP_MCU` in the schematic first.
+   KiCad's DRC pairs nets only when the last character that isn't a digit or `_` is `P`/`N` or `+`/`-`, like `USB_D+`/`USB_D-` or `ETH_TXP`/`ETH_TXN`. Rename nets like `USB_DM` and `USB_DP_MCU` in the schematic first. `route_diff.py` warns about names that won't pair.
 3. Lock the tracks, arcs, and vias from the steps above, so the router never rips them.
 4. Route everything else in one run with `--keep-input-copper`. Plan buses and nets that share a destination as bundles with `--bus`.
    Routing block by block leaves more nets open than one global run.
@@ -230,7 +230,7 @@ DRC passes on boards whose copper overheats or whose signals radiate. Before cal
 - Planes cut or slit by other tracks.
 - Hot-loop and input capacitors at their pins, as in [Placing parts](#placing-parts).
 
-Then check the signals from the board file, because `route_review.py` reports none of these:
+Then run `signal_review.py` and `route_review.py` on the board and fix what breaks these rules:
 
 - No track of another net on a plane layer.
 - USB, QSPI, SD, and clock nets at most about 1.5 times their straight-line length, with at most 2 vias each.

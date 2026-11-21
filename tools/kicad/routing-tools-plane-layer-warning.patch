@@ -1,8 +1,29 @@
+diff --git a/py_router/autoroute.py b/py_router/autoroute.py
+index 734d648..cd44c23 100644
+--- a/py_router/autoroute.py
++++ b/py_router/autoroute.py
+@@ -108,6 +108,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
+ REPO = os.path.dirname(HERE)
+ sys.path.insert(0, HERE)
+
++from routing_constants import PLANE_FALLBACK_COST  # noqa: E402
++
+ TOOLS = {
+     'planes': os.path.join(HERE, 'route_planes.py'),
+     'bga': os.path.join(HERE, 'bga_fanout.py'),
+@@ -121,7 +123,6 @@ GRID_FINE_PITCH = 0.5        # a part at or under this pitch routes on 0.05
+ CONGESTED_NETS = 150         # skill: CONGESTED = fine BGA or > 150 nets
+ RAIL_WIDTH = 0.3
+ PLANE_LAYER_COST = -1.0      # inner planes stay solid; a positive price lets signals cross
+-PLANE_FALLBACK_COST = 3.0    # a later pass's price on a solid plane, the route step's in the plan skill
+ ROUTE_PASSES = 3             # the first pass plus up to two on its result
+ EFFORT_FACTOR = 2.0          # --effort-factor's default
+
 diff --git a/py_router/reference_plane.py b/py_router/reference_plane.py
-index 20405e2..90a986f 100644
+index 20405e2..fe4f4fb 100644
 --- a/py_router/reference_plane.py
 +++ b/py_router/reference_plane.py
-@@ -30,6 +30,7 @@ passes beside a drill, which is not a split in the plane.
+@@ -30,10 +30,12 @@ passes beside a drill, which is not a split in the plane.
  """
 
  import math
@@ -10,13 +31,15 @@ index 20405e2..90a986f 100644
  from typing import Dict, List, Optional
 
  DEFAULT_STEP = 0.1
-@@ -48,6 +49,33 @@ def reference_layers(pcb_data) -> Dict[str, List[str]]:
+ _KEY = 3                 # chain joints: endpoints equal to 1 um
++PLANE_COVER = 0.5
+
+
+ def reference_layers(pcb_data) -> Dict[str, List[str]]:
+@@ -48,6 +50,30 @@ def reference_layers(pcb_data) -> Dict[str, List[str]]:
      return out
 
 
-+PLANE_COVER = 0.5
-+
-+
 +def plane_layers(pcb_data) -> Dict[str, str]:
 +    """{inner copper layer: the net with the most pour area on it, when that
 +    covers at least PLANE_COVER of the board's bounding box}. Outer layers are
@@ -45,23 +68,41 @@ index 20405e2..90a986f 100644
      c = getattr(z, 'clearance', None)
      return float(c) if c is not None and c > 0 else 0.0
 diff --git a/py_router/route.py b/py_router/route.py
-index f10f90d..4212a35 100644
+index f10f90d..0061118 100644
 --- a/py_router/route.py
 +++ b/py_router/route.py
-@@ -3206,6 +3206,13 @@ def batch_route(input_file: str, output_file: str, net_names: List[str],
+@@ -3206,6 +3206,15 @@ def batch_route(input_file: str, output_file: str, net_names: List[str],
 
      costs_str = ', '.join(f"{layers[i]}={layer_costs[i]}x" for i in range(min(len(layers), len(layer_costs))))
      print(f"  Layer costs: {costs_str}")
 +    from reference_plane import plane_layers
++    from routing_constants import PLANE_FALLBACK_COST
 +    for _plane_layer, _plane_net in plane_layers(pcb_data).items():
 +        _plane_cost = layer_costs[layers.index(_plane_layer)]
-+        if _plane_cost >= 0:
++        if 0 <= _plane_cost < PLANE_FALLBACK_COST:
 +            print(f"  WARNING: {_plane_layer} carries the {_plane_net} plane but is routable "
 +                  f"at {_plane_cost}x, so other nets' tracks may cut it up. Pass -1 for "
-+                  f"{_plane_layer} in --layer-costs to keep the plane solid.")
++                  f"{_plane_layer} in --layer-costs to keep the plane solid (autoroute's "
++                  f"later passes cross a plane at {PLANE_FALLBACK_COST:g}).")
 
      # Calculate layer-specific widths for impedance-controlled routing.
      # #610: with --track-width OMITTED the impedance request sets the width
+diff --git a/py_router/routing_constants.py b/py_router/routing_constants.py
+index 6892fe3..5a2a093 100644
+--- a/py_router/routing_constants.py
++++ b/py_router/routing_constants.py
+@@ -22,6 +22,11 @@ SOFT_JOINT_MIN_GAP = 0.010
+ # "forbidden" (canonical value -1). NOT scaled by 1000.
+ FORBIDDEN_LAYER_COST = -1
+
++# The --layer-costs price at which a route pass may cross a solid inner plane:
++# autoroute's later passes, the plan skill's route step. route.py warns about a
++# plane layer priced under it.
++PLANE_FALLBACK_COST = 3.0
++
+ # Power net detection patterns (used for auto-exclusion from component routing)
+ POWER_NET_EXCLUSION_PATTERNS = [
+     '*GND*', '*VCC*', '*VDD*', '+*V', '-*V', 'unconnected-*', ''
 diff --git a/py_tools/route_review.py b/py_tools/route_review.py
 index 9df09d7..0143247 100644
 --- a/py_tools/route_review.py
