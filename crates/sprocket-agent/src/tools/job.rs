@@ -79,6 +79,13 @@ pub(super) struct ExecutorJobSnapshot {
     part: Option<PersistedTranscriptPart>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BeginJobResponse {
+    job_id: String,
+    parts: Vec<PersistedTranscriptPart>,
+}
+
 pub(super) async fn begin_executor_job(
     context: &AgentToolContext,
     kind: &str,
@@ -109,16 +116,13 @@ pub(super) async fn begin_executor_job(
         "payload".to_string(),
         Value::try_from(stored_payload).map_err(tool_error)?,
     );
-    let begin_result: serde_json::Value = context
+    let BeginJobResponse { job_id, parts } = context
         .runtime
         .mutation_json("agentRuntime:beginToolJob", begin_args)
         .await
         .map_err(tool_error)?;
-    begin_result
-        .get("jobId")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| tool_failure("beginToolJob did not return a jobId"))
-        .map(str::to_string)
+    context.runtime.record_parts(parts).await;
+    Ok(job_id)
 }
 
 pub(super) async fn execute_cloud_tool_job(
