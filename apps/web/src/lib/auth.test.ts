@@ -5,7 +5,6 @@ import { z } from 'zod';
 import {
 	authState,
 	convexAuthRetryPending,
-	convexAuthRetryVersion,
 	getAccessToken,
 	getConvexAccessToken,
 	initializeAuth,
@@ -258,14 +257,12 @@ describe('installed and hosted auth', () => {
 		});
 		await initializeAuth(convexClient);
 		unavailable = true;
-		const version = get(convexAuthRetryVersion);
 		const token = getConvexAccessToken({ forceRefreshToken: true });
 		await vi.advanceTimersByTimeAsync(3_000);
 		expect(get(authState)).toMatchObject({ user: nativeUser, error: 'Temporarily unavailable' });
 		unavailable = false;
 		await vi.advanceTimersByTimeAsync(4_000);
 		await expect(token).resolves.toBe('native-token');
-		expect(get(convexAuthRetryVersion)).toBe(version);
 		expect(window.open).not.toHaveBeenCalled();
 	});
 

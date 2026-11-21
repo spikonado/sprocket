@@ -85,8 +85,6 @@ const AUTH_RETRY_INITIAL_DELAY_MS = 1_000;
 
 const AUTH_RETRY_MAX_DELAY_MS = 15_000;
 
-let nativeSessionRetryTimer: ReturnType<typeof setTimeout> | null = null;
-
 const ACCOUNT_BINDING_ERROR =
 	'This device is signed in with a different account. Sign out, then sign in with the same account.';
 
@@ -131,6 +129,8 @@ let desktopSignInAttempt: DesktopSignInAttempt | null = null;
 let authGeneration = 0;
 
 let nativeAuthWatch: AbortController | null = null;
+
+let nativeSessionRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
 let nativeTokenInflight: {
 	generation: number;
@@ -514,8 +514,7 @@ async function initializeInstalledAuth(generation: number, attempt = 0) {
 		clearNativeSessionRetry();
 		nativeSessionRetryTimer = setTimeout(() => {
 			nativeSessionRetryTimer = null;
-
-			if (generation === authGeneration) void initializeInstalledAuth(generation, attempt + 1);
+			void initializeInstalledAuth(generation, attempt + 1);
 		}, authRetryDelayMs(attempt));
 	}
 }
@@ -1238,17 +1237,17 @@ export async function getAccessToken({
 }
 
 // Retries in place because Convex stops its socket to reauthenticate and restarts it only when
-// the current fetcher settles; reinstalling auth mid-fetch leaves the socket stopped for good.
-// Null tells Convex the user is signed out.
+// the current fetcher settles. Reinstalling auth mid-fetch leaves the socket stopped for good.
+// Returning null tells Convex the user is signed out.
 export async function getConvexAccessToken(options: { forceRefreshToken: boolean }) {
 	const userId = authState.getSnapshot().user?.id;
+
+	if (!userId) return null;
 	const retryVersion = convexAuthRetryVersion.getSnapshot();
 
 	const isCurrentFetch = () =>
 		authState.getSnapshot().user?.id === userId &&
 		convexAuthRetryVersion.getSnapshot() === retryVersion;
-
-	if (!userId) return null;
 
 	for (let attempt = 0; ; attempt += 1) {
 		const generation = authGeneration;
