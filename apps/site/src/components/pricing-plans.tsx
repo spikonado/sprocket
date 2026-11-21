@@ -1,16 +1,17 @@
 import { useEffect, useEffectEvent, useState } from 'react';
 import { captureException, observeSection, setAnalyticsUser, track } from '@/lib/analytics/client';
 import {
+	billingRefusalMessage,
 	clearCheckoutAttempt,
 	fetchCheckoutStatus,
 	fetchCustomerPortalUrl,
 	fetchMySubscription,
+	isTransientFailure,
 	loadPricingSession,
 	readCheckoutAttempt,
 	signInForCheckout,
 	signOutOfPricing,
-	startCheckout,
-	billingRefusalMessage
+	startCheckout
 } from '@/lib/pricing/billing';
 import {
 	buildCreditPackCards,
@@ -29,6 +30,8 @@ import type {
 import { cn } from '@/utils';
 
 type User = { id: string; email: string };
+
+type Notice = { text: string; error: boolean; retryLoading?: boolean };
 
 const SUPPORT_EMAIL = 'aarav@spikonado.com';
 const SUPPORT_HREF = `mailto:${SUPPORT_EMAIL}?subject=Sprocket%20billing%20support`;
@@ -73,7 +76,7 @@ export default function PricingPlans({ catalog }: { catalog: PublicPricingCatalo
 	const [subscription, setSubscription] = useState<MySubscription | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [busy, setBusy] = useState<{ buttonFor: string | null; label: string } | null>(null);
-	const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
+	const [notice, setNotice] = useState<Notice | null>(null);
 	const [pending, setPending] = useState(false);
 
 	const cards = catalog ? buildPlanCards(catalog) : [];
@@ -83,12 +86,14 @@ export default function PricingPlans({ catalog }: { catalog: PublicPricingCatalo
 	const changesPlanInPortal =
 		subscription !== null && subscription.tier !== 'free' && subscription.billingManaged;
 
-	function fail(cause: unknown, fallback: string) {
+	function fail(cause: unknown, fallback: string, { retryLoading = false } = {}) {
 		setBusy(null);
-		const message = billingRefusalMessage(cause);
+		const transient = isTransientFailure(cause);
+		const message = transient ? cause.message : billingRefusalMessage(cause);
 		setNotice({
 			text: message ?? (cause instanceof Error ? cause.message : fallback),
-			error: true
+			error: true,
+			retryLoading: transient && retryLoading
 		});
 
 		if (!message) captureException(cause, fallback);
@@ -234,6 +239,23 @@ export default function PricingPlans({ catalog }: { catalog: PublicPricingCatalo
 		}
 	}
 
+	function failLoadingAccount(cause: unknown) {
+		fail(cause, 'Could not load your account.', { retryLoading: true });
+	}
+
+	async function retryLoadingAccount() {
+		setNotice(null);
+		setLoading(true);
+
+		try {
+			await recoverAttempt(await loadAccount());
+		} catch (error) {
+			failLoadingAccount(error);
+		} finally {
+			setLoading(false);
+		}
+	}
+
 	async function checkPaymentStatus() {
 		try {
 			if (!(await recoverAttempt(user))) {
@@ -335,7 +357,7 @@ export default function PricingPlans({ catalog }: { catalog: PublicPricingCatalo
 
 			await recoverAttempt(signedInUser);
 		} catch (error) {
-			fail(error, 'Could not load your account.');
+			failLoadingAccount(error);
 		} finally {
 			setLoading(false);
 		}
@@ -400,6 +422,19 @@ export default function PricingPlans({ catalog }: { catalog: PublicPricingCatalo
 							role={notice.error ? 'alert' : 'status'}
 						>
 							{notice.text}
+							{notice.retryLoading && (
+								<>
+									{' '}
+									<button
+										type="button"
+										className={linkClass}
+										disabled={!!busy}
+										onClick={() => void retryLoadingAccount()}
+									>
+										Try again
+									</button>
+								</>
+							)}
 						</p>
 					)}
 
