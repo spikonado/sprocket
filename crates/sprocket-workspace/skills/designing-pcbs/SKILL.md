@@ -111,13 +111,17 @@ Keep net class widths and clearances above them.
   The exception is a switching regulator whose datasheet asks for separate AGND and PGND: put its AGND pin and the controller's quiet parts, like the feedback divider and compensation, on a small top-layer AGND island.
   Join the island to PGND at one point, usually the exposed pad, through a net tie, and give the island no other connection to the plane.
 - Split ground only for galvanic isolation, like mains or patient connections, and cross the gap only with isolators, optocouplers, or transformers.
-- Give every high-speed trace a continuous reference plane along its whole length. Power planes may be split when no trace on an adjacent layer crosses the split.
+- Give every high-speed trace a continuous reference plane along its whole length.
+  On 4-layer boards, `B.Cu` traces return through the inner power plane, so keep it as solid as the ground plane.
 
 ## Placing parts
 
 - Copy the datasheet's layout for placement-sensitive blocks, like ESD protection, crystals, and switching regulator passives.
+- When the vendor publishes layout files for an IC's reference design, like Raspberry Pi's RP2350 minimal design, copy its core with kipy instead of redrawing it: the IC, its regulator, crystal, flash, USB, and decoupling parts with their tracks and vias.
+  Apply one rigid transform to every item, map each track's net through the pad it touches, and lock the copied copper.
 - Put each decoupling capacitor at the supply pin it serves, with its pad facing the pin about 1 mm away.
   Treat a reference design's looser spacing as a maximum.
+  Leave an escape lane between the capacitors for every signal pin of a fine-pitch IC.
 - Put every other passive at the pin it serves, turned so the connection is a short straight track.
 - Group related parts and align them on shared center lines at an even pitch, like a row with a capacitor on each side of an IC. Put test pads on a grid.
 - Give each GND pad its own via.
@@ -151,9 +155,11 @@ It connects the pads of zone nets, like `GND`, to their pours.
 On every run:
 
 - Pass `--escalation off --strict-sizes`. Otherwise, the router retries failing nets below their net class sizes and lowers the project's rules to match.
-- On boards with 4 or more layers, keep tracks off the ground plane: pass every copper layer to `--layers` and `-1` for the plane in `--layer-costs`.
+- On boards with 4 or more layers, keep tracks off every plane: pass every copper layer to `--layers` and `-1` for each plane in `--layer-costs`, like `--layers F.Cu In1.Cu In2.Cu B.Cu --layer-costs 1 -1 -1 1`.
+  When nets stay open, fix the placement, the fan-out, or the board size. Never raise a plane's cost to let tracks onto it.
 
 Before the first route, put rule-area keepouts that block tracks on every layer over switch nodes and other areas that traces must avoid. Allow copper pours in them, so GND still fills under the switch node.
+Give switch nodes a net class as wide as their current needs.
 
 Right after placement, the pours, and the keepouts, and before the schematic is final, judge the placement with a trial route:
 
@@ -163,13 +169,17 @@ Right after placement, the pours, and the keepouts, and before the schematic is 
    Once they agree, `--swappable-nets 'GPIO*' --schematic-dir proj/` swaps the pins and writes the swaps to the schematic.
    Finish this step before the first full route.
 
-Then route in this order, one block at a time with `--component REF` or `--group BLOCK`:
+Use `--quick 2` for experiments, because a full run takes minutes longer.
 
-1. Differential pairs, with `route_diff.py`.
-2. Short local nets around crystals and switching regulators.
-3. Bundles of low-speed signals. Plan buses and nets that share a destination as bundles, and route them with `--bus`.
+Then route in this order:
 
-Keep earlier blocks' copper with `--keep-input-copper`, and set `KICAD_RIP_PREEXISTING=0 KICAD_FINALIZE_RIP=0` so the router can't rip it up.
+1. Draw the critical copper yourself: switch nodes, crystal nets, and a fan-out that takes each fine-pitch IC pin to a via outside the pad ring, never in a pad.
+   `qfn_fanout.py` helps, but check its result in `kicad-view`.
+2. Route differential pairs with `route_diff.py --impedance <ohms>`, then check them with `check_impedance.py`.
+   `route_diff.py` pairs nets only when the last character that isn't a digit or `_` is `P`/`N` or `+`/`-`, like `USB_D+`/`USB_D-` or `ETH_TXP`/`ETH_TXN`. Rename nets like `USB_DM` and `USB_DP_MCU` in the schematic first.
+3. Lock the copper from the steps above: set `locked = True` on its tracks, arcs, and vias, and send them to `update_items`. The router never rips locked copper.
+4. Route everything else in one run with `--keep-input-copper`. Plan buses and nets that share a destination as bundles with `--bus`.
+   Routing block by block leaves more nets open than one global run.
 
 The router leaves right angles and stray jogs, so look at each block in `kicad-view` and fix the copper that breaks these rules:
 
@@ -182,9 +192,10 @@ The router leaves right angles and stray jogs, so look at each block in `kicad-v
 The exit code doesn't say whether every net is routed, so run [DRC](#checks) on each output.
 For each round of fixes:
 
-- Route only what is still open: the nets DRC lists as unconnected with `--nets`, or one block with `--component` or `--group`.
+- Route only what is still open: the nets DRC lists as unconnected with `--nets`.
 - Read the run's last `JSON_SUMMARY_MIN` and `JSON_IMPROVEMENT_GATE` lines.
   When the gate rejects a run, `kicad-route` writes the input board back, and the same command gets the same result.
+  The gate accepts a run that opens a different net than it closes, so compare the open net names too.
 - When two runs fail on the same nets, move parts or swap pins before the next run. Net order and other flag variants don't fix them.
 - Commit the board after each stage that passes DRC, so a bad run is one `git checkout` away. When you can't commit, keep snapshots with `copy_board.py`.
 - Write board-generating scripts to be idempotent, and have them delete only copper they created.
@@ -236,11 +247,21 @@ kicad-cli sch erc --severity-all --format json -o erc.json proj/board.kicad_sch
 kicad-cli pcb drc --refill-zones --schematic-parity --severity-all --format json -o drc.json proj/board.kicad_pcb
 ```
 
-DRC passes on boards whose copper overheats. Before calling the layout done, check each high-current net with `render_power.py` and `kicad-view`:
+DRC passes on boards whose copper overheats or whose signals radiate. Before calling the layout done, check each high-current net with `render_power.py` and `kicad-view`:
 
 - The narrowest copper on every layer it uses, against its current.
 - Planes cut or slit by other tracks.
 - Hot-loop and input capacitors at their pins, as in [Placing parts](#placing-parts).
+
+Then check the signals from the board file, because `route_review.py` reports none of these:
+
+- No track of another net on a plane layer.
+- USB, QSPI, SD, and clock nets at most about 1.5 times their straight-line length, with at most 2 vias each.
+- Each differential pair coupled along its length and at its target impedance.
+- Switch nodes at their net class width, with no vias.
+- No vias in SMD pads, unless the user chose the manufacturer's filled and capped vias.
+
+Fix every failure in the layout, or tell the user which ones remain and why.
 
 ## Show the result to the user
 
