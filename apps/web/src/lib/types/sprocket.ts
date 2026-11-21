@@ -174,6 +174,7 @@ export type ChatGptAccount = {
 export type ChatGptStatus = {
 	accounts: ChatGptAccount[];
 	activeConnectionId: string | null;
+	signedOut: boolean;
 	loginAvailable: boolean;
 	error?: string;
 };

@@ -666,6 +666,7 @@ describe('chatgpt local sign-in', () => {
 			const status: ChatGptStatus = {
 				accounts: [{ connectionId: 'conn-1', label: 'a@example.com', connected: true }],
 				activeConnectionId: 'conn-1',
+				signedOut: false,
 				loginAvailable: true
 			};
 

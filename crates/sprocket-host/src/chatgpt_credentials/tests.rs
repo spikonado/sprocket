@@ -1023,6 +1023,7 @@ async fn status_revokes_retained_tokens_before_forgetting_legacy_accounts() {
         );
         let status = reloaded.status("user-a").await.unwrap();
         assert!(status.accounts.is_empty());
+        assert!(status.signed_out);
         assert_eq!(status.active_connection_id, None);
         assert_eq!(status.error.is_some(), revoke_status != 200);
         let posts = fixture.provider.posts("/revoke");
@@ -1486,7 +1487,8 @@ async fn status_reports_a_connected_account_with_fresh_credentials() {
                 "label": "agent@example.com",
                 "connected": true
             }],
-            "activeConnectionId": "connection-1"
+            "activeConnectionId": "connection-1",
+            "signedOut": false
         })
     );
 }
@@ -1555,6 +1557,7 @@ async fn status_reports_revoked_credentials_as_disconnected() {
     );
     let status = fixture.service.status("user-a").await.unwrap();
     assert!(status.accounts.is_empty());
+    assert!(status.signed_out);
     assert!(status.error.unwrap().contains("session expired"));
     assert!(
         stored_account(&fixture.service, "user-a", "connection-1")

@@ -338,6 +338,7 @@ export default function SettingsCredentials({
 						(account) => account.connectionId !== connectionId
 					),
 					activeConnectionId,
+					signedOut: false,
 					loginAvailable: chatGptStatus.loginAvailable
 				});
 			}

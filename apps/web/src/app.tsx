@@ -403,6 +403,13 @@ export default function App({
 			? loadErrorMessage(chatGptStatusResource.error, 'Couldn’t load ChatGPT connection status.')
 			: (chatGptStatus?.error ?? null);
 
+	const chatGptSignedOut = chatGptStatus?.signedOut ?? false;
+	useEffect(() => {
+		if (chatGptSignedOut) {
+			void removeProviderFromOrder({ provider: 'chatgpt' }).catch(() => {});
+		}
+	}, [chatGptSignedOut, removeProviderFromOrder]);
+
 	async function loadModelCatalog() {
 		setCatalogLoading(true);
 

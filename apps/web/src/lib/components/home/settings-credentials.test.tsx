@@ -42,6 +42,7 @@ function statusFixture(overrides: Partial<ChatGptStatus> = {}): ChatGptStatus {
 	return {
 		accounts: [],
 		activeConnectionId: null,
+		signedOut: false,
 		loginAvailable: true,
 		...overrides
 	};

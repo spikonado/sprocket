@@ -139,6 +139,7 @@ function createLocalApi(overrides: Partial<LocalApi> = {}): LocalApi {
 		fetchChatGptStatus: async () => ({
 			accounts: [],
 			activeConnectionId: null,
+			signedOut: false,
 			loginAvailable: false
 		}),
 		startChatGptBrowserLogin: unused,
@@ -1647,6 +1648,33 @@ it('deletes the API key of a provider removed from the providers page', async ()
 	fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
 	await flushPendingWork();
 	expect(removeApiKey).toHaveBeenCalledWith({ provider: 'openrouter' });
+});
+
+it('removes ChatGPT from the provider order once the local server reports it signed out', async () => {
+	const client = createConvexFixtures();
+	client.registerMutation(api.uiPreferences.removeProvider, null);
+	const mutation = vi.spyOn(client, 'mutation');
+
+	await renderApp(
+		client,
+		createRuntime(
+			createLocalApi({
+				fetchChatGptStatus: async () => ({
+					accounts: [],
+					activeConnectionId: null,
+					signedOut: true,
+					loginAvailable: true
+				})
+			})
+		)
+	);
+	await waitFor(() =>
+		expect(mutation).toHaveBeenCalledWith(
+			api.uiPreferences.removeProvider,
+			{ provider: 'chatgpt' },
+			{}
+		)
+	);
 });
 
 it('checks Claude Code again when BYOK/BYOS opens', async () => {

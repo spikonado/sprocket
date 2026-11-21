@@ -96,6 +96,8 @@ pub struct SignIn {
 pub struct ServiceStatus {
     accounts: Vec<AccountStatus>,
     active_connection_id: Option<String>,
+    /// A session ended by expiry or an unfinished sign-out, and no account remains.
+    signed_out: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
 }
@@ -672,6 +674,7 @@ impl ChatGptService {
         tokio::spawn(async move {
             let mut error = service.storage_error.clone();
             let mut cleanup_warning = None;
+            let mut session_ended = false;
             if error.is_none() {
                 let forgotten = {
                     let state = service.state.lock().await;
@@ -688,6 +691,7 @@ impl ChatGptService {
                         })
                         .unwrap_or_default()
                 };
+                session_ended = !forgotten.is_empty();
                 for connection in forgotten {
                     match service.forget(&user, &connection, true).await {
                         Ok(Some(warning)) => cleanup_warning = Some(warning),
@@ -713,20 +717,23 @@ impl ChatGptService {
             }
             let state = service.state.lock().await;
             let accounts = state.users.get(&user).cloned().unwrap_or_default();
+            session_ended |= connected && session(&accounts).is_none();
+            let account_statuses: Vec<_> = accounts
+                .accounts
+                .iter()
+                .filter(|account| account.tokens.is_some())
+                .map(|account| AccountStatus {
+                    connection_id: account.connection_id.clone(),
+                    label: account
+                        .email
+                        .clone()
+                        .unwrap_or_else(|| "ChatGPT account".into()),
+                    connected: account.tokens.is_some(),
+                })
+                .collect();
             Ok(ServiceStatus {
-                accounts: accounts
-                    .accounts
-                    .iter()
-                    .filter(|account| account.tokens.is_some())
-                    .map(|account| AccountStatus {
-                        connection_id: account.connection_id.clone(),
-                        label: account
-                            .email
-                            .clone()
-                            .unwrap_or_else(|| "ChatGPT account".into()),
-                        connected: account.tokens.is_some(),
-                    })
-                    .collect(),
+                signed_out: session_ended && account_statuses.is_empty(),
+                accounts: account_statuses,
                 active_connection_id: accounts.active,
                 error: match (error, cleanup_warning) {
                     (Some(error), Some(warning)) => Some(format!("{error} {warning}")),

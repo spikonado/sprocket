@@ -69,7 +69,7 @@ async fn local_status_is_account_scoped_and_reports_login_availability() {
     assert_eq!(
         status,
         serde_json::json!({
-            "accounts":[], "activeConnectionId":null, "loginAvailable":true
+            "accounts":[], "activeConnectionId":null, "signedOut":false, "loginAvailable":true
         })
     );
     let response = app
