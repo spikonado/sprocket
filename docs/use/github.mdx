@@ -25,6 +25,14 @@ To settle a thread when its pull requests merge, turn on **Settle threads when t
 
 Sprocket tells the agent to add Sprocket as a co-author on its commits. Turn this off in [Settings → Version Control](/reference/settings#version-control).
 
+## Pull the latest code
+
+<Snippet file="unreleased.mdx" />
+
+Turn on **Pull the latest code automatically** in [Settings → Version Control](/reference/settings#version-control) to keep your projects up to date. Every 5 minutes, each computer running Sprocket runs `git pull --ff-only` in the checkout of each of its projects that has an `origin` remote.
+
+A pull only fast-forwards the current branch to its upstream. Git refuses it when the branch has no upstream, has commits that aren't upstream, or has uncommitted changes that the pull would overwrite. Agents already running in a checkout see its files change when a pull lands.
+
 ## Turn off GitHub
 
 Turn off GitHub, or one of its hosts, in **Settings → Connectors**. The agent then can't link pull requests, and their status stops refreshing.

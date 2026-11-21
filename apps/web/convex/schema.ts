@@ -181,7 +181,8 @@ export default defineSchema({
 		providerOrder: v.optional(v.array(vProviderOrderEntry)),
 		restrictSubagentsToProvider: v.optional(v.boolean()),
 		shareConversationContent: v.optional(v.boolean()),
-		coAuthorCommits: v.optional(v.boolean())
+		coAuthorCommits: v.optional(v.boolean()),
+		autoPullCheckouts: v.optional(v.boolean())
 	}).index('by_userId', ['userId']),
 	migrationSchedules: defineTable({
 		name: v.string(),

@@ -11,6 +11,7 @@ mod command_history;
 mod command_output;
 mod command_shell;
 mod commands;
+mod git_pull;
 mod git_repository;
 pub mod github;
 mod patch;
@@ -43,6 +44,7 @@ pub use commands::{
     CommandAction, CommandExecOutput, CommandOutput, CommandSessionManager, CommandStdinOutput,
     RunningCommand,
 };
+pub use git_pull::pull_fast_forward;
 pub use git_repository::{
     GitRepositoryIdentity, REMOTE_ATTACHMENT_KEY_PREFIX, resolve_git_repository_identity,
 };
