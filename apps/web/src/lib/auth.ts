@@ -81,7 +81,9 @@ const DESKTOP_LOGIN_REQUEST_TIMEOUT_MS = 15_000;
 
 const TRANSIENT_AUTH_ERROR = 'Native sign-in is temporarily unavailable. Try again.';
 
-let convexRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
+const AUTH_RETRY_INITIAL_DELAY_MS = 1_000;
+
+const AUTH_RETRY_MAX_DELAY_MS = 15_000;
 
 const ACCOUNT_BINDING_ERROR =
 	'This device is signed in with a different account. Sign out, then sign in with the same account.';
@@ -128,6 +130,8 @@ let authGeneration = 0;
 
 let nativeAuthWatch: AbortController | null = null;
 
+let nativeSessionRetryTimer: ReturnType<typeof setTimeout> | null = null;
+
 let nativeTokenInflight: {
 	generation: number;
 	forceRefreshToken: boolean;
@@ -137,7 +141,7 @@ let nativeTokenInflight: {
 export function resetAuthRuntime() {
 	nativeAuthWatch?.abort();
 	nativeAuthWatch = null;
-	clearConvexRecovery();
+	clearNativeSessionRetry();
 	desktopSignInAttempt?.abort.abort();
 	desktopSignInAttempt = null;
 	authClientPromise = null;
@@ -233,7 +237,7 @@ function isRemoteMachineApp() {
 }
 
 function invalidateAuthGeneration() {
-	clearConvexRecovery();
+	clearNativeSessionRetry();
 	authGeneration += 1;
 	nativeTokenInflight = null;
 	settleSupersededOperations();
@@ -246,6 +250,17 @@ function settleSupersededOperations() {
 
 function reinstallConvexAuth() {
 	convexAuthRetryVersion.update((version) => version + 1);
+}
+
+function authRetryDelayMs(attempt: number) {
+	return Math.min(AUTH_RETRY_INITIAL_DELAY_MS * 2 ** attempt, AUTH_RETRY_MAX_DELAY_MS);
+}
+
+function clearNativeSessionRetry() {
+	if (nativeSessionRetryTimer !== null) {
+		clearTimeout(nativeSessionRetryTimer);
+		nativeSessionRetryTimer = null;
+	}
 }
 
 function getAuthBootstrapClient() {
@@ -404,14 +419,7 @@ export async function initializeAuth(
 				throw new Error('Remote Sprocket access requires HTTPS.');
 			}
 
-			await establishLocalSession();
-
-			if (generation !== authGeneration) {
-				return;
-			}
-
 			await initializeInstalledAuth(generation);
-			watchNativeAuthentication();
 
 			return;
 		}
@@ -485,11 +493,30 @@ async function initializeHostedAuth() {
 	});
 }
 
-async function initializeInstalledAuth(generation: number) {
-	const outcome = await requestNativeSessionToken(false, generation);
+async function initializeInstalledAuth(generation: number, attempt = 0) {
+	let outcome: NativeTokenOutcome;
+
+	try {
+		await establishLocalSession();
+		outcome = await requestNativeSessionToken(false, generation);
+		watchNativeAuthentication();
+	} catch (error) {
+		outcome = {
+			kind: 'transient',
+			error: error instanceof Error ? error.message : TRANSIENT_AUTH_ERROR
+		};
+	}
 
 	if (generation !== authGeneration) return;
 	applyNativeInitializeOutcome(outcome);
+
+	if (outcome.kind === 'transient' && authState.getSnapshot().nativeSession === 'unavailable') {
+		clearNativeSessionRetry();
+		nativeSessionRetryTimer = setTimeout(() => {
+			nativeSessionRetryTimer = null;
+			void initializeInstalledAuth(generation, attempt + 1);
+		}, authRetryDelayMs(attempt));
+	}
 }
 
 function applyNativeInitializeOutcome(outcome: NativeTokenOutcome) {
@@ -1209,49 +1236,43 @@ export async function getAccessToken({
 	return await getAuthKitAccessToken({ forceRefreshToken });
 }
 
-function clearConvexRecovery() {
-	if (convexRecoveryTimer !== null) {
-		clearTimeout(convexRecoveryTimer);
-		convexRecoveryTimer = null;
-	}
-}
-
+// Retries in place because Convex stops its socket to reauthenticate and restarts it only when
+// the current fetcher settles. Reinstalling auth mid-fetch leaves the socket stopped for good.
+// Returning null tells Convex the user is signed out.
 export async function getConvexAccessToken(options: { forceRefreshToken: boolean }) {
-	const generation = authGeneration;
+	const userId = authState.getSnapshot().user?.id;
 
-	try {
-		if (isMachineApp() && authState.getSnapshot().nativeSession === 'unavailable') {
-			await establishLocalSession();
+	if (!userId) return null;
+	const retryVersion = convexAuthRetryVersion.getSnapshot();
 
-			if (generation !== authGeneration) return null;
+	const isCurrentFetch = () =>
+		authState.getSnapshot().user?.id === userId &&
+		convexAuthRetryVersion.getSnapshot() === retryVersion;
+
+	for (let attempt = 0; ; attempt += 1) {
+		const generation = authGeneration;
+
+		try {
+			if (isMachineApp() && authState.getSnapshot().nativeSession === 'unavailable') {
+				await establishLocalSession();
+			}
+
+			const token = await getAccessToken(options);
+
+			if (token || generation === authGeneration) return token;
+		} catch (error) {
+			if (!isCurrentFetch() || authState.getSnapshot().nativeSession === 'mismatch') return null;
+			authState.update((current) => ({
+				...current,
+				error:
+					error instanceof Error ? error.message : 'Session refresh is temporarily unavailable.'
+			}));
 		}
 
-		const token = await getAccessToken(options);
+		if (!isCurrentFetch()) return null;
+		await new Promise((resolve) => setTimeout(resolve, authRetryDelayMs(attempt)));
 
-		if (generation !== authGeneration) return null;
-		clearConvexRecovery();
-
-		return token;
-	} catch (error) {
-		if (generation !== authGeneration) return null;
-		authState.update((current) => ({
-			...current,
-			error: error instanceof Error ? error.message : 'Session refresh is temporarily unavailable.'
-		}));
-		const state = authState.getSnapshot();
-
-		if (state.user && state.nativeSession !== 'mismatch' && convexRecoveryTimer === null) {
-			convexRecoveryTimer = setTimeout(() => {
-				convexRecoveryTimer = null;
-
-				if (generation === authGeneration && authState.getSnapshot().user) {
-					reinstallConvexAuth();
-				}
-			}, 5_000);
-		}
-
-		// Convex does not catch fetcher rejections, including while its socket is stopped.
-		return null;
+		if (!isCurrentFetch()) return null;
 	}
 }
 

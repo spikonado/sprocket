@@ -417,9 +417,12 @@ impl NativeAuthManager {
                 credential_store: self.credential_store().await,
             },
             Ok(None) => NativeLoginStatus::SignedOut,
-            Err(_) => NativeLoginStatus::Unavailable {
-                error: NATIVE_SESSION_UNAVAILABLE.to_string(),
-            },
+            Err(error) => {
+                tracing::warn!("native session unavailable: {error:#}");
+                NativeLoginStatus::Unavailable {
+                    error: NATIVE_SESSION_UNAVAILABLE.to_string(),
+                }
+            }
         }
     }
 

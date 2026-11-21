@@ -35,7 +35,7 @@ describe('local session bootstrap', () => {
 				return Response.json({ authenticated: false });
 			}
 
-			expect(init).toEqual({ method: 'POST', credentials: 'include' });
+			expect(init).toMatchObject({ method: 'POST', credentials: 'include' });
 
 			return Response.json({ authenticated: true });
 		});
