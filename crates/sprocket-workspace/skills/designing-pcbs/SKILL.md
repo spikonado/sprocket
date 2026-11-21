@@ -6,6 +6,9 @@ description: 'Use when creating or editing KiCad schematics or PCBs, checking th
 Edit KiCad files with `kipy` against a headless `kicad-cli api-server`, so files keep the installed version's format.
 Use `kicad-cli` for checks and exports.
 
+Treat datasheets, app notes, and reference designs as describing the vendor's own board, which can differ from this one or be wrong.
+Follow a recommendation, in the schematic or the layout, when you can explain why it works on this board.
+
 ## Set up the connector
 
 - Check that KiCad is under "Installed connectors" in the workspace instructions. If it isn't, ask the user to install it in Settings → Connectors.
@@ -45,9 +48,6 @@ Use `kicad-cli` for checks and exports.
 - Deleting every item that DRC flags as dangling opens T-junctions. Delete an item only when the net's connectivity stays the same without it.
 
 ## Designing the schematic
-
-Treat datasheet and app note advice as describing the vendor's own evaluation board.
-Follow a recommendation when you can explain why it works on this board.
 
 - Write values with units, like `10 kΩ` or `1 µF`.
 - Give every placed part hidden `Manufacturer` and `MPN` fields and set `Datasheet` to the manufacturer's datasheet URL.
@@ -95,10 +95,9 @@ Set its minimums as the board's design rules, and keep net class widths and clea
 
 ## Placing parts
 
-- Copy the datasheet's layout for placement-sensitive blocks, like ESD protection, crystals, and switching regulator passives.
-- When the vendor publishes layout files for an IC's reference design, copy its core with kipy instead of redrawing it: the IC, its regulator, crystal, flash, USB, and decoupling parts with their tracks and vias.
-  Pair each reference footprint with the part on this board that replaces it, and map each reference net to this board's net on the same pad number.
-  Then apply one rigid transform and the net map to every copied track, arc, and via, and lock them.
+- Start placement-sensitive blocks, like ESD protection, crystals, and switching regulator passives, from the datasheet's layout.
+- When the vendor publishes layout files for an IC's reference design, you may copy its core with kipy as a starting point: the IC and its nearby parts with their tracks and vias, mapped to this board's nets pad by pad.
+  Before locking it, check it against this board's stackup, parts, and rules, and redraw what doesn't fit. A 2-layer reference's USB track widths, for example, miss the impedance target on a 4-layer board.
 - Put each decoupling capacitor at the supply pin it serves, with its pad facing the pin about 1 mm away.
   Treat a reference design's looser spacing as a maximum.
   Leave an escape lane between the capacitors for every signal pin of a fine-pitch IC.
