@@ -733,6 +733,9 @@ async fn refresh_terminal_error_disconnects_and_rotates_the_session() {
     assert!(stored.tokens.is_none());
     assert_ne!(stored.session_id, original_session);
     assert_eq!(*watch.borrow_and_update(), None);
+
+    let reloaded = ChatGptService::test_load(fixture.directory.path(), &fixture.provider.issuer);
+    assert!(reloaded.status("user-a").await.unwrap().signed_out);
 }
 
 #[tokio::test]
@@ -957,7 +960,7 @@ async fn select_rotates_the_watch_session_and_persists_it() {
 }
 
 #[tokio::test]
-async fn load_forgets_legacy_signed_out_accounts_and_preserves_other_users() {
+async fn status_forgets_legacy_signed_out_accounts_and_preserves_other_users() {
     let fixture = fixture().await;
     insert(
         &fixture.service,
@@ -985,6 +988,9 @@ async fn load_forgets_legacy_signed_out_accounts_and_preserves_other_users() {
     .await;
     let before = fixture.service.state.lock().await.clone();
     let reloaded = ChatGptService::test_load(fixture.directory.path(), &fixture.provider.issuer);
+    let status = reloaded.status("user-a").await.unwrap();
+    assert!(status.accounts.is_empty());
+    assert!(status.signed_out);
     let state = reloaded.state.lock().await;
     assert_eq!(state.host_id, before.host_id);
     assert_eq!(state.users.len(), 1);

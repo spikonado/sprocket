@@ -209,9 +209,6 @@ impl ChatGptService {
                     account.session_id = Uuid::new_v4().to_string();
                 }
             }
-            accounts.accounts.retain(|account| {
-                account.tokens.is_some() || !account.retired_refresh_tokens.is_empty()
-            });
             let active_survived = accounts.accounts.iter().any(|account| {
                 account.tokens.is_some() && Some(&account.connection_id) == accounts.active.as_ref()
             });
