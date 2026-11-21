@@ -2696,7 +2696,6 @@ export default function App({
 																key={currentThreadId}
 																error={conversationError}
 																runError={runError}
-																outOfUsage={runState?.failureKind === 'usage_limit'}
 																reconnecting={Boolean(
 																	currentThreadId &&
 																	transcript.threadId === currentThreadId &&

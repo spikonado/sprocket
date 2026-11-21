@@ -823,7 +823,9 @@ export const vRunStatus = v.union(
 	v.literal('cancelled')
 );
 
-export const vRunFailureKind = v.union(v.literal('abandoned'), v.literal('usage_limit'));
+export const vRunFailureKind = v.literal('abandoned');
+
+export const vStoredRunFailureKind = v.union(vRunFailureKind, v.literal('usage_limit'));
 
 export type RunFailureKind = Infer<typeof vRunFailureKind>;
 

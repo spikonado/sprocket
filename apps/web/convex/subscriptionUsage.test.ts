@@ -67,7 +67,7 @@ describe('subscription and usage backend', () => {
 		expect(usage.meters[0]).toMatchObject({ limit: 0, used: 0 });
 		expect(await t.run((ctx) => gatewayQuotaStatus(ctx, userId))).toMatchObject({
 			exhausted: true,
-			message: expect.stringMatching(/^Usage limit reached\. Try again in /)
+			message: expect.stringMatching(/^Your Sprocket usage limit has been reached\. It resets in /)
 		});
 
 		await setAllowance(MODEL_USAGE_UNITS_PER_DOLLAR);

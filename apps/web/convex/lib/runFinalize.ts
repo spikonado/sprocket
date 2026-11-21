@@ -1,7 +1,12 @@
 import type { Doc } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
 import { v, type Infer } from 'convex/values';
-import { isRunFinalStatus, vRunFinalStatus, type vRunStatus } from '@convex/lib/validators';
+import {
+	isRunFinalStatus,
+	vRunFinalStatus,
+	type RunFailureKind,
+	type vRunStatus
+} from '@convex/lib/validators';
 import { reconcileTerminalRun } from '@convex/lib/runTerminal';
 import { internal } from '@convex/_generated/api';
 import { isClaimedRunStatus, isRunClaimLeaseActive } from '@convex/lib/runLease';
@@ -23,7 +28,7 @@ import { settleRoot } from '@convex/lib/threadHierarchy';
 type FinalizeRunArgs = {
 	status: Infer<typeof vRunFinalStatus>;
 	lastError?: string;
-	failureKind?: Doc<'runs'>['failureKind'];
+	failureKind?: RunFailureKind;
 };
 
 export const vExecutorFinalizationResult = v.object({

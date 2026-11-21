@@ -63,7 +63,8 @@ import {
 	getOrCreateTranscriptState,
 	getPromptPart,
 	hiddenPromptSourceKey,
-	hydratePromptUrls
+	hydratePromptUrls,
+	toolSourceKey
 } from '@convex/lib/transcriptParts';
 import { runHasBegun, runStartedAt } from '@convex/lib/runs';
 import {
@@ -1035,7 +1036,10 @@ export const finalizeExecutorRun = mutation({
 			}
 		}
 
-		const accepted = await finalizeRunRecord(ctx, run, args);
+		const accepted = await finalizeRunRecord(ctx, run, {
+			status: args.status,
+			lastError: args.lastError
+		});
 
 		return executorFinalizationResult(ctx, run, accepted);
 	}
@@ -1138,7 +1142,7 @@ export async function beginToolJobHandler(
 			throw new Error('Invalid section identity.');
 		}
 
-		return await beginExecutorJob(ctx, {
+		const job = await beginExecutorJob(ctx, {
 			run,
 			claimId: args.claimId,
 			kind: args.kind,
@@ -1150,6 +1154,17 @@ export async function beginToolJobHandler(
 			attemptSeq: args.attemptSeq,
 			streamId: args.streamId
 		});
+
+		const started = await ctx.db
+			.query('threadTranscriptParts')
+			.withIndex('by_threadId_and_sourceKey', (query) =>
+				query
+					.eq('threadId', run.threadId)
+					.eq('sourceKey', toolSourceKey(args.toolInvocationId, 'started'))
+			)
+			.unique();
+
+		return { ...job, parts: started ? [started] : [] };
 	} catch (error) {
 		throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 	}
@@ -1159,7 +1174,9 @@ export const beginToolJob = mutation({
 	args: beginToolJobArgs,
 	returns: v.object({
 		jobId: v.id('executorJobs'),
-		sequence: v.number()
+		sequence: v.number(),
+		/** The started part, so a local run caches every part it causes. */
+		parts: v.array(schema.doc('threadTranscriptParts'))
 	}),
 	handler: beginToolJobHandler
 });

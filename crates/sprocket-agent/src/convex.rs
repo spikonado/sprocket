@@ -2,10 +2,7 @@ use anyhow::Context;
 use convex::{FunctionResult, Value};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer};
-use sprocket_convex::{
-    Client as ConvexRpcClient, ConvexErrorCode, RunStatus, Subscription, convex_error_code,
-    decode_function_result,
-};
+use sprocket_convex::{Client as ConvexRpcClient, RunStatus, Subscription, decode_function_result};
 use sprocket_transcript::{
     LegacyWork, RemoteTranscriptState, TranscriptCompletionBody, TranscriptPart,
     TranscriptPartKind, TranscriptPromptBody, TranscriptToolBody, parse_remote_page,
@@ -665,9 +662,6 @@ impl RuntimeClient {
     ) -> anyhow::Result<bool> {
         let mut args = self.run_args(run_id);
         args.insert("expectedClaimId".to_string(), claim_id.to_string().into());
-        if error.and_then(convex_error_code) == Some(ConvexErrorCode::UsageLimitReached) {
-            args.insert("failureKind".to_string(), "usage_limit".into());
-        }
         let last_error = error.map(ToString::to_string);
         self.finalize_executor_run(args, status, last_error.as_deref())
             .await

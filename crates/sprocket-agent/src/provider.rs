@@ -126,19 +126,6 @@ pub(crate) fn user_facing_error(error: anyhow::Error) -> anyhow::Error {
 #[derive(Debug)]
 struct ProviderFailures(Vec<(CompletionProvider, anyhow::Error)>);
 
-impl ProviderFailures {
-    /// Classification reads the usage-limit failure first, as Convex records it as the run's failure kind.
-    fn primary(&self) -> &anyhow::Error {
-        &self
-            .0
-            .iter()
-            .find(|(_, error)| convex_error_code(error) == Some(ConvexErrorCode::UsageLimitReached))
-            .or_else(|| self.0.first())
-            .expect("ProviderFailures holds at least two failures")
-            .1
-    }
-}
-
 impl std::fmt::Display for ProviderFailures {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Every provider failed.")?;
@@ -151,8 +138,9 @@ impl std::fmt::Display for ProviderFailures {
 
 impl std::error::Error for ProviderFailures {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        let primary: &(dyn std::error::Error + 'static) = self.primary().as_ref();
-        Some(primary)
+        let (_, first) = self.0.first()?;
+        let first: &(dyn std::error::Error + 'static) = first.as_ref();
+        Some(first)
     }
 }
 

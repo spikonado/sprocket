@@ -97,7 +97,10 @@ describe('gateway quota', () => {
 				executionSecret
 			})
 		).rejects.toMatchObject({
-			data: { code: 'USAGE_LIMIT_REACHED', message: expect.stringMatching(/^Usage limit reached/) }
+			data: {
+				code: 'USAGE_LIMIT_REACHED',
+				message: expect.stringMatching(/^Your Sprocket usage limit has been reached\./)
+			}
 		});
 	}, 15_000);
 

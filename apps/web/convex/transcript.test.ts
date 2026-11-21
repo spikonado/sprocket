@@ -112,6 +112,7 @@ describe('numbered transcript parts', () => {
 			['tool', 'started'],
 			['tool', 'completed']
 		]);
+		expect(job.parts).toEqual([page.parts[2]]);
 		expect(result).toEqual({ accepted: true, parts: [page.parts[3]] });
 	});
 
