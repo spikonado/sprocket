@@ -384,10 +384,13 @@ export function clearLaunchHash() {
 	globalThis.window.history.replaceState(null, '', `${url.pathname}${url.search}`);
 }
 
+const LOCAL_SESSION_REQUEST_TIMEOUT_MS = 15_000;
+
 export async function bootstrapLocalSession(baseUrl: string): Promise<void> {
 	const response = await fetch(`${baseUrl}/api/auth/bootstrap`, {
 		method: 'POST',
-		credentials: 'include'
+		credentials: 'include',
+		signal: AbortSignal.timeout(LOCAL_SESSION_REQUEST_TIMEOUT_MS)
 	});
 
 	if (!response.ok) {
@@ -402,7 +405,8 @@ export async function bootstrapLocalSession(baseUrl: string): Promise<void> {
 
 export async function hasLocalSession(baseUrl: string): Promise<boolean> {
 	const sessionResponse = await fetch(`${baseUrl}/api/auth/session`, {
-		credentials: 'include'
+		credentials: 'include',
+		signal: AbortSignal.timeout(LOCAL_SESSION_REQUEST_TIMEOUT_MS)
 	});
 
 	if (!sessionResponse.ok) {

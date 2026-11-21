@@ -246,7 +246,7 @@ describe('installed and hosted auth', () => {
 		});
 	});
 
-	it('settles Convex token fetch failures and retries without clearing the native user', async () => {
+	it('retries a transient Convex token fetch in place without clearing the native user', async () => {
 		vi.useFakeTimers();
 		stubInstalledWindow();
 		let unavailable = false;
@@ -259,13 +259,35 @@ describe('installed and hosted auth', () => {
 		await initializeAuth(convexClient);
 		unavailable = true;
 		const version = get(convexAuthRetryVersion);
-		await expect(getConvexAccessToken({ forceRefreshToken: true })).resolves.toBeNull();
-		expect(get(authState).user).toEqual(nativeUser);
-		await vi.advanceTimersByTimeAsync(5_000);
-		expect(get(convexAuthRetryVersion)).toBe(version + 1);
+		const token = getConvexAccessToken({ forceRefreshToken: true });
+		await vi.advanceTimersByTimeAsync(3_000);
+		expect(get(authState)).toMatchObject({ user: nativeUser, error: 'Temporarily unavailable' });
 		unavailable = false;
-		await expect(getConvexAccessToken({ forceRefreshToken: true })).resolves.toBe('native-token');
+		await vi.advanceTimersByTimeAsync(4_000);
+		await expect(token).resolves.toBe('native-token');
+		expect(get(convexAuthRetryVersion)).toBe(version);
 		expect(window.open).not.toHaveBeenCalled();
+	});
+
+	it('retries the startup native session check until the host recovers', async () => {
+		vi.useFakeTimers();
+		stubInstalledWindow();
+		let unavailable = true;
+		stubFetch({
+			token: () =>
+				unavailable
+					? jsonResponse(503, { error: 'Native sign-in is temporarily unavailable. Try again.' })
+					: jsonResponse(200, { accessToken: 'native-token', user: nativeUser })
+		});
+		await initializeAuth(convexClient);
+		expect(get(authState)).toMatchObject({ user: null, nativeSession: 'unavailable' });
+		unavailable = false;
+		await vi.advanceTimersByTimeAsync(1_000);
+		expect(get(authState)).toMatchObject({
+			user: nativeUser,
+			nativeSession: 'ready',
+			error: null
+		});
 	});
 
 	it('keeps the native user when host sign-out cannot clear credentials', async () => {
@@ -330,7 +352,7 @@ describe('installed and hosted auth', () => {
 		});
 	});
 
-	it('cancels scheduled Convex recovery when signing out', async () => {
+	it('settles a retrying Convex token fetch as signed out when the user signs out', async () => {
 		vi.useFakeTimers();
 		stubInstalledWindow();
 		let unavailable = false;
@@ -343,11 +365,11 @@ describe('installed and hosted auth', () => {
 		});
 		await initializeAuth(convexClient);
 		unavailable = true;
-		await getConvexAccessToken({ forceRefreshToken: true });
+		const token = getConvexAccessToken({ forceRefreshToken: true });
+		await vi.advanceTimersByTimeAsync(0);
 		await signOut();
-		const version = get(convexAuthRetryVersion);
-		await vi.advanceTimersByTimeAsync(5_000);
-		expect(get(convexAuthRetryVersion)).toBe(version);
+		await vi.advanceTimersByTimeAsync(1_000);
+		await expect(token).resolves.toBeNull();
 		expect(get(authState).user).toBeNull();
 	});
 
