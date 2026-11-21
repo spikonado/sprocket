@@ -76,7 +76,6 @@
         devShells.kicad = pkgs.mkShell {
           packages = with pkgs; [
             bun
-            dwarfs
             minisign
             osslsigncode
             rcodesign

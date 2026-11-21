@@ -2,7 +2,7 @@
 // releases.json. A release holds the newest KiCad nightly that has every platform's build, a kipy
 // wheel and KiCadRoutingTools. A new kipy commit, KiCadRoutingTools release or change to the build
 // files bumps the minor version, and a new KiCad nightly alone bumps the patch version.
-// Needs bun, curl, gh, git, tar, unzip, uv, minisign, osslsigncode, rcodesign, and dwarfsextract.
+// Needs bun, curl, gh, git, tar, unzip, uv, minisign, osslsigncode, and rcodesign.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
@@ -70,19 +70,8 @@ const KIPY_PATCHES = [
 ];
 
 // board-escalation is Sprocket's policy and stays: agents write the fab's minimums into Board Setup,
-// so no descent may go below them. escape-via-pour-guard builds on the pad tap code that
-// plane-net-keepouts backports.
-const ROUTING_TOOLS_PATCHES = [
-	'routing-tools-transform-pose.patch',
-	'routing-tools-board-escalation.patch',
-	'routing-tools-qfn-fanout-class-via.patch',
-	'routing-tools-failed-pad-number.patch',
-	'routing-tools-wall-time.patch',
-	'routing-tools-oracle-locked-debris.patch',
-	'routing-tools-plane-net-keepouts.patch',
-	'routing-tools-via-weld-clearance.patch',
-	'routing-tools-escape-via-pour-guard.patch'
-];
+// so no descent may go below them.
+const ROUTING_TOOLS_PATCHES = ['routing-tools-board-escalation.patch'];
 
 // Sprocket installs these scripts from the commit that pins a release, so changing one needs a release.
 const BUILD_FILES = [
@@ -420,7 +409,9 @@ function smokeTest(work, appImage, wheel, requirements, routingToolsArchive) {
 	mkdirSync(kicad);
 	mkdirSync(routingTools);
 	run('tar', ['-xzf', routingToolsArchive, '-C', routingTools]);
-	run('dwarfsextract', [
+	// The AppImage's uruntime embeds the dwarfsextract that reads its image.
+	run(appImage, [
+		'--appimage-dwarfsextract',
 		'--input',
 		appImage,
 		'--image-offset',
