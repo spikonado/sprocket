@@ -91,7 +91,7 @@ fn result_error(result: &Value, rate_limit: Option<&Value>, now_secs: u64) -> Va
     if status == Some(401) {
         return error_event(
             ERROR_CODE,
-            "Claude rejected the subscription token. Remove it and sign in with Claude again in Settings > BYOK/BYOS.",
+            "Claude rejected the subscription token. Remove it and sign in with Claude again in Settings > Providers.",
         );
     }
     let detail = result["result"]
