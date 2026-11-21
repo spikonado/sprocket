@@ -161,9 +161,7 @@ export function projectSelectedThreadLifecycle(args: {
 		projected.lastError = args.run.lastError;
 	}
 
-	if (args.run.failureKind !== undefined) {
-		projected.failureKind = args.run.failureKind;
-	}
+	if (args.run.failureKind === 'abandoned') projected.failureKind = 'abandoned';
 
 	if (!runHasBegun(args.run)) projected.promptUnsent = true;
 

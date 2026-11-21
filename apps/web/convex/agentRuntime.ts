@@ -1035,7 +1035,10 @@ export const finalizeExecutorRun = mutation({
 			}
 		}
 
-		const accepted = await finalizeRunRecord(ctx, run, args);
+		const accepted = await finalizeRunRecord(ctx, run, {
+			status: args.status,
+			lastError: args.lastError
+		});
 
 		return executorFinalizationResult(ctx, run, accepted);
 	}

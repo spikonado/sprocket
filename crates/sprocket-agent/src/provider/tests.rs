@@ -58,26 +58,6 @@ fn every_failed_provider_is_shown() {
 }
 
 #[test]
-fn provider_failures_preserve_usage_limit_classification() {
-    use crate::types::CompletionProvider;
-
-    let error = super::provider_failures(vec![
-        (
-            CompletionProvider::Openai,
-            anyhow::anyhow!("Invalid API key."),
-        ),
-        (
-            CompletionProvider::Spikonado,
-            coded_convex_error("USAGE_LIMIT_REACHED"),
-        ),
-    ]);
-    assert_eq!(
-        sprocket_convex::convex_error_code(&error),
-        Some(sprocket_convex::ConvexErrorCode::UsageLimitReached)
-    );
-}
-
-#[test]
 fn generation_options_map_reasoning_effort() {
     let options = super::generation_options("xhigh").unwrap();
     assert_eq!(

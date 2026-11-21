@@ -190,6 +190,13 @@ export const backfillRunCompletionProviders = migrations.define({
 	}
 });
 
+export const clearUsageLimitFailureKinds = migrations.define({
+	table: 'runs',
+	migrateOne: (_ctx, run) => {
+		if (run.failureKind === 'usage_limit') return { failureKind: undefined };
+	}
+});
+
 export const run = migrations.runner([
 	internal.migrations.backfillToolInvocationIds,
 	internal.migrations.backfillCompletionToolInvocationIds,
@@ -206,5 +213,6 @@ export const run = migrations.runner([
 	internal.migrations.clearCommandLogChunks,
 	internal.migrations.resyncDodoCustomers,
 	internal.migrations.backfillThreadCompletionProviders,
-	internal.migrations.backfillRunCompletionProviders
+	internal.migrations.backfillRunCompletionProviders,
+	internal.migrations.clearUsageLimitFailureKinds
 ]);

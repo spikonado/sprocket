@@ -18,7 +18,7 @@ import {
 	vModelCallUsage,
 	vPurchaseStatus,
 	vReasoningEffort,
-	vRunFailureKind,
+	vStoredRunFailureKind,
 	vRunStatus,
 	vTokenUsageTotals,
 	vBillingInterval,
@@ -288,7 +288,7 @@ export default defineSchema({
 		agentVersion: v.optional(v.string()),
 		completedAt: v.optional(v.number()),
 		lastError: v.optional(v.string()),
-		failureKind: v.optional(vRunFailureKind),
+		failureKind: v.optional(vStoredRunFailureKind),
 		taskDeadlineAt: v.optional(v.number()),
 		cancellationRequestedAt: v.optional(v.number())
 	})

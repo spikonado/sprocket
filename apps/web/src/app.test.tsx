@@ -1035,6 +1035,9 @@ it('restores the prompt and shows the usage limit when the run ends before sendi
 	const { client, thread, launch, runAgent } = await renderThreadLaunch();
 	const runId = fixtureId<'runs'>('run-new');
 
+	const usageLimit =
+		'Your Sprocket usage limit has been reached. It resets in 3h 20m. Upgrade your plan, or switch to another provider.';
+
 	const emptyState =
 		'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.';
 
@@ -1064,8 +1067,7 @@ it('restores the prompt and shows the usage limit when the run ends before sendi
 				runId,
 				startedAt: 1,
 				completedAt: 2,
-				lastError: 'Usage limit reached. Try again in 3h 20m.',
-				failureKind: 'usage_limit',
+				lastError: usageLimit,
 				promptUnsent: true
 			}
 		});
@@ -1073,8 +1075,7 @@ it('restores the prompt and shows the usage limit when the run ends before sendi
 	await waitFor(() => expect(composer).toHaveProperty('value', 'Fix the robot'));
 	expect(screen.getByText(emptyState)).toBeTruthy();
 	const alert = within(screen.getByRole('group', { name: 'Message composer' })).getByRole('alert');
-	expect(alert.textContent).toContain("You're out of usage");
-	expect(alert.textContent).toContain('Usage limit reached. Try again in 3h 20m.');
+	expect(alert.textContent).toContain(usageLimit);
 });
 
 it('keeps a failed send error when another thread is settled', async () => {
