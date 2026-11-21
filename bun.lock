@@ -35,6 +35,7 @@
         "@fontsource-variable/geist": "catalog:",
         "@fontsource-variable/geist-mono": "catalog:",
         "@fontsource/geist": "^5.3.0",
+        "@sprocket/error-tracking": "workspace:*",
         "@tailwindcss/vite": "catalog:",
         "@vercel/functions": "^3.10.2",
         "@workos-inc/node": "^12.1.0",
@@ -88,6 +89,7 @@
         "@pierre/trees": "1.0.0-beta.6",
         "@pierre/words": "0.2.2",
         "@posthog/convex": "2.1.8",
+        "@sprocket/error-tracking": "workspace:*",
         "@workos-inc/authkit-js": "^0.20.0",
         "clsx": "catalog:",
         "codemirror": "^6.0.2",
@@ -131,6 +133,10 @@
         "vite": "^8.0.10",
         "vitest": "^5.0.0",
       },
+    },
+    "packages/error-tracking": {
+      "name": "@sprocket/error-tracking",
+      "version": "0.0.0",
     },
     "packages/typescript-config": {
       "name": "@sprocket/typescript-config",
@@ -944,6 +950,8 @@
     "@sindresorhus/is": ["@sindresorhus/is@4.6.0", "", {}, "sha512-t09vSN3MdfsyCHoFcTRCH/iUtG7OJ0CsjzB8cjAmKc/va/kIgeDI/TxsigdncE/4be734m0cvIYwNaV4i2XqAw=="],
 
     "@sprocket/desktop": ["@sprocket/desktop@workspace:apps/desktop"],
+
+    "@sprocket/error-tracking": ["@sprocket/error-tracking@workspace:packages/error-tracking"],
 
     "@sprocket/site": ["@sprocket/site@workspace:apps/site"],
 

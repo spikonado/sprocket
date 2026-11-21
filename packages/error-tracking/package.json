@@ -1,0 +1,13 @@
+{
+	"name": "@sprocket/error-tracking",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"license": "FSL-1.1-ALv2",
+	"exports": {
+		".": "./index.ts"
+	},
+	"scripts": {
+		"test": "bun test"
+	}
+}
