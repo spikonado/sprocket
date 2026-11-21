@@ -4,6 +4,7 @@ pub mod browser;
 mod browser_install;
 mod bun_install;
 pub mod chatgpt_credentials;
+mod checkout_pulls;
 pub mod claude_code_cli;
 mod cli_install;
 pub mod command_sessions;
@@ -358,6 +359,7 @@ impl Host {
         });
         HostTasks {
             recovery: run_recovery::spawn(self.clone()),
+            checkout_pulls: checkout_pulls::spawn(self.clone()),
             host: self.clone(),
             attachment_cleanup,
             command_cleanup,
@@ -370,12 +372,18 @@ pub struct HostTasks {
     attachment_cleanup: JoinHandle<()>,
     command_cleanup: JoinHandle<()>,
     recovery: JoinHandle<()>,
+    checkout_pulls: JoinHandle<()>,
 }
 
 impl HostTasks {
     pub async fn shutdown(self) {
         let host = self.host;
-        for task in [self.attachment_cleanup, self.recovery, self.command_cleanup] {
+        for task in [
+            self.attachment_cleanup,
+            self.recovery,
+            self.command_cleanup,
+            self.checkout_pulls,
+        ] {
             task.abort();
             let _ = task.await;
         }

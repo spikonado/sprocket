@@ -5,6 +5,7 @@ import PreferenceToggle, { useMyPreferences } from '$lib/components/home/prefere
 export default function SettingsVersionControl() {
 	const { preferences, disabled, loadState } = useMyPreferences();
 	const setCoAuthorCommits = useMutation(api.uiPreferences.setCoAuthorCommits);
+	const setAutoPullCheckouts = useMutation(api.uiPreferences.setAutoPullCheckouts);
 
 	return (
 		<section className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -19,6 +20,13 @@ export default function SettingsVersionControl() {
 						savedEnabled={preferences?.coAuthorCommits ?? true}
 						disabled={disabled}
 						save={setCoAuthorCommits}
+					/>
+					<PreferenceToggle
+						title="Pull the latest code automatically"
+						description="Every 5 minutes, Sprocket runs git pull in your projects' checkouts when their upstream branch has new commits. It only fast-forwards, so local commits and conflicting changes stay as they are."
+						savedEnabled={preferences?.autoPullCheckouts ?? false}
+						disabled={disabled}
+						save={setAutoPullCheckouts}
 					/>
 					{loadState}
 				</div>

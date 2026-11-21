@@ -172,6 +172,16 @@ export const setCoAuthorCommits = mutation({
 	}
 });
 
+export const setAutoPullCheckouts = mutation({
+	args: { enabled: v.boolean() },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		await savePreferences(ctx, { autoPullCheckouts: args.enabled });
+
+		return null;
+	}
+});
+
 export const setTheme = mutation({
 	args: {
 		theme: vTheme

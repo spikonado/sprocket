@@ -8,7 +8,8 @@ describe('theme preferences', () => {
 		['automaticAgentContinuation', api.uiPreferences.setAutomaticAgentContinuation],
 		['restrictSubagentsToProvider', api.uiPreferences.setRestrictSubagentsToProvider],
 		['shareConversationContent', api.uiPreferences.setShareConversationContent],
-		['coAuthorCommits', api.uiPreferences.setCoAuthorCommits]
+		['coAuthorCommits', api.uiPreferences.setCoAuthorCommits],
+		['autoPullCheckouts', api.uiPreferences.setAutoPullCheckouts]
 	] as const)('syncs %s per account and preserves the theme', async (field, setPreference) => {
 		const t = initConvexTest();
 		const alice = t.withIdentity({ subject: 'alice' });
