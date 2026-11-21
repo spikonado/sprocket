@@ -118,7 +118,8 @@ Keep net class widths and clearances above them.
 
 - Copy the datasheet's layout for placement-sensitive blocks, like ESD protection, crystals, and switching regulator passives.
 - When the vendor publishes layout files for an IC's reference design, like Raspberry Pi's RP2350 minimal design, copy its core with kipy instead of redrawing it: the IC, its regulator, crystal, flash, USB, and decoupling parts with their tracks and vias.
-  Apply one rigid transform to every item, map each track's net through the pad it touches, and lock the copied copper.
+  Pair each reference footprint with the part on this board that replaces it, and map each reference net to this board's net on the same pad number.
+  Then apply one rigid transform and the net map to every copied track, arc, and via, and lock them.
 - Put each decoupling capacitor at the supply pin it serves, with its pad facing the pin about 1 mm away.
   Treat a reference design's looser spacing as a maximum.
   Leave an escape lane between the capacitors for every signal pin of a fine-pitch IC.
