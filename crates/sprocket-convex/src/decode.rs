@@ -62,8 +62,8 @@ pub fn convex_error_code(error: &anyhow::Error) -> Option<ConvexErrorCode> {
 }
 
 /// Failures are `ConvexFunctionError`s whose messages are cleaned of Convex transport noise
-/// (request-ID lines, `Uncaught` prefixes, stack frames). `function` only labels a successful
-/// value that fails to deserialize into `T`.
+/// (request-ID lines, `Uncaught` prefixes, stack frames). `function` labels a successful value
+/// that fails to deserialize into `T`, and a failure whose whole message production masked.
 pub fn decode_function_result<T: for<'de> Deserialize<'de>>(
     result: FunctionResult,
     function: &str,
