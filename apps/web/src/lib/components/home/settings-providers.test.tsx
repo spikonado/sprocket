@@ -16,7 +16,7 @@ async function mount(
 	await act(async () => {
 		render(
 			<ConvexTestProvider client={client}>
-				<SettingsProviders onRemove={onRemove} onOpenCredentials={vi.fn()} />
+				<SettingsProviders onRemove={onRemove} />
 			</ConvexTestProvider>
 		);
 	});

@@ -370,170 +370,162 @@ export default function SettingsCredentials({
 					: 'Not connected';
 
 	return (
-		<section className="flex h-full min-h-0 flex-col overflow-hidden">
-			<header className="flex h-12 shrink-0 items-center px-6">
-				<h1 className="text-foreground text-[1rem] tracking-[-0.03em]">BYOK/BYOS</h1>
-			</header>
+		<>
+			<div className="border-border rounded-xl border p-5">
+				<div className="flex items-center gap-3">
+					<ProviderLogo provider="openai" className="size-5" />
+					<div className="min-w-0 flex-1">
+						<p className="text-foreground text-[15px]">ChatGPT Subscription</p>
+						<p className="text-muted-foreground mt-0.5 text-[12px]">{chatGptStatusLine}</p>
+					</div>
+					<button
+						type="button"
+						className="text-primary text-[13px] disabled:opacity-50"
+						disabled={!localApi || chatGptPending || chatGptLoading}
+						onClick={() => void refreshChatGptStatus()}
+					>
+						Refresh
+					</button>
+				</div>
 
-			<div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
-				<div className="max-w-xl space-y-4">
-					<div className="border-border rounded-xl border p-5">
-						<div className="flex items-center gap-3">
-							<ProviderLogo provider="openai" className="size-5" />
-							<div className="min-w-0 flex-1">
-								<p className="text-foreground text-[15px]">ChatGPT Subscription</p>
-								<p className="text-muted-foreground mt-0.5 text-[12px]">{chatGptStatusLine}</p>
-							</div>
-							<button
-								type="button"
-								className="text-primary text-[13px] disabled:opacity-50"
-								disabled={!localApi || chatGptPending || chatGptLoading}
-								onClick={() => void refreshChatGptStatus()}
-							>
-								Refresh
-							</button>
-						</div>
+				{browserLoginActive ? (
+					<div className="mt-5 flex items-center gap-3">
+						<span className="text-muted-foreground text-[12px]">Signing in…</span>
+						<button
+							type="button"
+							className="text-muted-foreground text-[13px]"
+							onClick={stopBrowserLogin}
+						>
+							Cancel
+						</button>
+					</div>
+				) : (
+					<div className="mt-5 space-y-4">
+						{chatGptStatus && chatGptStatus.accounts.length > 0 && (
+							<ul className="space-y-2">
+								{chatGptStatus.accounts.map((account) => {
+									const isActive = account.connectionId === chatGptStatus.activeConnectionId;
 
-						{browserLoginActive ? (
-							<div className="mt-5 flex items-center gap-3">
-								<span className="text-muted-foreground text-[12px]">Signing in…</span>
-								<button
-									type="button"
-									className="text-muted-foreground text-[13px]"
-									onClick={stopBrowserLogin}
-								>
-									Cancel
-								</button>
-							</div>
-						) : (
-							<div className="mt-5 space-y-4">
-								{chatGptStatus && chatGptStatus.accounts.length > 0 && (
-									<ul className="space-y-2">
-										{chatGptStatus.accounts.map((account) => {
-											const isActive = account.connectionId === chatGptStatus.activeConnectionId;
-
-											return (
-												<li
-													key={account.connectionId}
-													className="border-border flex items-center gap-3 rounded-lg border px-3 py-2"
+									return (
+										<li
+											key={account.connectionId}
+											className="border-border flex items-center gap-3 rounded-lg border px-3 py-2"
+										>
+											<div className="min-w-0 flex-1">
+												<p className="text-foreground truncate text-[13px]">{account.label}</p>
+												<p className="text-muted-foreground text-[12px]">
+													{isActive ? 'Active' : account.connected ? 'Signed in' : 'Signed out'}
+												</p>
+											</div>
+											{!isActive && account.connected && (
+												<button
+													type="button"
+													className="text-primary text-[13px] disabled:opacity-50"
+													disabled={chatGptPending}
+													onClick={() => void selectAccount(account.connectionId)}
 												>
-													<div className="min-w-0 flex-1">
-														<p className="text-foreground truncate text-[13px]">{account.label}</p>
-														<p className="text-muted-foreground text-[12px]">
-															{isActive ? 'Active' : account.connected ? 'Signed in' : 'Signed out'}
-														</p>
-													</div>
-													{!isActive && account.connected && (
-														<button
-															type="button"
-															className="text-primary text-[13px] disabled:opacity-50"
-															disabled={chatGptPending}
-															onClick={() => void selectAccount(account.connectionId)}
-														>
-															Use
-														</button>
-													)}
-													{!account.connected && (
-														<button
-															type="button"
-															className="text-primary text-[13px] disabled:opacity-50"
-															disabled={chatGptPending || !chatGptStatus.loginAvailable}
-															onClick={() => void startBrowserLogin(account.connectionId)}
-														>
-															Reconnect
-														</button>
-													)}
-													<button
-														type="button"
-														className="text-muted-foreground hover:text-foreground text-[13px] disabled:opacity-50"
-														disabled={chatGptPending}
-														onClick={() => void signOutAccount(account.connectionId)}
-													>
-														Sign out
-													</button>
-												</li>
-											);
-										})}
-									</ul>
-								)}
-								{chatGptStatus?.loginAvailable === false ? (
-									<p className="text-muted-foreground text-[12px] leading-5">
-										ChatGPT sign-in runs through the local Sprocket server, which isn’t available
-										for this window. Open Sprocket on your desktop to sign in.
-									</p>
-								) : (
-									<Button
-										disabled={chatGptPending || chatGptLoading || !localApi}
-										onclick={() => void startBrowserLogin()}
-									>
-										{chatGptPending
-											? 'Starting…'
-											: chatGptStatus?.accounts.length
-												? 'Add account'
-												: 'Continue with ChatGPT'}
-									</Button>
-								)}
-							</div>
+													Use
+												</button>
+											)}
+											{!account.connected && (
+												<button
+													type="button"
+													className="text-primary text-[13px] disabled:opacity-50"
+													disabled={chatGptPending || !chatGptStatus.loginAvailable}
+													onClick={() => void startBrowserLogin(account.connectionId)}
+												>
+													Reconnect
+												</button>
+											)}
+											<button
+												type="button"
+												className="text-muted-foreground hover:text-foreground text-[13px] disabled:opacity-50"
+												disabled={chatGptPending}
+												onClick={() => void signOutAccount(account.connectionId)}
+											>
+												Sign out
+											</button>
+										</li>
+									);
+								})}
+							</ul>
 						)}
-						{signOutWarning && (
-							<p className="text-muted-foreground mt-4 text-[12px]" role="status">
-								{signOutWarning}
+						{chatGptStatus?.loginAvailable === false ? (
+							<p className="text-muted-foreground text-[12px] leading-5">
+								ChatGPT sign-in runs through the local Sprocket server, which isn’t available for
+								this window. Open Sprocket on your desktop to sign in.
 							</p>
-						)}
-						<p className="text-muted-foreground mt-4 text-[12px] leading-5">
-							Usage counts against your ChatGPT Codex allowance.
-						</p>
-						{chatGptError && (
-							<p className="text-destructive mt-4 text-sm" role="alert">
-								{chatGptError}
-							</p>
-						)}
-						{chatGptStatusError && (
-							<p className="text-destructive mt-4 text-sm" role="alert">
-								{chatGptStatusError}
-							</p>
+						) : (
+							<Button
+								disabled={chatGptPending || chatGptLoading || !localApi}
+								onclick={() => void startBrowserLogin()}
+							>
+								{chatGptPending
+									? 'Starting…'
+									: chatGptStatus?.accounts.length
+										? 'Add account'
+										: 'Continue with ChatGPT'}
+							</Button>
 						)}
 					</div>
-
-					<ClaudeSubscriptionCard
-						userId={userId}
-						localApi={localApi}
-						tokenSaved={claudeTokenSaved}
-						loading={loading}
-						status={claudeCodeStatus}
-						statusError={claudeCodeStatusError}
-						onStatusChange={onClaudeCodeStatusChange}
-						onTokenSavedChange={(configured) =>
-							onConfigurationChange({ provider: 'claude', configured })
-						}
-					/>
-
-					<MuseSubscriptionCard
-						userId={userId}
-						localApi={localApi}
-						status={museStatus}
-						statusError={museStatusError}
-						onStatusChange={onMuseStatusChange}
-						onConnected={() => onProviderConnected('muse')}
-					/>
-
-					{apiKeyProviders.map((provider) => (
-						<ApiKeyCard
-							key={`${userId}:${provider}`}
-							provider={provider}
-							configured={apiKeysSaved[provider]}
-							loading={loading}
-							onConfiguredChange={(configured) => onConfigurationChange({ provider, configured })}
-						/>
-					))}
-
-					{loadError && (
-						<p className="text-destructive text-sm" role="alert">
-							{loadError}
-						</p>
-					)}
-				</div>
+				)}
+				{signOutWarning && (
+					<p className="text-muted-foreground mt-4 text-[12px]" role="status">
+						{signOutWarning}
+					</p>
+				)}
+				<p className="text-muted-foreground mt-4 text-[12px] leading-5">
+					Usage counts against your ChatGPT Codex allowance.
+				</p>
+				{chatGptError && (
+					<p className="text-destructive mt-4 text-sm" role="alert">
+						{chatGptError}
+					</p>
+				)}
+				{chatGptStatusError && (
+					<p className="text-destructive mt-4 text-sm" role="alert">
+						{chatGptStatusError}
+					</p>
+				)}
 			</div>
-		</section>
+
+			<ClaudeSubscriptionCard
+				userId={userId}
+				localApi={localApi}
+				tokenSaved={claudeTokenSaved}
+				loading={loading}
+				status={claudeCodeStatus}
+				statusError={claudeCodeStatusError}
+				onStatusChange={onClaudeCodeStatusChange}
+				onTokenSavedChange={(configured) =>
+					onConfigurationChange({ provider: 'claude', configured })
+				}
+			/>
+
+			<MuseSubscriptionCard
+				userId={userId}
+				localApi={localApi}
+				status={museStatus}
+				statusError={museStatusError}
+				onStatusChange={onMuseStatusChange}
+				onConnected={() => onProviderConnected('muse')}
+			/>
+
+			{apiKeyProviders.map((provider) => (
+				<ApiKeyCard
+					key={`${userId}:${provider}`}
+					provider={provider}
+					configured={apiKeysSaved[provider]}
+					loading={loading}
+					onConfiguredChange={(configured) => onConfigurationChange({ provider, configured })}
+				/>
+			))}
+
+			{loadError && (
+				<p className="text-destructive text-sm" role="alert">
+					{loadError}
+				</p>
+			)}
+		</>
 	);
 }

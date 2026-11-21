@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { GripVertical, Trash2 } from 'lucide-react';
 import { DragDropProvider } from '@dnd-kit/react';
 import { useSortable } from '@dnd-kit/react/sortable';
@@ -115,10 +115,10 @@ function ProviderRow({
 
 export default function SettingsProviders({
 	onRemove,
-	onOpenCredentials
+	children
 }: {
 	onRemove: (provider: CompletionProvider) => Promise<string | null>;
-	onOpenCredentials: () => void;
+	children?: ReactNode;
 }) {
 	const convexAuth = useConvexAuth();
 
@@ -185,6 +185,7 @@ export default function SettingsProviders({
 
 			<div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
 				<div className="max-w-xl space-y-4">
+					<h2 className="text-foreground px-3 text-sm">Order</h2>
 					<p className="text-muted-foreground px-3 pb-3 text-sm leading-6">
 						Agents use the first enabled provider that offers the model and fall back to the next
 						one if it fails. Drag to reorder.
@@ -223,15 +224,6 @@ export default function SettingsProviders({
 							))}
 						</ol>
 					</DragDropProvider>
-					<p className="text-muted-foreground px-3 text-[13px]">
-						<button
-							type="button"
-							className="text-foreground cursor-pointer underline underline-offset-2"
-							onClick={onOpenCredentials}
-						>
-							Set up more providers in BYOK/BYOS
-						</button>
-					</p>
 					{removalWarning && (
 						<p role="status" className="text-muted-foreground px-3 text-sm">
 							{removalWarning}
@@ -246,6 +238,13 @@ export default function SettingsProviders({
 						<p role="alert" className="text-destructive px-3 text-sm">
 							Couldn't load your preferences right now.
 						</p>
+					)}
+
+					{children && (
+						<>
+							<h2 className="text-foreground px-3 pt-6 text-sm">Connect providers</h2>
+							{children}
+						</>
 					)}
 				</div>
 			</div>
