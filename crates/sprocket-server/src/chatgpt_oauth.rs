@@ -3,8 +3,9 @@ use std::future::IntoFuture;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use anyhow::Context;
 use axum::extract::{Query, State};
-use axum::http::{StatusCode, header};
+use axum::http::{StatusCode, Uri, header};
 use axum::response::Html;
 use axum::routing::get;
 use serde::{Deserialize, Serialize};
@@ -87,9 +88,11 @@ impl PendingLogins {
 
     pub(crate) async fn poll(&self, session: &str, user: &str, state: &str) -> LoginResult {
         let logins = self.logins.lock().await;
-        let Some(login) = logins.attempts.get(state).filter(|login| {
-            login.session == session && login.sign_in.user == user && login.expires > Instant::now()
-        }) else {
+        let Some(login) = logins
+            .attempts
+            .get(state)
+            .filter(|login| login.belongs_to(session, user) && login.expires > Instant::now())
+        else {
             return LoginResult::Error {
                 error: "ChatGPT sign-in expired or was cancelled. Start sign-in again.".into(),
             };
@@ -108,7 +111,7 @@ impl PendingLogins {
         if logins
             .attempts
             .get(state)
-            .is_some_and(|login| login.session == session && login.sign_in.user == user)
+            .is_some_and(|login| login.belongs_to(session, user))
         {
             logins.attempts.remove(state);
             logins.stop_if_idle();
@@ -121,6 +124,46 @@ impl PendingLogins {
             .attempts
             .retain(|_, login| login.sign_in.user != user);
         logins.stop_if_idle();
+    }
+
+    /// For browsers on another machine, which can't reach the loopback callback.
+    pub(crate) async fn finish(
+        self: &Arc<Self>,
+        session: &str,
+        user: &str,
+        callback_url: &str,
+    ) -> anyhow::Result<()> {
+        let Query(query) = callback_url
+            .parse::<Uri>()
+            .ok()
+            .and_then(|uri| Query::<CallbackQuery>::try_from_uri(&uri).ok())
+            .filter(|Query(query)| query.code.is_some() || query.error.is_some())
+            .context("Paste the full address of the page your browser opened.")?;
+        self.receive(query, |login| login.belongs_to(session, user))
+            .await
+            .map_err(anyhow::Error::msg)
+    }
+
+    async fn receive(
+        self: &Arc<Self>,
+        query: CallbackQuery,
+        owns: impl FnOnce(&PendingLogin) -> bool,
+    ) -> Result<(), &'static str> {
+        let state = query.state.clone().ok_or("Invalid ChatGPT sign-in.")?;
+        let mut logins = self.logins.lock().await;
+        let login = logins
+            .attempts
+            .get_mut(&state)
+            .filter(|login| owns(login))
+            .ok_or("ChatGPT sign-in expired or was cancelled.")?;
+        if login.expires <= Instant::now() || login.processing || login.result.is_some() {
+            return Err("ChatGPT sign-in expired or was already completed.");
+        }
+        login.processing = true;
+        let login = login.clone();
+        drop(logins);
+        tokio::spawn(finish_callback(Arc::clone(self), state, login, query));
+        Ok(())
     }
 
     pub(crate) async fn shutdown(&self) {
@@ -160,6 +203,12 @@ struct PendingLogin {
     expires: Instant,
     processing: bool,
     result: Option<Result<(), String>>,
+}
+
+impl PendingLogin {
+    fn belongs_to(&self, session: &str, user: &str) -> bool {
+        self.session == session && self.sign_in.user == user
+    }
 }
 
 #[derive(Serialize)]
@@ -283,37 +332,14 @@ async fn callback(
         (header::CACHE_CONTROL, "no-store"),
         (header::REFERRER_POLICY, "no-referrer"),
     ];
-    let Some(state) = query.state.clone() else {
-        return (
-            StatusCode::BAD_REQUEST,
+    match pending.receive(query, |_| true).await {
+        Ok(()) => (
+            StatusCode::OK,
             headers,
-            Html("Invalid ChatGPT sign-in."),
-        );
-    };
-    let mut logins = pending.logins.lock().await;
-    let Some(login) = logins.attempts.get_mut(&state) else {
-        return (
-            StatusCode::BAD_REQUEST,
-            headers,
-            Html("ChatGPT sign-in expired or was cancelled."),
-        );
-    };
-    if login.expires <= Instant::now() || login.processing || login.result.is_some() {
-        return (
-            StatusCode::BAD_REQUEST,
-            headers,
-            Html("ChatGPT sign-in expired or was already completed."),
-        );
+            Html("ChatGPT sign-in received. Return to Sprocket to check the connection."),
+        ),
+        Err(message) => (StatusCode::BAD_REQUEST, headers, Html(message)),
     }
-    login.processing = true;
-    let login = login.clone();
-    drop(logins);
-    tokio::spawn(finish_callback(pending, state, login, query));
-    (
-        StatusCode::OK,
-        headers,
-        Html("ChatGPT sign-in received. Return to Sprocket to check the connection."),
-    )
 }
 
 #[cfg(test)]

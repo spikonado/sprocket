@@ -114,6 +114,7 @@ function createChatGptApi(overrides: Partial<LocalApi> = {}): LocalApi {
 		fetchChatGptStatus: async () => statusFixture(),
 		startChatGptBrowserLogin: unused,
 		fetchChatGptBrowserLoginResult: unused,
+		finishChatGptBrowserLogin: unused,
 		cancelChatGptBrowserLogin: async () => {},
 		selectChatGptAccount: unused,
 		disconnectChatGptAccount: unused,
@@ -416,13 +417,13 @@ it('removes a configured key after confirmation', async () => {
 	expect(remove).toHaveBeenCalledWith({ provider: 'anthropic' });
 });
 
-it('explains that local sign-in is unavailable when the server cannot log in', () => {
+it('explains that sign-in is unavailable when the server cannot log in', () => {
 	mount(new ConvexTestClient(), { chatGptStatus: statusFixture({ loginAvailable: false }) });
-	expect(screen.getByText(/sign-in runs through the local Sprocket server/)).toBeTruthy();
+	expect(screen.getByText(/ChatGPT sign-in is unavailable/)).toBeTruthy();
 	expect(screen.queryByRole('button', { name: 'Continue with ChatGPT' })).toBeNull();
 });
 
-it('opens browser sign-in on the first click and reports the refreshed status', async () => {
+it('finishes browser sign-in from a pasted callback address and reports the refreshed status', async () => {
 	vi.useFakeTimers();
 	const client = new ConvexTestClient();
 
@@ -437,10 +438,13 @@ it('opens browser sign-in on the first click and reports the refreshed status', 
 	}));
 
 	const fetchStatus = vi.fn(async () => connectedStatus);
+	const finish = vi.fn(async () => {});
+	let result: 'pending' | 'complete' = 'pending';
 
 	const localApi = createChatGptApi({
 		startChatGptBrowserLogin: start,
-		fetchChatGptBrowserLoginResult: async () => ({ status: 'complete' }),
+		fetchChatGptBrowserLoginResult: async () => ({ status: result }),
+		finishChatGptBrowserLogin: finish,
 		fetchChatGptStatus: fetchStatus
 	});
 
@@ -453,7 +457,15 @@ it('opens browser sign-in on the first click and reports the refreshed status', 
 	expect(loginWindow.location.replace).toHaveBeenCalledWith(
 		'https://auth.openai.test/authorize?state=state-1'
 	);
-	expect(screen.getByText('Signing in…')).toBeTruthy();
+	const callbackUrl = 'http://127.0.0.1:1455/auth/callback?code=c&state=state-1';
+	fireEvent.change(screen.getByLabelText('Address of the page your browser opened'), {
+		target: { value: callbackUrl }
+	});
+	await act(async () => {
+		fireEvent.click(screen.getByRole('button', { name: 'Finish sign-in' }));
+	});
+	expect(finish).toHaveBeenCalledWith({ userId: 'user-a', callbackUrl });
+	result = 'complete';
 	await act(async () => {
 		await vi.advanceTimersByTimeAsync(1_500);
 	});
@@ -479,7 +491,7 @@ it('opens desktop sign-in without creating a browser popup', async () => {
 	});
 	expect(openExternal).toHaveBeenCalledWith('https://auth.openai.test/authorize');
 	expect(openLoginWindow).toHaveBeenCalledTimes(0);
-	expect(screen.getByText('Signing in…')).toBeTruthy();
+	expect(screen.getByRole('button', { name: 'Finish sign-in' })).toBeTruthy();
 });
 
 it('reports a blocked browser popup before starting a server login', async () => {
@@ -678,7 +690,7 @@ it('starts a fresh login after the signed-in user changes', async () => {
 
 	const view = render(renderUser('user-a'));
 	fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
-	await screen.findByText('Signing in…');
+	await screen.findByRole('button', { name: 'Finish sign-in' });
 	view.rerender(renderUser('user-b'));
 	expect(cancel).toHaveBeenCalledWith({ userId: 'user-a', state: 'state-user-a' });
 	fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
@@ -720,7 +732,7 @@ it('ignores a stale login completion after the user cancels and starts again', a
 		firstResult.resolve({ status: 'complete' });
 	});
 	expect(view.onChatGptStatusChange).toHaveBeenCalledTimes(0);
-	expect(screen.getByText('Signing in…')).toBeTruthy();
+	expect(screen.getByRole('button', { name: 'Finish sign-in' })).toBeTruthy();
 });
 
 it('switches the active account and reports the refreshed status', async () => {
@@ -827,5 +839,5 @@ it('reconnects a signed-out account through the browser flow', async () => {
 	});
 	expect(start).toHaveBeenCalledWith({ userId: 'user-a', connectionId: 'conn-1' });
 	expect(loginWindow.location.replace).toHaveBeenCalledWith('https://auth.openai.test/authorize');
-	expect(screen.getByText('Signing in…')).toBeTruthy();
+	expect(screen.getByRole('button', { name: 'Finish sign-in' })).toBeTruthy();
 });

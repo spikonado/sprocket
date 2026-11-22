@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import Button from '$lib/components/ui/button/button';
 import ProviderLogo from '$lib/components/provider-logo';
 import { convexClientErrorMessage } from '$lib/convex-error';
@@ -13,6 +13,7 @@ import type {
 import type { CompletionProvider } from '@convex/lib/validators';
 import ApiKeyCard, { apiKeyProviders, type ApiKeyProvider } from './api-key-card';
 import ClaudeSubscriptionCard from './claude-subscription-card';
+import { ExternalTextLink } from './device-sign-in';
 import MuseSubscriptionCard from './muse-subscription-card';
 
 type ProviderConfigurationChange = {
@@ -24,6 +25,8 @@ type PendingBrowserLogin = {
 	userId: string;
 	login: ChatGptBrowserLoginStart;
 };
+
+type BrowserLoginView = ChatGptBrowserLoginStart | 'starting' | null;
 
 export default function SettingsCredentials({
 	userId,
@@ -67,7 +70,9 @@ export default function SettingsCredentials({
 	onProviderRemoved: (provider: CompletionProvider) => void;
 }) {
 	const [chatGptPending, setChatGptPending] = useState(false);
-	const [browserLoginActive, setBrowserLoginActive] = useState(false);
+	const [browserLogin, setBrowserLoginView] = useState<BrowserLoginView>(null);
+	const [callbackUrl, setCallbackUrl] = useState('');
+	const [finishing, setFinishing] = useState(false);
 	const [signOutWarning, setSignOutWarning] = useState<string | null>(null);
 	const [chatGptError, setChatGptError] = useState<string | null>(null);
 	const browserLoginRef = useRef<PendingBrowserLogin | null>(null);
@@ -78,9 +83,15 @@ export default function SettingsCredentials({
 			(account) => account.connectionId === chatGptStatus.activeConnectionId
 		) ?? null;
 
+	const showBrowserLogin = (next: BrowserLoginView) => {
+		setBrowserLoginView(next);
+		setCallbackUrl('');
+		setFinishing(false);
+	};
+
 	const setBrowserLogin = (userIdForLogin: string, next: ChatGptBrowserLoginStart | null) => {
 		browserLoginRef.current = next ? { userId: userIdForLogin, login: next } : null;
-		setBrowserLoginActive(Boolean(next));
+		showBrowserLogin(next);
 	};
 
 	function errorMessage(error: Error, fallback: string): string {
@@ -97,14 +108,14 @@ export default function SettingsCredentials({
 		generationRef.current += 1;
 		const pending = browserLoginRef.current;
 		browserLoginRef.current = null;
-		setBrowserLoginActive(false);
+		showBrowserLogin(null);
 		setChatGptPending(false);
 
 		return pending;
 	}
 
 	useEffect(() => {
-		setBrowserLoginActive(false);
+		showBrowserLogin(null);
 		setChatGptPending(false);
 		setChatGptError(null);
 		setSignOutWarning(null);
@@ -178,7 +189,7 @@ export default function SettingsCredentials({
 
 		if (!api || chatGptPending) return;
 		setChatGptPending(true);
-		setBrowserLoginActive(true);
+		showBrowserLogin('starting');
 		setChatGptError(null);
 		setSignOutWarning(null);
 		const userIdAtStart = userId;
@@ -224,7 +235,7 @@ export default function SettingsCredentials({
 			if (pending) cancelLoginOnServer(pending);
 
 			if (generation !== generationRef.current) return;
-			setBrowserLoginActive(false);
+			showBrowserLogin(null);
 			setChatGptError(
 				errorMessage(
 					z.instanceof(Error).catch(new Error()).parse(error),
@@ -239,6 +250,31 @@ export default function SettingsCredentials({
 		const pending = cancelLogin();
 
 		if (pending) cancelLoginOnServer(pending);
+	}
+
+	async function finishBrowserLogin(event: FormEvent) {
+		event.preventDefault();
+		const api = localApi;
+		const pending = browserLoginRef.current;
+		const address = callbackUrl.trim();
+
+		if (!api || !pending || !address || finishing) return;
+		setFinishing(true);
+		setChatGptError(null);
+
+		try {
+			// The result poll reports when the exchange this starts completes.
+			await api.finishChatGptBrowserLogin({ userId: pending.userId, callbackUrl: address });
+		} catch (error) {
+			if (browserLoginRef.current !== pending) return;
+			setFinishing(false);
+			setChatGptError(
+				errorMessage(
+					z.instanceof(Error).catch(new Error()).parse(error),
+					'Couldn’t finish ChatGPT sign-in.'
+				)
+			);
+		}
 	}
 
 	async function selectAccount(connectionId: string) {
@@ -388,9 +424,9 @@ export default function SettingsCredentials({
 					</button>
 				</div>
 
-				{browserLoginActive ? (
+				{browserLogin === 'starting' ? (
 					<div className="mt-5 flex items-center gap-3">
-						<span className="text-muted-foreground text-[12px]">Signing in…</span>
+						<span className="text-muted-foreground text-[12px]">Starting sign-in…</span>
 						<button
 							type="button"
 							className="text-muted-foreground text-[13px]"
@@ -399,6 +435,41 @@ export default function SettingsCredentials({
 							Cancel
 						</button>
 					</div>
+				) : browserLogin ? (
+					<form className="mt-5 space-y-3" onSubmit={(event) => void finishBrowserLogin(event)}>
+						<p className="text-muted-foreground text-[12px] leading-5">
+							Approve access in your browser. If the page it opens next doesn’t load, copy that
+							page’s address and paste it here.
+						</p>
+						<ExternalTextLink href={browserLogin.authorizeUrl}>Open sign-in page</ExternalTextLink>
+						<label className="block space-y-1.5">
+							<span className="text-muted-foreground text-[12px]">
+								Address of the page your browser opened
+							</span>
+							<input
+								type="text"
+								value={callbackUrl}
+								onChange={(event) => setCallbackUrl(event.currentTarget.value)}
+								autoComplete="off"
+								spellCheck={false}
+								disabled={finishing}
+								placeholder="http://127.0.0.1:…/auth/callback?code=…"
+								className="border-border bg-hover-fill text-foreground placeholder:text-muted-foreground focus:border-ring h-10 w-full rounded-lg border px-3 font-mono text-[13px] outline-none disabled:opacity-50"
+							/>
+						</label>
+						<div className="flex flex-wrap items-center gap-3">
+							<Button type="submit" disabled={finishing || !callbackUrl.trim()}>
+								{finishing ? 'Finishing…' : 'Finish sign-in'}
+							</Button>
+							<button
+								type="button"
+								className="text-muted-foreground hover:text-foreground text-[13px]"
+								onClick={stopBrowserLogin}
+							>
+								Cancel
+							</button>
+						</div>
+					</form>
 				) : (
 					<div className="mt-5 space-y-4">
 						{chatGptStatus && chatGptStatus.accounts.length > 0 && (
@@ -452,8 +523,8 @@ export default function SettingsCredentials({
 						)}
 						{chatGptStatus?.loginAvailable === false ? (
 							<p className="text-muted-foreground text-[12px] leading-5">
-								ChatGPT sign-in runs through the local Sprocket server, which isn’t available for
-								this window. Open Sprocket on your desktop to sign in.
+								ChatGPT sign-in is unavailable because Sprocket can’t read its saved ChatGPT
+								sign-ins on this computer.
 							</p>
 						) : (
 							<Button

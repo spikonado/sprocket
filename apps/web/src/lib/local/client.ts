@@ -736,6 +736,12 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				method: 'POST',
 				body: JSON.stringify(requestBody)
 			}),
+		finishChatGptBrowserLogin: async (requestBody) => {
+			await request('/api/chatgpt/browser/finish', z.null(), {
+				method: 'POST',
+				body: JSON.stringify(requestBody)
+			});
+		},
 		cancelChatGptBrowserLogin: async (requestBody) => {
 			await request('/api/chatgpt/browser/cancel', z.null(), {
 				method: 'POST',
