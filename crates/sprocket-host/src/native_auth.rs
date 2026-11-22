@@ -584,7 +584,7 @@ impl NativeAuthManager {
             reusable_access_token(&session, force_refresh, refresh_generation)
         };
         if let Some(access_token) = reusable {
-            self.flush_refresh_token().await?;
+            self.flush_refresh_token().await;
             return Ok(access_token);
         }
         if self.session.lock().await.suppress_persisted_resume {
@@ -719,7 +719,7 @@ impl NativeAuthManager {
             session.user = Some(user.clone());
             session.suppress_persisted_resume = false;
         }
-        self.flush_refresh_token().await?;
+        self.flush_refresh_token().await;
         if changed {
             self.publish_session_change(Some(&user.id)).await?;
         }
@@ -767,20 +767,25 @@ impl NativeAuthManager {
         }
     }
 
-    async fn flush_refresh_token(&self) -> anyhow::Result<()> {
+    /// A locked keyring must not sign the user out of a session held in memory, so a failed save
+    /// is retried on the next token request.
+    async fn flush_refresh_token(&self) {
         let token = {
             let session = self.session.lock().await;
             if session.refresh_token_persisted {
-                return Ok(());
+                return;
             }
             session.refresh_token.clone()
         };
         let Some(token) = token else {
-            return Ok(());
+            return;
         };
-        self.save_refresh_token(token).await?;
-        self.session.lock().await.refresh_token_persisted = true;
-        Ok(())
+        match self.save_refresh_token(token).await {
+            Ok(()) => self.session.lock().await.refresh_token_persisted = true,
+            Err(error) => {
+                tracing::warn!("failed to save the rotated WorkOS refresh token: {error:#}")
+            }
+        }
     }
 
     async fn save_refresh_token(&self, refresh_token: String) -> anyhow::Result<()> {
