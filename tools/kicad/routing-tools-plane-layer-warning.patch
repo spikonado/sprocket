@@ -19,74 +19,151 @@ index 734d648..cd44c23 100644
  ROUTE_PASSES = 3             # the first pass plus up to two on its result
  EFFORT_FACTOR = 2.0          # --effort-factor's default
 
-diff --git a/py_router/reference_plane.py b/py_router/reference_plane.py
-index 20405e2..fe4f4fb 100644
---- a/py_router/reference_plane.py
-+++ b/py_router/reference_plane.py
-@@ -30,10 +30,12 @@ passes beside a drill, which is not a split in the plane.
- """
+diff --git a/py_router/kicad_parser.py b/py_router/kicad_parser.py
+index 750b882..a8c0d8e 100644
+--- a/py_router/kicad_parser.py
++++ b/py_router/kicad_parser.py
+@@ -860,6 +860,8 @@ class BoardInfo:
+     """Board-level information."""
+     layers: Dict[int, str]  # layer_id -> layer_name
+     copper_layers: List[str]
++    # copper layer -> its (layers ...) type: signal, power, mixed or jumper
++    copper_layer_types: Dict[str, str] = field(default_factory=dict)
+     board_bounds: Optional[Tuple[float, float, float, float]] = None  # min_x, min_y, max_x, max_y
+     stackup: List[StackupLayer] = field(default_factory=list)  # ordered top to bottom
+     # #502: the drilled board thickness in mm (board_thickness_mm): the stackup
+@@ -913,6 +915,12 @@ class BoardInfo:
+     # grade reads it per token.
+     via_protection_setup: Dict[str, str] = field(default_factory=dict)
 
- import math
-+from collections import defaultdict
- from typing import Dict, List, Optional
-
- DEFAULT_STEP = 0.1
- _KEY = 3                 # chain joints: endpoints equal to 1 um
-+PLANE_COVER = 0.5
-
-
- def reference_layers(pcb_data) -> Dict[str, List[str]]:
-@@ -48,6 +50,30 @@ def reference_layers(pcb_data) -> Dict[str, List[str]]:
-     return out
-
-
-+def plane_layers(pcb_data) -> Dict[str, str]:
-+    """{inner copper layer: the net with the most pour area on it, when that
-+    covers at least PLANE_COVER of the board's bounding box}. Outer layers are
-+    left out: a pour there is a flood around the signal copper, not a plane to
-+    keep tracks off."""
-+    from kicad_parser import pour_zones
-+    from kicad_writer import _polygon_area
-+    bounds = pcb_data.board_info.board_bounds
-+    board = (bounds[2] - bounds[0]) * (bounds[3] - bounds[1]) if bounds else 0.0
-+    if board <= 0:
-+        return {}
-+    area = {layer: defaultdict(float) for layer in pcb_data.board_info.copper_layers[1:-1]}
-+    for z in pour_zones(getattr(pcb_data, 'zones', None)):
-+        if z.layer in area and z.net_id:
-+            area[z.layer][z.net_name] += (_polygon_area(z.polygon)
-+                                          - sum(_polygon_area(h) for h in z.holes))
-+    planes = {}
-+    for layer, by_net in area.items():
-+        net = max(by_net, key=by_net.get, default=None)
-+        if net is not None and by_net[net] >= PLANE_COVER * board:
-+            planes[layer] = net
-+    return planes
++    @property
++    def plane_layers(self) -> List[str]:
++        """The copper layers typed ``power``: planes, which routing keeps
++        other nets' tracks off (#2024)."""
++        return [l for l in self.copper_layers if self.copper_layer_types.get(l) == 'power']
 +
-+
- def _zone_clearance(z) -> float:
-     c = getattr(z, 'clearance', None)
-     return float(c) if c is not None and c > 0 else 0.0
+
+ @dataclass
+ class PCBData:
+@@ -2472,7 +2480,7 @@ def find_matching_paren(content: str, open_idx: int) -> int:
+
+ def extract_layers(content: str) -> BoardInfo:
+     """Extract layer information from PCB file."""
+-    layers, copper_layers = _layer_table(content)
++    layers, copper_layers, copper_layer_types = _layer_table(content)
+
+     # Extract board bounds from Edge.Cuts
+     bounds = extract_board_bounds(content)
+@@ -2483,17 +2491,19 @@ def extract_layers(content: str) -> BoardInfo:
+     # Extract stackup information
+     stackup = extract_stackup(content)
+
+-    return BoardInfo(layers=layers, copper_layers=copper_layers, board_bounds=bounds,
++    return BoardInfo(layers=layers, copper_layers=copper_layers,
++                     copper_layer_types=copper_layer_types, board_bounds=bounds,
+                      stackup=stackup, board_outline=(outers[0] if outers else []),
+                      board_outlines=outers, board_cutouts=cutouts,
+                      board_thickness=board_thickness_mm(stackup, general_thickness(content)))
+
+
+-def _layer_table(content: str) -> Tuple[Dict[int, str], List[str]]:
+-    """The board's (layers ...) table: {id: name}, and its copper layer names
+-    in table order."""
++def _layer_table(content: str) -> Tuple[Dict[int, str], List[str], Dict[str, str]]:
++    """The board's (layers ...) table: {id: name}, its copper layer names in
++    table order, and {copper name: type}."""
+     layers = {}
+     copper_layers = []
++    copper_layer_types = {}
+
+     # Find the layers section. Capture lazily up to the block's closing paren on
+     # its own line, rather than requiring a run of paren-free (...) entries: layer
+@@ -2515,7 +2525,8 @@ def _layer_table(content: str) -> Tuple[Dict[int, str], List[str]]:
+             # 2-layer (issue #76).
+             if '.Cu' in layer_name and layer_type in ('signal', 'power', 'mixed', 'jumper'):
+                 copper_layers.append(layer_name)
+-    return layers, copper_layers
++                copper_layer_types[layer_name] = layer_type
++    return layers, copper_layers, copper_layer_types
+
+
+ def _stackup_block_span(content: str) -> Optional[Tuple[int, int]]:
+@@ -9095,6 +9106,13 @@ def build_pcb_data_from_board(board, guide_layer: str = "User.1",
+             if enabled.Contains(lid) and lid in copper_id_to_name:
+                 copper_layers.append(lname)
+     _board_cu_names = set(copper_layers)
++    copper_layer_types = {}
++    for lid, lname in copper_id_to_name.items():
++        if lname in _board_cu_names:
++            try:
++                copper_layer_types[lname] = pcbnew.LAYER.ShowType(board.GetLayerType(lid))
++            except Exception:
++                pass
+
+     # Board bounds from Edge.Cuts drawings. We use each drawing's bounding
+     # box rather than GetStart()/GetEnd() because the latter only describes
+@@ -9199,6 +9217,7 @@ def build_pcb_data_from_board(board, guide_layer: str = "User.1",
+     board_info = BoardInfo(
+         layers=layers_dict,
+         copper_layers=copper_layers,
++        copper_layer_types=copper_layer_types,
+         board_bounds=board_bounds,
+         stackup=stackup,
+         board_thickness=board_thickness_mm(stackup, _general_thickness_from_pcbnew(board)),
 diff --git a/py_router/route.py b/py_router/route.py
-index f10f90d..0061118 100644
+index f10f90d..d8461b4 100644
 --- a/py_router/route.py
 +++ b/py_router/route.py
-@@ -3206,6 +3206,15 @@ def batch_route(input_file: str, output_file: str, net_names: List[str],
+@@ -3168,11 +3168,19 @@ def batch_route(input_file: str, output_file: str, net_names: List[str],
+     # Set default layer costs if not specified
+     # 4+ layers: all 1.0 (inner layers available for routing)
+     # 2 layers: F.Cu=1.0, B.Cu=3.0 (prefer top layer)
++    # Either way a layer typed power (a plane) is forbidden (#2024).
++    from routing_constants import FORBIDDEN_LAYER_COST, PLANE_FALLBACK_COST
++    planes = pcb_data.board_info.plane_layers
+     if not layer_costs:
+         if len(layers) >= 4:
+             layer_costs = [1.0] * len(layers)
+         else:
+             layer_costs = [1.0 if layer == 'F.Cu' else 3.0 for layer in layers]
++        layer_costs = [FORBIDDEN_LAYER_COST if layer in planes else cost
++                       for layer, cost in zip(layers, layer_costs)]
++        _forbidden = [layer for layer in layers if layer in planes]
++        if _forbidden:
++            print(f"  Forbidden as planes (typed power): {', '.join(_forbidden)}")
+
+     # Full-stack normalization: the config must ALWAYS carry every board
+     # copper layer -- copper on a layer absent from config.layers is invisible
+@@ -3188,7 +3196,6 @@ def batch_route(input_file: str, output_file: str, net_names: List[str],
+     _board_cu = list(getattr(pcb_data.board_info, 'copper_layers', None) or [])
+     _missing_cu = [l for l in _board_cu if l not in layers]
+     if _missing_cu:
+-        from routing_constants import FORBIDDEN_LAYER_COST
+         layers = list(layers) + _missing_cu
+         layer_costs = list(layer_costs) + [FORBIDDEN_LAYER_COST] * len(_missing_cu)
+         print(f"  Full-stack: appended {len(_missing_cu)} unrequested copper layer(s) "
+@@ -3206,6 +3213,11 @@ def batch_route(input_file: str, output_file: str, net_names: List[str],
 
      costs_str = ', '.join(f"{layers[i]}={layer_costs[i]}x" for i in range(min(len(layers), len(layer_costs))))
      print(f"  Layer costs: {costs_str}")
-+    from reference_plane import plane_layers
-+    from routing_constants import PLANE_FALLBACK_COST
-+    for _plane_layer, _plane_net in plane_layers(pcb_data).items():
-+        _plane_cost = layer_costs[layers.index(_plane_layer)]
-+        if 0 <= _plane_cost < PLANE_FALLBACK_COST:
-+            print(f"  WARNING: {_plane_layer} carries the {_plane_net} plane but is routable "
-+                  f"at {_plane_cost}x, so other nets' tracks may cut it up. Pass -1 for "
-+                  f"{_plane_layer} in --layer-costs to keep the plane solid (autoroute's "
-+                  f"later passes cross a plane at {PLANE_FALLBACK_COST:g}).")
++    for _layer, _cost in zip(layers, layer_costs):
++        if _layer in planes and 0 <= _cost < PLANE_FALLBACK_COST:
++            print(f"  WARNING: {_layer} is typed power (a plane) but routable at {_cost}x, "
++                  f"so tracks may cut the plane. Pass -1 for {_layer} in --layer-costs "
++                  f"to keep it solid.")
 
      # Calculate layer-specific widths for impedance-controlled routing.
      # #610: with --track-width OMITTED the impedance request sets the width
+@@ -11059,7 +11071,8 @@ For differential pair routing, use route_diff.py:
+     # Layer preference options
+     parser.add_argument("--layer-costs", nargs="+", type=float, default=[],
+                         help="Per-layer cost multipliers (1.0-1000; default: 1.0 on every layer when "
+-                             "routing 4+ layers, else F.Cu=1.0 and the others 3.0), "
++                             "routing 4+ layers, else F.Cu=1.0 and the others 3.0, and -1 on a "
++                             "layer typed power in the board's layer table), "
+                              "or any negative value (e.g. -1) = FORBIDDEN: the layer stays an obstacle "
+                              "(its copper blocks vias) and through-vias may span it, but NO track copper "
+                              "is placed on it. One value per --layers entry, in that order (another count is "
 diff --git a/py_router/routing_constants.py b/py_router/routing_constants.py
 index 6892fe3..5a2a093 100644
 --- a/py_router/routing_constants.py
@@ -104,44 +181,48 @@ index 6892fe3..5a2a093 100644
  POWER_NET_EXCLUSION_PATTERNS = [
      '*GND*', '*VCC*', '*VDD*', '+*V', '-*V', 'unconnected-*', ''
 diff --git a/py_tools/route_review.py b/py_tools/route_review.py
-index 9df09d7..0143247 100644
+index 9df09d7..6c6cfa4 100644
 --- a/py_tools/route_review.py
 +++ b/py_tools/route_review.py
 @@ -29,6 +29,10 @@ placement pass that moves parts and routes again:
                     about the footprint origin, which is pad 1 on a
                     through-hole axial, so it swings the body by the pitch
                     instead (#1322).
-+  PLANE TRACKS     tracks on an inner layer that another net's pour mostly
-+                   covers (`reference_plane.plane_layers`), by layer and net.
-+                   Each one cuts the plane. The congestion grid leaves plane
-+                   layers out.
++  PLANE TRACKS     tracks on a copper layer typed power (a plane) of nets
++                   with no pour on that layer, by layer and net. Each one
++                   cuts the plane. The congestion grid leaves plane layers
++                   out.
 
      python3 -X utf8 py_tools/route_review.py routed.kicad_pcb
      python3 -X utf8 py_tools/route_review.py routed.kicad_pcb --top 12 --json review.json
-@@ -87,11 +91,13 @@ def review(pcb_file, cell=2.0, hot=0.5, top=8, pcb=None):
-     """The review as a dict (the `--json` document)."""
-     from check_connected import run_connectivity_check
-     from list_nets import board_default_netclass_clearance
-+    from reference_plane import plane_layers
-     pcb = pcb if pcb is not None else parse_kicad_pcb(pcb_file)
-     view = BoardView(pcb)
+@@ -52,7 +56,7 @@ import statistics
+ import sys
+ from collections import defaultdict
+
+-from kicad_parser import parse_kicad_pcb  # noqa: E402
++from kicad_parser import parse_kicad_pcb, pour_zones  # noqa: E402
+ from placement.grouping import BoardView  # noqa: E402
+
+
+@@ -92,6 +96,7 @@ def review(pcb_file, cell=2.0, hot=0.5, top=8, pcb=None):
      name = view.name_of
      poured = {z.net_id for z in (pcb.zones or ()) if z.net_id}
      tracks = [s for s in pcb.segments if not getattr(s, 'graphic', False) and s.net_id]
-+    planes = plane_layers(pcb)
++    planes = pcb.board_info.plane_layers
      clearance = board_default_netclass_clearance(pcb_file) or 0.2
      width = statistics.median([s.width for s in tracks]) if tracks else 0.2
      pitch = width + clearance
-@@ -130,11 +136,20 @@ def review(pcb_file, cell=2.0, hot=0.5, top=8, pcb=None):
+@@ -130,11 +135,21 @@ def review(pcb_file, cell=2.0, hot=0.5, top=8, pcb=None):
      by_detour = sorted((n for n in nets if n['detour'] and n['tree_mm'] > 3.0),
                         key=lambda n: (-n['detour'], n['net']))[:top]
 
-+    # ---- other nets' tracks on plane layers
++    # ---- plane tracks
++    plane_nets = {(z.layer, z.net_id) for z in pour_zones(pcb.zones) if z.net_id}
 +    on_plane = defaultdict(float)
 +    for s in tracks:
-+        if s.layer in planes and name(s.net_id) != planes[s.layer]:
++        if s.layer in planes and (s.layer, s.net_id) not in plane_nets:
 +            on_plane[(s.layer, name(s.net_id))] += _seg_len(s)
-+    plane_tracks = [{'layer': l, 'plane': planes[l], 'net': n, 'length_mm': round(L, 1)}
++    plane_tracks = [{'layer': l, 'net': n, 'length_mm': round(L, 1)}
 +                    for (l, n), L in sorted(on_plane.items(), key=lambda kv: (-kv[1], kv[0]))]
 +
      # ---- congestion
@@ -179,12 +260,12 @@ index 9df09d7..0143247 100644
              print(f"   {o['net']}{tag}: disconnected at {', '.join(o['disconnected_pad_parts']) or '?'}"
                    f"; on {', '.join(o['parts'][:8])}")
 +    if r['plane_tracks']:
-+        print("== other nets' tracks on plane layers (they cut the plane; reroute with -1 for "
-+              "the layer in --layer-costs)")
-+        for layer, net in r['plane_layers'].items():
++        print("== tracks on plane layers (they cut the plane; reroute with -1 for the layer "
++              "in --layer-costs, or without --layer-costs)")
++        for layer in r['plane_layers']:
 +            rows = [t for t in r['plane_tracks'] if t['layer'] == layer]
 +            if rows:
-+                print(f"   {layer} ({net} plane): {sum(t['length_mm'] for t in rows):.1f} mm, "
++                print(f"   {layer}: {sum(t['length_mm'] for t in rows):.1f} mm, "
 +                      + ', '.join(f"{t['net']} {t['length_mm']}" for t in rows))
      if r['most_vias']:
          print("== most vias (signal nets)")
