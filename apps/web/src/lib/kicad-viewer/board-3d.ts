@@ -277,7 +277,12 @@ export class Board3d {
 		viewport: ViewportSize,
 		private readonly post: (message: FromWorker) => void
 	) {
-		this.renderer = new WebGLRenderer({ canvas, antialias: true, alpha: true, stencil: true });
+		try {
+			this.renderer = new WebGLRenderer({ canvas, antialias: true, alpha: true, stencil: true });
+		} catch (cause) {
+			throw new Error('This browser can’t draw boards in 3D: it couldn’t start WebGL2.', { cause });
+		}
+
 		this.size = viewport;
 
 		const pmrem = new PMREMGenerator(this.renderer);

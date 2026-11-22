@@ -35,6 +35,7 @@ export default function PcbViewer({
 	const viewer = useRef<BoardViewerClient | null>(null);
 	const [status, setStatus] = useState<ViewerStatus>({ kind: 'loading' });
 	const [status3d, setStatus3d] = useState<ViewerStatus>({ kind: 'ready' });
+	const [error3d, setError3d] = useState<string | null>(null);
 	const [layers, setLayers] = useState<ViewerLayer[] | null>(null);
 	const [modelsKey, setModelsKey] = useState<string | null | undefined>(undefined);
 	const [pick, setPick] = useState<PickResult | null>(null);
@@ -70,7 +71,7 @@ export default function PcbViewer({
 			},
 			onPick: setPick,
 			onError: (failed, message) =>
-				(failed === '3d' ? setStatus3d : setStatus)({ kind: 'error', message }),
+				failed === '3d' ? setError3d(message) : setStatus({ kind: 'error', message }),
 			onModels: (error) =>
 				setStatus3d(error ? { kind: 'error', message: error } : { kind: 'ready' })
 		});
@@ -120,6 +121,7 @@ export default function PcbViewer({
 			client.dispose();
 			viewer.current = null;
 			setModelsKey(undefined);
+			setError3d(null);
 		};
 	}, [api, workspacePath, path]);
 
@@ -184,7 +186,12 @@ export default function PcbViewer({
 		setComponentsVisible(!componentsVisible);
 	}
 
-	const shownStatus = view === '3d' && status.kind === 'ready' ? status3d : status;
+	const shownStatus: ViewerStatus =
+		view !== '3d' || status.kind !== 'ready'
+			? status
+			: error3d
+				? { kind: 'error', message: error3d }
+				: status3d;
 
 	return (
 		<div
@@ -265,7 +272,7 @@ export default function PcbViewer({
 			)}
 			<ViewerStatusNotice
 				status={shownStatus}
-				drawn={layers !== null}
+				drawn={layers !== null && !(view === '3d' && error3d)}
 				opening="Opening the board…"
 			/>
 		</div>

@@ -1,3 +1,4 @@
+import { dropExceptionsOutsideApp } from '@sprocket/error-tracking';
 import posthog from 'posthog-js';
 // Bundled because ad blockers (EasyPrivacy) block the lazily loaded `/posthog-recorder.js` on any host.
 import 'posthog-js/dist/posthog-recorder';
@@ -32,6 +33,7 @@ export function initAnalytics(config: RuntimeConfig): void {
 		ui_host: 'https://eu.posthog.com',
 		defaults: '2026-08-30',
 		capture_exceptions: true,
+		before_send: dropExceptionsOutsideApp,
 		...maskingConfig(masked)
 	});
 	posthog.register({
