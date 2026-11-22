@@ -1,17 +1,14 @@
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::{ConnectInfo, State};
+use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::routing::post;
 use axum_extra::extract::CookieJar;
 use serde::{Deserialize, Serialize};
 
 use crate::AppState;
-use crate::auth::{
-    BrowserConnection, browser_connection, cookie_request_is_csrf_safe, require_session_user,
-};
+use crate::auth::{cookie_request_is_csrf_safe, require_session_user};
 use crate::chatgpt_oauth::{LoginResult, StartError, StartedLogin};
 use crate::routes::api_error::ApiError;
 use sprocket_host::chatgpt_credentials::ServiceStatus;
@@ -34,6 +31,13 @@ struct StartRequest {
 struct LoginRequest {
     user_id: String,
     state: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FinishRequest {
+    user_id: String,
+    callback_url: String,
 }
 
 #[derive(Deserialize)]
@@ -61,6 +65,7 @@ pub(crate) fn routes() -> axum::Router<AppState> {
         .route("/chatgpt/status", post(status))
         .route("/chatgpt/browser/start", post(start))
         .route("/chatgpt/browser/result", post(result))
+        .route("/chatgpt/browser/finish", post(finish))
         .route("/chatgpt/browser/cancel", post(cancel))
         .route("/chatgpt/select", post(select))
         .route("/chatgpt/disconnect", post(disconnect))
@@ -89,35 +94,13 @@ async fn session_user(
         .map_err(|_| ApiError::authentication_required())
 }
 
-async fn local_session(
-    state: &AppState,
-    peer: SocketAddr,
-    headers: &HeaderMap,
-    jar: &CookieJar,
-    user: &str,
-) -> Result<String, ApiError> {
-    if !state.loopback_desktop_login_supported
-        || browser_connection(headers, peer) != Some(BrowserConnection::Loopback)
-    {
-        return Err(ApiError::bad_request(anyhow::anyhow!(
-            "ChatGPT sign-in requires Sprocket running on your own computer. Open its local settings."
-        )));
-    }
-    let session = session_user(state, headers, jar, user).await?;
-    if !state.auth.session_is_local_browser(&session).await {
-        return Err(ApiError::authentication_required());
-    }
-    Ok(session)
-}
-
 async fn start(
     State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     jar: CookieJar,
     Json(request): Json<StartRequest>,
 ) -> Result<Json<StartedLogin>, ApiError> {
-    let session = local_session(&state, peer, &headers, &jar, &request.user_id).await?;
+    let session = session_user(&state, &headers, &jar, &request.user_id).await?;
     match state
         .chatgpt_oauth
         .start(session, request.user_id, request.connection_id)
@@ -134,12 +117,11 @@ async fn start(
 
 async fn result(
     State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     jar: CookieJar,
     Json(request): Json<LoginRequest>,
 ) -> Result<Json<LoginResult>, ApiError> {
-    let session = local_session(&state, peer, &headers, &jar, &request.user_id).await?;
+    let session = session_user(&state, &headers, &jar, &request.user_id).await?;
     Ok(Json(
         state
             .chatgpt_oauth
@@ -148,14 +130,28 @@ async fn result(
     ))
 }
 
+async fn finish(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(request): Json<FinishRequest>,
+) -> Result<Json<()>, ApiError> {
+    let session = session_user(&state, &headers, &jar, &request.user_id).await?;
+    state
+        .chatgpt_oauth
+        .finish(&session, &request.user_id, &request.callback_url)
+        .await
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(()))
+}
+
 async fn cancel(
     State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     jar: CookieJar,
     Json(request): Json<LoginRequest>,
 ) -> Result<Json<()>, ApiError> {
-    let session = local_session(&state, peer, &headers, &jar, &request.user_id).await?;
+    let session = session_user(&state, &headers, &jar, &request.user_id).await?;
     state
         .chatgpt_oauth
         .cancel(&session, &request.user_id, &request.state)
@@ -165,16 +161,11 @@ async fn cancel(
 
 async fn status(
     State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     jar: CookieJar,
     Json(request): Json<UserRequest>,
 ) -> Result<Json<ProviderStatus>, ApiError> {
-    let session = session_user(&state, &headers, &jar, &request.user_id).await?;
-    let login_available = state.host.chatgpt_credentials.available()
-        && state.loopback_desktop_login_supported
-        && browser_connection(&headers, peer) == Some(BrowserConnection::Loopback)
-        && state.auth.session_is_local_browser(&session).await;
+    session_user(&state, &headers, &jar, &request.user_id).await?;
     Ok(Json(ProviderStatus {
         status: state
             .host
@@ -182,7 +173,7 @@ async fn status(
             .status(&request.user_id)
             .await
             .map_err(ApiError::bad_request)?,
-        login_available,
+        login_available: state.host.chatgpt_credentials.available(),
     }))
 }
 

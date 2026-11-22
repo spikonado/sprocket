@@ -48,6 +48,12 @@ Add keys and subscriptions in **Settings → Providers**, under **Connect provid
 
 Claude and Muse sign-in run on the computer that runs Sprocket. Open Sprocket on that computer to install them or sign in.
 
+### Sign in to ChatGPT from another computer
+
+<Snippet file="unreleased.mdx" />
+
+You can sign in to ChatGPT from a browser on another computer, such as one that reaches Sprocket over Tailscale. After you approve access, ChatGPT sends your browser to an address on the computer running Sprocket, so the page doesn't load. Copy that page's address from the address bar, paste it into **Settings → Providers**, and select **Finish sign-in**.
+
 ### Morph
 
 Morph serves Kimi K3.1 Pro and DeepSeek V4.1 Flash 1017. Pay-as-you-go keys and [Ultra plan](https://docs.morphllm.com/ultra-plan) keys connect the same way. On Ultra, neither model has a token meter, but each has a per-minute limit on uncached input and output tokens. Kimi K3.1 Pro's output limit is lower than one nonstop stream, so threads with several agents hit it quickly. Keep another provider enabled after Morph so those requests [fall back](#provider-order-and-fallback) instead of failing.

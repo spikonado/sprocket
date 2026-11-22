@@ -72,6 +72,7 @@ function createLocalApi(runAgent: LocalApi['runAgent']): LocalApi {
 		fetchChatGptStatus: unusedDesktopCall,
 		startChatGptBrowserLogin: unusedDesktopCall,
 		fetchChatGptBrowserLoginResult: unusedDesktopCall,
+		finishChatGptBrowserLogin: unusedDesktopCall,
 		cancelChatGptBrowserLogin: unusedDesktopCall,
 		selectChatGptAccount: unusedDesktopCall,
 		disconnectChatGptAccount: unusedDesktopCall,

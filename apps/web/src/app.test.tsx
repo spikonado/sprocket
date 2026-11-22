@@ -143,6 +143,7 @@ function createLocalApi(overrides: Partial<LocalApi> = {}): LocalApi {
 		}),
 		startChatGptBrowserLogin: unused,
 		fetchChatGptBrowserLoginResult: unused,
+		finishChatGptBrowserLogin: unused,
 		cancelChatGptBrowserLogin: async () => {},
 		selectChatGptAccount: unused,
 		disconnectChatGptAccount: unused,

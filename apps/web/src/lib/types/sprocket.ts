@@ -427,6 +427,7 @@ export type LocalApi = {
 	fetchChatGptBrowserLoginResult: (
 		request: LocalUserRequest & { state: string }
 	) => Promise<ChatGptBrowserLoginResult>;
+	finishChatGptBrowserLogin: (request: LocalUserRequest & { callbackUrl: string }) => Promise<void>;
 	cancelChatGptBrowserLogin: (request: LocalUserRequest & { state: string }) => Promise<void>;
 	selectChatGptAccount: (request: LocalUserRequest & { connectionId: string }) => Promise<void>;
 	disconnectChatGptAccount: (
