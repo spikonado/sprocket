@@ -1,0 +1,13 @@
+diff --git a/py_tools/route_review.py b/py_tools/route_review.py
+index 6c6cfa4..7cb2a35 100644
+--- a/py_tools/route_review.py
++++ b/py_tools/route_review.py
+@@ -94,7 +94,7 @@ def review(pcb_file, cell=2.0, hot=0.5, top=8, pcb=None):
+     pcb = pcb if pcb is not None else parse_kicad_pcb(pcb_file)
+     view = BoardView(pcb)
+     name = view.name_of
+-    poured = {z.net_id for z in (pcb.zones or ()) if z.net_id}
++    poured = {z.net_id for z in pour_zones(pcb.zones) if z.net_id}
+     tracks = [s for s in pcb.segments if not getattr(s, 'graphic', False) and s.net_id]
+     planes = pcb.board_info.plane_layers
+     clearance = board_default_netclass_clearance(pcb_file) or 0.2

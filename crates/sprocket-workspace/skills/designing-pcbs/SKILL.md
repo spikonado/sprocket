@@ -36,6 +36,7 @@ Follow a recommendation, in the schematic or the layout, when you can explain wh
 - KiCad's Cleanup Tracks & Vias and other `run_action` calls fail in headless mode. Use the steps in [Finishing the copper](#finishing-the-copper).
 - The Gerber job file lists placeholder dielectrics because kipy reads the stackup with `board.get_stackup()` but can't write it.
   With the board closed, edit the `(stackup …)` block inside `(setup)` in the `.kicad_pcb`, then reopen it and check `get_stackup()`.
+- kipy can't set a copper layer's type either. With the board closed, edit its entry in the `(layers …)` block, like `(4 "In1.Cu" power)`, then reopen the board, save it, and check the entry kept its type.
 - DRC on a renamed copy of a board ignores the project's rules, because `kicad-cli` reads them from the `.kicad_pro` with the board's basename.
   Make copies with `copy_board.py`. For DRC without parity errors or `lib_footprint_issues`, also copy the `.kicad_sch` under the new basename and `fp-lib-table` next to it.
 - A Zone created with several outline polygons keeps only the first when saved. Create one Zone per polygon.
@@ -108,6 +109,8 @@ Set its minimums as the board's design rules, and keep net class widths and clea
 
 ## Copper pours
 
+Type each inner plane layer `power` and every other copper layer `signal`, as in [Known traps](#known-traps), so `kicad-route` keeps tracks off the planes.
+On 2-layer boards, keep `B.Cu` typed `signal`, because its short jumpers need it.
 Before routing, give every copper layer a GND zone over the whole board at priority 0.
 Put pours of other nets, like power planes and the AGND island, above it at higher priorities, so GND fills the copper they leave.
 Keep switch node copper as small as its current allows, because its area radiates.
@@ -134,8 +137,8 @@ It connects the pads of zone nets, like `GND`, to their pours.
 On every run:
 
 - Pass `--escalation off --strict-sizes`. Otherwise, the router retries failing nets below their net class sizes and lowers the project's rules to match.
-- On boards with 4 or more layers, keep tracks off every plane: pass every copper layer to `--layers` and `-1` for each plane in `--layer-costs`, like `--layers F.Cu In1.Cu In2.Cu B.Cu --layer-costs 1 -1 -1 1`.
-  When nets stay open, fix the placement, the fan-out, or the board size. Never raise a plane's cost to let tracks onto it.
+- If you pass `--layer-costs`, give each `power` layer `-1`.
+  When nets stay open, fix the placement, the fan-out, or the board size. Never open a plane to tracks to finish a route.
 
 Before the first route, put rule-area keepouts that block tracks on every layer over switch nodes and other areas that traces must avoid. Allow copper pours in them, so GND still fills under the switch node.
 Give switch nodes a net class as wide as their current needs.
@@ -152,9 +155,9 @@ Right after placement, the pours, and the keepouts, and before the schematic is 
 Then route in this order:
 
 1. Draw the critical copper yourself: switch nodes, crystal nets, and a fan-out that takes each fine-pitch IC pin to a via outside the pad ring, never in a pad.
-   `qfn_fanout.py` helps, but check its result in `kicad-view`.
+   `check_fanout.py --component U1` names the pins the placement cages. `qfn_fanout.py` helps, but check its result in `kicad-view`.
 2. Route differential pairs with `route_diff.py --impedance <ohms>`, then check them with `check_impedance.py`.
-   `route_diff.py` pairs nets only when the last character that isn't a digit or `_` is `P`/`N` or `+`/`-`, like `USB_D+`/`USB_D-` or `ETH_TXP`/`ETH_TXN`. Rename nets like `USB_DM` and `USB_DP_MCU` in the schematic first.
+   KiCad's DRC pairs nets only when the last character that isn't a digit or `_` is `P`/`N` or `+`/`-`, like `USB_D+`/`USB_D-` or `ETH_TXP`/`ETH_TXN`. Rename nets like `USB_DM` and `USB_DP_MCU` in the schematic first. `route_diff.py` warns about names that won't pair.
 3. Lock the tracks, arcs, and vias from the steps above, so the router never rips them.
 4. Route everything else in one run with `--keep-input-copper`. Plan buses and nets that share a destination as bundles with `--bus`.
    Routing block by block leaves more nets open than one global run.
@@ -230,7 +233,7 @@ DRC passes on boards whose copper overheats or whose signals radiate. Before cal
 - Planes cut or slit by other tracks.
 - Hot-loop and input capacitors at their pins, as in [Placing parts](#placing-parts).
 
-Then check the signals from the board file, because `route_review.py` reports none of these:
+Then run `signal_review.py` and `route_review.py` on the board and fix what breaks these rules:
 
 - No track of another net on a plane layer.
 - USB, QSPI, SD, and clock nets at most about 1.5 times their straight-line length, with at most 2 vias each.

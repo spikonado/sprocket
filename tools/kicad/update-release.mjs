@@ -71,7 +71,13 @@ const KIPY_PATCHES = [
 
 // board-escalation is Sprocket's policy and stays: agents write the fab's minimums into Board Setup,
 // so no descent may go below them.
-const ROUTING_TOOLS_PATCHES = ['routing-tools-board-escalation.patch'];
+const ROUTING_TOOLS_PATCHES = [
+	'routing-tools-board-escalation.patch',
+	'routing-tools-plane-layer-warning.patch',
+	'routing-tools-review-teardrop-pours.patch',
+	'routing-tools-signal-review.patch',
+	'routing-tools-fanout-check.patch'
+];
 
 // Sprocket installs these scripts from the commit that pins a release, so changing one needs a release.
 const BUILD_FILES = [
