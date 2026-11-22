@@ -203,19 +203,34 @@ test('the rotated session cookie is kept when verifying the refreshed token fail
 });
 
 test('logout ends the WorkOS session after the access token expires', async () => {
-	const { server } = fakeServer();
+	const server = createPricingAuthServer('sk_test', 'x'.repeat(32), 'client_test');
 	const expiredClaims = { exp: Math.floor(Date.now() / 1000) - 60, sid: 'session_1' };
-	spyOn(server.workos.userManagement, 'getSessionFromCookie').mockResolvedValue({
-		user,
-		accessToken: `header.${Buffer.from(JSON.stringify(expiredClaims)).toString('base64url')}.sig`,
-		refreshToken: 'refresh-token'
+
+	const expiredToken = [{ alg: 'RS256' }, expiredClaims]
+		.map((part) => Buffer.from(JSON.stringify(part)).toString('base64url'))
+		.concat('sig')
+		.join('.');
+
+	spyOn(server.workos, 'post').mockResolvedValue({
+		data: {
+			user: { id: user.id, email: user.email },
+			access_token: expiredToken,
+			refresh_token: 'r'
+		}
+	});
+
+	const { sealedSession } = await server.workos.userManagement.authenticateWithCode({
+		code: 'code-1',
+		session: { sealSession: true, cookiePassword: server.cookiePassword }
 	});
 
 	const logoutUrl = await pricingLogoutUrl(
 		server,
-		'sealed-session',
+		sealedSession ?? '',
 		new URL('https://usesprocket.dev/api/pricing/sign-out')
 	);
 
-	expect(new URL(logoutUrl ?? '').searchParams.get('session_id')).toBe('session_1');
+	const { searchParams } = new URL(logoutUrl);
+	expect(searchParams.get('session_id')).toBe('session_1');
+	expect(searchParams.get('return_to')).toBe('https://usesprocket.dev/pricing');
 });

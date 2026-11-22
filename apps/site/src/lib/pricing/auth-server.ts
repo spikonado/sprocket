@@ -210,32 +210,14 @@ export function takePricingSession(cookies: Cookies, url: URL): string | undefin
 	return sealedSession;
 }
 
-export async function pricingLogoutUrl(
+export function pricingLogoutUrl(
 	server: PricingAuthServer,
 	sealedSession: string,
 	url: URL
-): Promise<string | null> {
-	const session = await server.workos.userManagement.getSessionFromCookie({
-		sessionData: sealedSession,
-		cookiePassword: server.cookiePassword
-	});
-
-	const sessionId = session?.accessToken && unverifiedSessionId(session.accessToken);
-
-	if (!sessionId) return null;
-
-	return server.workos.userManagement.getLogoutUrl({
-		sessionId,
-		returnTo: `${url.origin}/pricing`
-	});
-}
-
-/**
- * `verifyAccessToken` rejects expired tokens, but logout must still end their WorkOS session.
- * The sealed cookie is authenticated, so the token inside it can be read without verifying it.
- */
-function unverifiedSessionId(token: string): string | undefined {
-	return JSON.parse(Buffer.from(token.split('.')[1] ?? '', 'base64url').toString()).sid;
+): Promise<string> {
+	return server.workos.userManagement
+		.loadSealedSession({ sessionData: sealedSession, cookiePassword: server.cookiePassword })
+		.getLogoutUrl({ returnTo: `${url.origin}/pricing` });
 }
 
 export function isSameOriginPost(request: Request): boolean {

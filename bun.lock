@@ -38,7 +38,7 @@
         "@sprocket/error-tracking": "workspace:*",
         "@tailwindcss/vite": "catalog:",
         "@vercel/functions": "^3.10.2",
-        "@workos-inc/node": "^12.1.0",
+        "@workos-inc/node": "^12.3.0",
         "astro": "7.4.7",
         "clsx": "catalog:",
         "convex": "catalog:",
@@ -1231,7 +1231,7 @@
 
     "@workos-inc/authkit-js": ["@workos-inc/authkit-js@0.20.5", "", {}, "sha512-5e3C0xTMMlnDlaVAIOCk/G91W83lpb9ChPolCxTOQCkCuwn3w5qfuJze+5UNOIX1RRZv6rnzyb2FRfPdSThDkw=="],
 
-    "@workos-inc/node": ["@workos-inc/node@12.2.0", "", {}, "sha512-uWzWtPieLqn+juXcIm8YQxh0qokZg0dnjzGm5AHeemiG6VeqzGYc6nlqQ2zw/OI80aYuaPo/ZOURACyQuqYgnA=="],
+    "@workos-inc/node": ["@workos-inc/node@12.3.0", "", {}, "sha512-BuPP/5Zkh4Xjvs6x0qLUsCQzKVIrvacLLuCGhaai9fI/vzKd4JX9OUQoXrbsIqkPY8HWC6uIgCWYZaJxIvXxpA=="],
 
     "@xmldom/xmldom": ["@xmldom/xmldom@0.8.15", "", {}, "sha512-/5NV/vDALVFDXgLmfsy9TRCBlKwO2LNBFzpzvb9iIj+jR+eSc6DLYYvVOdivT/jm7MtU6TebYuRmzEOI7w40UA=="],
 
