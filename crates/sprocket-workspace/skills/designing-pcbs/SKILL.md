@@ -109,7 +109,8 @@ Set its minimums as the board's design rules, and keep net class widths and clea
 
 ## Copper pours
 
-Type each plane layer `power` and each routing layer `signal`, as in [Known traps](#known-traps), so `kicad-route` keeps tracks off the planes.
+Type each inner plane layer `power` and every other copper layer `signal`, as in [Known traps](#known-traps), so `kicad-route` keeps tracks off the planes.
+On 2-layer boards, keep `B.Cu` typed `signal`, because its short jumpers need it.
 Before routing, give every copper layer a GND zone over the whole board at priority 0.
 Put pours of other nets, like power planes and the AGND island, above it at higher priorities, so GND fills the copper they leave.
 Keep switch node copper as small as its current allows, because its area radiates.
