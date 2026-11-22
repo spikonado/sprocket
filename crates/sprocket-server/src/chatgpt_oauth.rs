@@ -137,6 +137,7 @@ impl PendingLogins {
             .parse::<Uri>()
             .ok()
             .and_then(|uri| Query::<CallbackQuery>::try_from_uri(&uri).ok())
+            .filter(|Query(query)| query.code.is_some() || query.error.is_some())
             .context("Paste the full address of the page your browser opened.")?;
         self.receive(query, |login| login.belongs_to(session, user))
             .await

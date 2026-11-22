@@ -84,9 +84,22 @@ async fn callback_records_failure_once_without_exposing_oauth_material() {
 }
 
 #[tokio::test]
-async fn pasted_callback_address_finishes_the_owners_sign_in() {
-    let (_directory, pending, session) = fixture().await;
+async fn pasted_callback_address_finishes_a_remote_browsers_sign_in() {
+    let (_directory, pending, _) = fixture().await;
+    let (_, session) = pending.auth.bootstrap_browser_session(false).await.unwrap();
+    pending
+        .auth
+        .bind_session_user(&session, "user-a")
+        .await
+        .unwrap();
     let value = pending_attempt(&pending, session.clone()).await;
+    let sign_in_page = format!("https://auth.openai.com/api/accounts/authorize?state={value}");
+    assert!(
+        pending
+            .finish(&session, "user-a", &sign_in_page)
+            .await
+            .is_err()
+    );
     let address = format!("http://127.0.0.1:1234/auth/callback?state={value}&error=access_denied");
     pending.finish(&session, "user-a", &address).await.unwrap();
     assert_eq!(

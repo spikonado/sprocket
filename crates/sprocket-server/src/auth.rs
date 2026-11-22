@@ -326,7 +326,6 @@ impl AuthState {
             sessions
                 .get(session_token)
                 .is_some_and(|session| !session_is_expired(session)
-                    && session.local_browser
                     && session.user_id.as_deref() == Some(expected_user_id)),
             "authentication required"
         );
