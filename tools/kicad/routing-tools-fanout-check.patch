@@ -1,9 +1,9 @@
 diff --git a/py_tools/check_fanout.py b/py_tools/check_fanout.py
 new file mode 100644
-index 0000000..0467493
+index 0000000..53d75ee
 --- /dev/null
 +++ b/py_tools/check_fanout.py
-@@ -0,0 +1,483 @@
+@@ -0,0 +1,481 @@
 +#!/usr/bin/env python3
 +"""Which pins of a fine-pitch part cannot fan out to a via with this placement,
 +and which parts block them?
@@ -37,10 +37,12 @@ index 0000000..0467493
 +`check_reachability --part` asks the track-only cousin of this question (how
 +many nets leave the window at once); it does not count a via site per pin.
 +
-+Layers carrying a single-net plane (`escape.signal_layer_count`, inner layers
-+only) are left out by default, as `--layer-costs` would ban them; the via
-+still passes through them. The board's routed copper is set aside
++Layers typed `power` (planes) are left out by default, as `route.py` bans
++them; the via still passes through them. The board's routed copper is set aside
 +(`reachability.without_routed_copper`); locked copper stays.
++
++Parts with signal pads inside the pad ring, like BGAs, are refused: use
++`bga_fanout.py` for them.
 +
 +Exit codes: 0 every pin fans out, 1 a pin is caged or crowded, 2 usage error.
 +"""
@@ -60,14 +62,13 @@ index 0000000..0467493
 +import numpy as np
 +
 +import list_nets
-+from kicad_parser import non_aperture_pads, parse_kicad_pcb
++from kicad_parser import non_aperture_pads, parse_kicad_pcb, pour_zones
 +from net_queries import pad_on_layer
 +from placement import escape, reachability as reach
 +from placement.escape_flow import DEFAULT_MARGIN_MM, MAX_STEP_MM
 +from placement.legality import PadClearanceModel
 +
 +WALLS_SHOWN = 8
-+OUTER = ('F.Cu', 'B.Cu')
 +ORDER = ('escapes', 'local', 'exposed pad', 'through-hole', 'unconnected',
 +         'caged', 'crowded')
 +
@@ -119,12 +120,6 @@ index 0000000..0467493
 +        if c1 <= 0 or r1 <= 0 or c0 >= self.W or r0 >= self.H:
 +            return None
 +        return slice(max(0, r0), r1), slice(max(0, c0), c1)
-+
-+
-+def plane_layers(pcb):
-+    """Inner layers carrying a board-sized single-net pour. Outer pours are
-+    floods a signal can still cross, so they are not planes here."""
-+    return tuple(l for l in escape.signal_layer_count(pcb)[2] if l not in OUTER)
 +
 +
 +def _via_ban(pcb, grid, cu):
@@ -256,7 +251,7 @@ index 0000000..0467493
 +    if ref not in pcb.footprints:
 +        raise Unresolvable(f"no part '{ref}' on this board")
 +    cu = list(pcb.board_info.copper_layers)
-+    planes = plane_layers(pcb)
++    planes = pcb.board_info.plane_layers
 +    if layers is None:
 +        layers = [l for l in cu if l not in planes]
 +    unknown = [l for l in layers if l not in cu]
@@ -289,6 +284,9 @@ index 0000000..0467493
 +    pitch = escape.pad_pitch(fp)
 +    interior = [p for p in pads if escape.face_of(p, ring, pitch, boxes[id(p)]) is None]
 +    ep_nets = {p.net_id for p in interior if p.net_id}
++    if len(ep_nets) > 1:
++        raise Unresolvable(f"{ref} has signal pads inside its pad ring, like a BGA; "
++                           f"use bga_fanout.py")
 +    elsewhere = {p.net_id for r, f in pcb.footprints.items() if r != ref
 +                 for p in f.pads if p.net_id}
 +    elsewhere |= {z.net_id for z in pcb.zones if z.net_id}
@@ -403,7 +401,7 @@ index 0000000..0467493
 +
 +    return {
 +        'board': pcb_file, 'ref': ref, 'layers': list(layers),
-+        'planes': {l: sorted({z.net_name for z in pcb.zones if z.layer == l})
++        'planes': {l: sorted({z.net_name for z in pour_zones(pcb.zones) if z.layer == l})
 +                   for l in planes},
 +        'rules': {'default': lane.to_dict(), 'edge_clearance': edge},
 +        'window': {'margin_mm': margin, 'ring': [round(v, 3) for v in ring],
