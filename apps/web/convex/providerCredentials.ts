@@ -252,32 +252,38 @@ async function readRunCredential(
 	return object.value;
 }
 
-async function issueApiKeyHandler(
-	ctx: ActionCtx,
-	args: ObjectType<typeof runCredentialArgs>,
-	provider: ApiKeyProvider
-) {
-	const apiKey = await readRunCredential(ctx, args, provider);
-
-	if (apiKey === null) {
-		throw new ConvexError(
-			`${apiKeyProviders[provider].label} is no longer configured. Add an API key in Settings.`
-		);
-	}
-
-	return { apiKey };
+function apiKeyNotConfiguredMessage(provider: ApiKeyProvider) {
+	return `${apiKeyProviders[provider].label} is no longer configured. Add an API key in Settings.`;
 }
 
 export const issueApiKey = action({
 	args: { ...runCredentialArgs, provider: vApiKeyProvider },
 	returns: v.object({ apiKey: v.string() }),
-	handler: (ctx, { provider, ...args }) => issueApiKeyHandler(ctx, args, provider)
+	handler: async (ctx, { provider, ...args }) => {
+		const apiKey = await readRunCredential(ctx, args, provider);
+
+		if (apiKey === null) {
+			throw new ConvexError({
+				code: 'PROVIDER_NOT_CONFIGURED',
+				message: apiKeyNotConfiguredMessage(provider)
+			});
+		}
+
+		return { apiKey };
+	}
 });
 
 export const issueOpenAiCredential = action({
 	args: runCredentialArgs,
 	returns: v.object({ apiKey: v.string() }),
-	handler: (ctx, args) => issueApiKeyHandler(ctx, args, 'openai')
+	handler: async (ctx, args) => {
+		const apiKey = await readRunCredential(ctx, args, 'openai');
+
+		// Released v0.4 agents read only string error data.
+		if (apiKey === null) throw new ConvexError(apiKeyNotConfiguredMessage('openai'));
+
+		return { apiKey };
+	}
 });
 
 export const issueClaudeCredential = action({
@@ -287,7 +293,10 @@ export const issueClaudeCredential = action({
 		const token = await readRunCredential(ctx, args, 'claude');
 
 		if (token === null) {
-			throw new ConvexError('Claude is no longer connected. Add a token in Settings.');
+			throw new ConvexError({
+				code: 'PROVIDER_NOT_CONFIGURED',
+				message: 'Claude is no longer connected. Add a token in Settings.'
+			});
 		}
 
 		return { token };

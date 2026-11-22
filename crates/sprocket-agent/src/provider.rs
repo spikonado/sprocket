@@ -124,7 +124,13 @@ pub(crate) fn user_facing_error(error: anyhow::Error) -> anyhow::Error {
 }
 
 #[derive(Debug)]
-struct ProviderFailures(Vec<(CompletionProvider, anyhow::Error)>);
+pub(crate) struct ProviderFailures(Vec<(CompletionProvider, anyhow::Error)>);
+
+impl ProviderFailures {
+    pub(crate) fn errors(&self) -> impl Iterator<Item = &anyhow::Error> {
+        self.0.iter().map(|(_, error)| error)
+    }
+}
 
 impl std::fmt::Display for ProviderFailures {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -144,7 +150,9 @@ impl std::error::Error for ProviderFailures {
     }
 }
 
-fn provider_failures(mut failures: Vec<(CompletionProvider, anyhow::Error)>) -> anyhow::Error {
+pub(crate) fn provider_failures(
+    mut failures: Vec<(CompletionProvider, anyhow::Error)>,
+) -> anyhow::Error {
     if failures.len() == 1 {
         return failures.remove(0).1;
     }
@@ -331,8 +339,8 @@ impl AgentProvider {
                 {
                     Ok(model) => Some((model, switch)),
                     Err(error) => {
-                        eprintln!(
-                            "sprocket-agent: provider switch context handoff failed ({error:#}); continuing on the selected provider without it"
+                        tracing::warn!(
+                            "provider switch context handoff failed ({error:#}); continuing on the selected provider without it"
                         );
                         omit_prior_reasoning = true;
                         None
@@ -454,8 +462,8 @@ impl AgentProvider {
         let failed = self.completion_provider;
         let next = self.fallback_providers.pop_front();
         if let Some(next) = next {
-            eprintln!(
-                "sprocket-agent: {} failed for run {run_id} ({error:#}); falling back to {}",
+            tracing::warn!(
+                "{} failed for run {run_id} ({error:#}); falling back to {}",
                 failed.as_str(),
                 next.as_str()
             );
@@ -763,8 +771,8 @@ async fn run_with_completion_model(
     };
     let mut agent = agent.build();
 
-    eprintln!("sprocket-agent: built agent {}", request.run_id);
-    eprintln!("sprocket-agent: prompting model {}", request.run_id);
+    tracing::info!("built agent {}", request.run_id);
+    tracing::info!("prompting model {}", request.run_id);
 
     let mut transcript = match TranscriptSink::start(
         runtime.clone(),
@@ -851,8 +859,8 @@ async fn run_with_completion_model(
         ($stream:ident, $generations:lifetime, $agent_run:lifetime, $reason:expr) => {{
             drop($stream);
             let pending = provider_switch.take().expect("provider-switch handoff");
-            eprintln!(
-                "sprocket-agent: provider switch context handoff failed ({}); continuing on the selected provider without it",
+            tracing::warn!(
+                "provider switch context handoff failed ({}); continuing on the selected provider without it",
                 $reason
             );
             match resume_without_provider_handoff(
@@ -1138,7 +1146,7 @@ async fn run_with_completion_model(
                                 }
                                 if let Some((next_history, next_prompt, delay)) = stream_recovery.resume(&error) {
                                     drop(stream);
-                                    eprintln!("sprocket-agent: provider stream was interrupted; retrying the failed turn in {delay:?}");
+                                    tracing::warn!("provider stream was interrupted; retrying the failed turn in {delay:?}");
                                     history = next_history;
                                     prompt = next_prompt;
                                     recovery_delay = delay;
@@ -1227,3 +1235,6 @@ mod reasoning_integration_tests;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) mod test_support;

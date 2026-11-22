@@ -14,16 +14,21 @@ fn cleans_masking_lines_prefixes_and_stack_frames() {
         "    at handler (../src/convex/webTools.ts:130:2)"
     );
     assert_eq!(
-        clean_function_error_message(raw),
-        "The webpage is too complex and could not be parsed as Markdown."
+        clean_function_error_message(raw).as_deref(),
+        Some("The webpage is too complex and could not be parsed as Markdown.")
     );
 }
 
 #[test]
-fn falls_back_when_production_masks_the_whole_error() {
+fn masked_errors_name_the_failed_function() {
+    let err = decode_function_result::<serde_json::Value>(
+        FunctionResult::ErrorMessage("[Request ID: 0d45611fde71c0f2] Server Error".to_string()),
+        "agentRuntime:issueGatewayCredential",
+    )
+    .expect_err("should fail");
     assert_eq!(
-        clean_function_error_message("[Request ID: 0d45611fde71c0f2] Server Error"),
-        "The server failed without a readable error."
+        err.to_string(),
+        "agentRuntime:issueGatewayCredential failed without a readable error."
     );
 }
 

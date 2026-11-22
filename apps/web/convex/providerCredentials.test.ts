@@ -173,7 +173,12 @@ describe('provider credentials', () => {
 				claimId,
 				executionSecret
 			})
-		).rejects.toThrow('OpenAI is no longer configured.');
+		).rejects.toMatchObject({
+			data: {
+				code: 'PROVIDER_NOT_CONFIGURED',
+				message: 'OpenAI is no longer configured. Add an API key in Settings.'
+			}
+		});
 
 		vi.stubGlobal('fetch', async () =>
 			Response.json({
@@ -289,9 +294,9 @@ describe('provider credentials', () => {
 		).rejects.toThrow('Run is not configured to use anthropic credentials.');
 
 		vi.stubGlobal('fetch', async () => new Response('', { status: 404 }));
-		await expect(t.action(api.providerCredentials.issueClaudeCredential, run)).rejects.toThrow(
-			'Claude is no longer connected.'
-		);
+		await expect(
+			t.action(api.providerCredentials.issueClaudeCredential, run)
+		).rejects.toMatchObject({ data: { code: 'PROVIDER_NOT_CONFIGURED' } });
 	}, 30_000);
 
 	it('reports saved API keys and keeps the provider order in sync', async () => {

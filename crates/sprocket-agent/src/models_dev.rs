@@ -69,7 +69,7 @@ async fn cached_index() -> Option<Arc<Index>> {
     let (index, refresh_after) = match fetch_index().await {
         Ok(index) => (Some(Arc::new(index)), REFRESH_AFTER),
         Err(error) => {
-            eprintln!("sprocket-agent: models.dev lookup failed: {error:#}");
+            tracing::warn!("models.dev lookup failed: {error:#}");
             (stale, RETRY_AFTER)
         }
     };

@@ -12,9 +12,11 @@ use rig::message::AssistantContent;
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
+use sprocket_convex::{ConvexErrorCode, convex_error_code};
 use uuid::Uuid;
 
 use crate::chatgpt::ChatGptNotConnected;
+use crate::provider::ProviderFailures;
 use crate::stream_recovery::is_provider_failure_cause;
 use crate::types::CompletionProvider;
 use crate::usage::UsageSource;
@@ -385,9 +387,20 @@ fn to_json(value: impl Serialize) -> Value {
 }
 
 fn is_sprocket_fixable(error: &anyhow::Error) -> bool {
-    !error
+    if let Some(failures) = error
         .chain()
-        .any(|cause| cause.is::<ChatGptNotConnected>() || is_provider_failure_cause(cause))
+        .find_map(|cause| cause.downcast_ref::<ProviderFailures>())
+    {
+        return failures.errors().any(is_sprocket_fixable);
+    }
+    let user_state = matches!(
+        convex_error_code(error),
+        Some(ConvexErrorCode::UsageLimitReached | ConvexErrorCode::ProviderNotConfigured)
+    );
+    !user_state
+        && !error
+            .chain()
+            .any(|cause| cause.is::<ChatGptNotConnected>() || is_provider_failure_cause(cause))
 }
 
 pub(crate) async fn capture_run_failure(error: &anyhow::Error, user_id: &str, run_id: &str) {

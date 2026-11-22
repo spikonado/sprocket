@@ -172,9 +172,9 @@ impl RuntimeClient {
         mut args: BTreeMap<String, Value>,
     ) -> anyhow::Result<T> {
         self.add_execution_secret(&mut args);
-        eprintln!("sprocket-agent: query start {function}");
+        tracing::info!("query start {function}");
         let result = self.client.query(function, args).await?;
-        eprintln!("sprocket-agent: query done {function}");
+        tracing::info!("query done {function}");
         decode_function_result(result, function)
     }
 
@@ -196,13 +196,13 @@ impl RuntimeClient {
         mut args: BTreeMap<String, Value>,
     ) -> Result<T, MutationFailure> {
         self.add_execution_secret(&mut args);
-        eprintln!("sprocket-agent: mutation start {function}");
+        tracing::info!("mutation start {function}");
         let result = self
             .client
             .mutation(function, args)
             .await
             .map_err(MutationFailure::Transport)?;
-        eprintln!("sprocket-agent: mutation done {function}");
+        tracing::info!("mutation done {function}");
         decode_function_result(result, function).map_err(MutationFailure::Functional)
     }
 
@@ -212,9 +212,9 @@ impl RuntimeClient {
         mut args: BTreeMap<String, Value>,
     ) -> anyhow::Result<T> {
         self.add_execution_secret(&mut args);
-        eprintln!("sprocket-agent: action start {function}");
+        tracing::info!("action start {function}");
         let result = self.client.action(function, args).await?;
-        eprintln!("sprocket-agent: action done {function}");
+        tracing::info!("action done {function}");
         decode_function_result(result, function)
     }
 
@@ -339,8 +339,8 @@ impl RuntimeClient {
                     return decode_function_result(result, "agentRuntime:createGatewayRun");
                 }
                 Err(error) if attempt < TRANSPORT_MAX_ATTEMPTS => {
-                    eprintln!(
-                        "sprocket-agent: createGatewayRun transport attempt {attempt} failed; \
+                    tracing::warn!(
+                        "createGatewayRun transport attempt {attempt} failed; \
                          reconciling with request {}: {error:#}",
                         request.submission_id
                     );
@@ -605,8 +605,8 @@ impl RuntimeClient {
             match self.mutation_checked(function, args.clone()).await {
                 Ok(value) => return Ok(value),
                 Err(MutationFailure::Transport(error)) if attempt + 1 < TRANSPORT_MAX_ATTEMPTS => {
-                    eprintln!(
-                        "sprocket-agent: {function} transport attempt {} failed; retrying: {error:#}",
+                    tracing::warn!(
+                        "{function} transport attempt {} failed; retrying: {error:#}",
                         attempt + 1
                     );
                     sleep(TRANSPORT_INITIAL_RETRY_DELAY * (1 << attempt)).await;

@@ -247,10 +247,7 @@ pub(super) fn compile_recognizers(specs: &[RecognizerSpec]) -> Vec<Recognizer> {
         .filter_map(|spec| {
             Recognizer::compile(spec)
                 .inspect_err(|error| {
-                    eprintln!(
-                        "sprocket-agent: skipping the {} payment recognizer: {error}",
-                        spec.psp
-                    );
+                    tracing::warn!("skipping the {} payment recognizer: {error}", spec.psp);
                 })
                 .ok()
         })
@@ -685,7 +682,7 @@ async fn cancel_purchase(context: &AgentToolContext, purchase_id: &str) -> Optio
     )
     .await
     .ok()?
-    .inspect_err(|error| eprintln!("sprocket-agent: {CANCEL} failed: {error:#}"))
+    .inspect_err(|error| tracing::warn!("{CANCEL} failed: {error:#}"))
     .ok()?;
     result
         .get("status")
