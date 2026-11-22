@@ -818,7 +818,7 @@ async fn empty_persisted_refresh_token_is_rejected_without_network_io() {
 }
 
 #[tokio::test]
-async fn persist_failure_keeps_the_rotated_refresh_token_in_memory() {
+async fn persist_failure_serves_the_session_from_memory_and_retries_the_save() {
     let store = MemoryRefreshTokenStore::with_token("refresh-old");
     let manager = NativeAuthManager::with_store(
         NativeAuthConfig {
@@ -830,38 +830,30 @@ async fn persist_failure_keeps_the_rotated_refresh_token_in_memory() {
     store.fail_save.store(true, Ordering::SeqCst);
     let expected_access_token = access_token(unix_time_secs() + 3_600);
 
-    let error = manager
+    manager
         .accept_authentication(authentication_response(
             expected_access_token.clone(),
             "refresh-new",
         ))
         .await
-        .expect_err("failed persistence must surface a store error");
+        .expect("a failed save keeps the session");
 
-    assert!(error.to_string().contains("credential store unavailable"));
     assert_eq!(store.token().as_deref(), Some("refresh-old"));
-    assert_eq!(
-        manager.session.lock().await.refresh_token.as_deref(),
-        Some("refresh-new")
-    );
-    assert!(
-        manager
-            .browser_session(false)
-            .await
-            .expect_err("unpersisted rotation is unavailable, not signed out")
-            .to_string()
-            .contains("credential store unavailable")
-    );
-
-    store.fail_save.store(false, Ordering::SeqCst);
     let session = manager
         .browser_session(false)
         .await
-        .expect("retrying persist must succeed without contacting WorkOS")
+        .expect("the in-memory session is served while the store fails")
+        .expect("session remains signed in");
+    assert_eq!(session.access_token, expected_access_token);
+    assert_eq!(store.token().as_deref(), Some("refresh-old"));
+
+    store.fail_save.store(false, Ordering::SeqCst);
+    manager
+        .browser_session(false)
+        .await
+        .expect("the next request retries the save without contacting WorkOS")
         .expect("session remains signed in");
 
-    assert_eq!(session.access_token, expected_access_token);
-    assert_eq!(session.user, native_user());
     assert_eq!(store.token().as_deref(), Some("refresh-new"));
 }
 
@@ -1234,7 +1226,7 @@ async fn refresh_after_persist_failure_uses_the_rotated_token() {
             "refresh-new",
         ))
         .await
-        .expect_err("rotation must be remembered even when persist fails");
+        .expect("rotation is remembered when the save fails");
     store.fail_save.store(false, Ordering::SeqCst);
 
     let session = manager
