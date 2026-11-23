@@ -191,9 +191,14 @@ describe('transcript protocol', () => {
 		id: 'completion:2',
 		runId: 'run-1',
 		kind: 'tool',
-		name: 'exec_cmd',
-		summary: 'bun test',
-		hasMore: true,
+		name: 'poll_cmd',
+		summary: 'bun test\nSession missing: Unknown session.\nsleep 10',
+		detail: [
+			{ kind: 'command', text: 'bun test' },
+			{ kind: 'text', text: '\nSession missing: Unknown session.\n' },
+			{ kind: 'command', text: 'sleep 10' }
+		],
+		hasMore: false,
 		status: 'completed'
 	};
 
