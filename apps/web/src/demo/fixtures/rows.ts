@@ -109,7 +109,7 @@ export function recordRun(runId: string, steps: Step[]): TranscriptFixture {
 				if (hasMore) {
 					const detail: ToolRow = { ...row, summary, hasMore: false };
 
-					if (command) detail.command = command;
+					if (command) detail.commands = [{ start: 0, text: command }];
 					fixture.items[id] = detail;
 				}
 

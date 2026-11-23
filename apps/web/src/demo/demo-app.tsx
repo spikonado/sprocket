@@ -366,7 +366,6 @@ export default function DemoApp({
 															key={currentThreadId}
 															error={null}
 															runError={null}
-															outOfUsage={false}
 															reconnecting={false}
 															syncing={false}
 															catalogError={false}
