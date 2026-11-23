@@ -19,6 +19,7 @@ const { src, poster, label, class: className } = Astro.props;
 	muted
 	loop
 	playsinline
+	controls
 	preload="none"
 >
 	<source src={src} type="video/mp4" />
@@ -28,21 +29,17 @@ const { src, poster, label, class: className } = Astro.props;
 	const clips = document.querySelectorAll<HTMLVideoElement>('[data-loop-clip]');
 	const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-	if (reduceMotion) {
-		for (const clip of clips) clip.controls = true;
-	} else {
-		const observer = new IntersectionObserver(
-			(entries) => {
-				for (const { target, isIntersecting } of entries) {
-					if (!(target instanceof HTMLVideoElement)) continue;
+	const observer = new IntersectionObserver(
+		(entries) => {
+			for (const { target, isIntersecting } of entries) {
+				if (!(target instanceof HTMLVideoElement)) continue;
 
-					if (isIntersecting) void target.play().catch(() => (target.controls = true));
-					else target.pause();
-				}
-			},
-			{ threshold: 0.4 }
-		);
+				if (!isIntersecting) target.pause();
+				else if (!reduceMotion) void target.play().catch(() => {});
+			}
+		},
+		{ threshold: 0.4 }
+	);
 
-		for (const clip of clips) observer.observe(clip);
-	}
+	for (const clip of clips) observer.observe(clip);
 </script>
