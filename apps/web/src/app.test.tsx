@@ -1449,75 +1449,106 @@ it('renders transcript snapshots progressively and allows sending before older h
 	await waitFor(() => expect(screen.queryByText('Loading history')).toBeNull());
 });
 
-it('launches the continuation prompt after an agent question is answered', async () => {
-	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
-	const thread = threadRecord('thread-1', 'repo-alpha', 'Fix the robot');
-	const questionId = fixtureId<'agentQuestions'>('question-1');
-	const continuationRunId = fixtureId<'runs'>('run-1');
+it.each([false, true])(
+	'keeps the draft through an answer and continuation (retry: %s)',
+	async (retry) => {
+		const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+		const thread = threadRecord('thread-1', 'repo-alpha', 'Fix the robot');
+		const questionId = fixtureId<'agentQuestions'>('question-1');
+		const continuationRunId = fixtureId<'runs'>('run-1');
 
-	const question: AgentQuestionSnapshot = {
-		threadId: thread._id,
-		questionId,
-		question: 'Which board should I target?',
-		options: [{ id: 'option-a', label: 'Option A' }],
-		status: 'pending',
-		sequence: 1,
-		timeoutAt: 1_000_000
-	};
+		const question: AgentQuestionSnapshot = {
+			threadId: thread._id,
+			questionId,
+			question: 'Which board should I target?',
+			options: [{ id: 'option-a', label: 'Option A' }],
+			status: 'pending',
+			sequence: 1,
+			timeoutAt: 1_000_000
+		};
 
-	const runAgent = vi.fn(async () => ({
-		runId: fixtureId<'runs'>('run-2'),
-		threadId: thread._id
-	}));
+		const runAgent = vi.fn<LocalApi['runAgent']>(async () => ({
+			runId: fixtureId<'runs'>('run-2'),
+			threadId: thread._id
+		}));
 
-	const client = createConvexFixtures();
-	client.registerPaginatedQuery(api.inbox.list, [thread]);
-	client.registerQuery(api.threads.getByThreadId, thread);
-	client.registerQuery(api.chat.selectedThreadLifecycle, {
-		threadId: thread._id,
-		phase: 'waiting_for_input',
-		run: { runId: continuationRunId, startedAt: 1 }
-	});
-	client.registerQuery(api.agentQuestions.headPendingForThread, question);
-	client.registerMutation(api.agentQuestions.answer, {
-		question: { ...question, status: 'answered', answer: { optionId: 'option-a' } },
-		continuation: { runId: continuationRunId, prompt: 'Continue with the robot fix' }
-	});
-	const mutation = vi.spyOn(client, 'mutation');
+		if (retry) runAgent.mockRejectedValueOnce(new Error('Local agent unavailable.'));
 
-	await renderApp(
-		client,
-		createRuntime(createLocalApi({ listProjectAttachments: async () => [alpha], runAgent }))
-	);
-	await projectTrigger('Alpha');
-	fireEvent.click(await screen.findByText('Fix the robot'));
-	expect(await screen.findByText('Which board should I target?')).toBeTruthy();
+		const client = createConvexFixtures();
+		client.registerPaginatedQuery(api.inbox.list, [thread]);
+		client.registerQuery(api.threads.getByThreadId, thread);
+		client.registerQuery(api.chat.selectedThreadLifecycle, {
+			threadId: thread._id,
+			phase: 'waiting_for_input',
+			run: { runId: continuationRunId, startedAt: 1 }
+		});
+		client.registerQuery(api.agentQuestions.headPendingForThread, question);
+		client.registerMutation(api.agentQuestions.answer, {
+			question: { ...question, status: 'answered', answer: { optionId: 'option-a' } },
+			continuation: { runId: continuationRunId, prompt: 'Continue with the robot fix' }
+		});
+		const mutation = vi.spyOn(client, 'mutation');
 
-	const composer = screen.getByRole<HTMLTextAreaElement>('combobox');
-	fireEvent.change(composer, { target: { value: 'Follow-up draft' } });
-	fireEvent.change(screen.getByPlaceholderText('Add detail, or type a custom answer'), {
-		target: { value: 'Use board A' }
-	});
-	fireEvent.click(screen.getByRole('button', { name: 'Option A' }));
-	await act(async () => {
-		fireEvent.click(screen.getByRole('button', { name: 'Send answer' }));
-	});
-	expect(mutation).toHaveBeenCalledWith(
-		api.agentQuestions.answer,
-		{ threadId: thread._id, questionId, optionId: 'option-a', text: 'Use board A' },
-		{}
-	);
+		await renderApp(
+			client,
+			createRuntime(
+				createLocalApi({
+					listProjectAttachments: async () => [alpha],
+					runAgent,
+					uploadTranscriptAttachment: async () => ({
+						storageId: fixtureId<'_storage'>('draft-file'),
+						name: 'notes.txt',
+						mediaType: 'text/plain',
+						size: 5,
+						url: 'https://sprocket.test/notes'
+					})
+				})
+			)
+		);
+		await projectTrigger('Alpha');
+		fireEvent.click(await screen.findByText('Fix the robot'));
+		expect(await screen.findByText('Which board should I target?')).toBeTruthy();
 
-	await waitFor(() =>
-		expect(runAgent).toHaveBeenCalledWith(
-			expect.objectContaining({
-				prompt: 'Continue with the robot fix',
-				continuationOfRunId: continuationRunId
-			})
-		)
-	);
-	expect(composer.value).toBe('Follow-up draft');
-});
+		const composer = screen.getByRole<HTMLTextAreaElement>('combobox');
+		fireEvent.change(composer, { target: { value: 'Follow-up draft' } });
+		fireEvent.change(document.querySelector<HTMLInputElement>('input[type="file"]')!, {
+			target: { files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })] }
+		});
+		await screen.findByRole('button', { name: 'Remove notes.txt' });
+
+		fireEvent.change(screen.getByPlaceholderText('Add detail, or type a custom answer'), {
+			target: { value: 'Use board A' }
+		});
+		fireEvent.click(screen.getByRole('button', { name: 'Option A' }));
+		await act(async () => {
+			fireEvent.click(screen.getByRole('button', { name: 'Send answer' }));
+		});
+		expect(mutation).toHaveBeenCalledWith(
+			api.agentQuestions.answer,
+			{ threadId: thread._id, questionId, optionId: 'option-a', text: 'Use board A' },
+			{}
+		);
+
+		await waitFor(() =>
+			expect(runAgent).toHaveBeenCalledWith(
+				expect.objectContaining({
+					prompt: 'Continue with the robot fix',
+					storageIds: [],
+					continuationOfRunId: continuationRunId
+				})
+			)
+		);
+
+		if (retry) {
+			fireEvent.click(await screen.findByRole('button', { name: 'Retry continuation' }));
+			await waitFor(() => expect(runAgent).toHaveBeenCalledTimes(2));
+			expect(runAgent.mock.calls[1]).toEqual(runAgent.mock.calls[0]);
+		}
+
+		expect(composer.value).toBe('Follow-up draft');
+		expect(screen.getByRole('button', { name: 'Remove notes.txt' })).toBeTruthy();
+	}
+);
 
 it('launches a continuation answered before leaving the thread when returning to it', async () => {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
@@ -1581,17 +1612,21 @@ it('launches a continuation answered before leaving the thread when returning to
 	fireEvent.click(await screen.findByText('Other work'));
 	await act(async () => {
 		client.registerQuery(api.agentQuestions.headPendingForThread, null);
-		client.registerQuery(api.chat.selectedThreadLifecycle, {
-			threadId: thread._id,
-			phase: 'completed',
-			run: { runId: continuationRunId, startedAt: 1 }
-		});
 		answer.resolve({
 			question: { ...question, status: 'answered', answer: { optionId: 'option-a' } },
 			continuation: { runId: continuationRunId, prompt: 'Continue with the robot fix' }
 		});
 	});
 	fireEvent.click(await screen.findByText('Fix the robot'));
+	const composer = screen.getByRole<HTMLTextAreaElement>('combobox');
+	fireEvent.change(composer, { target: { value: 'Follow-up draft' } });
+	await act(async () => {
+		client.registerQuery(api.chat.selectedThreadLifecycle, {
+			threadId: thread._id,
+			phase: 'completed',
+			run: { runId: continuationRunId, startedAt: 1 }
+		});
+	});
 	await waitFor(() =>
 		expect(runAgent).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -1601,6 +1636,7 @@ it('launches a continuation answered before leaving the thread when returning to
 			})
 		)
 	);
+	expect(composer.value).toBe('Follow-up draft');
 });
 
 it('opens General by default and resets to it when reopening settings', async () => {

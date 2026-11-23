@@ -42,6 +42,7 @@ import CalmCentered from '$lib/components/home/calm-centered';
 import PromptComposer from '$lib/components/home/prompt-composer';
 import type { QuestionAnswer } from '$lib/components/home/agent-question';
 import ConversationNotices from '$lib/components/home/conversation-notices';
+import ComposerNotice from '$lib/components/home/composer-notice';
 import PurchaseApprovals from '$lib/components/home/purchase-approvals';
 import CreateThreadHeading from '$lib/components/home/create-thread-heading';
 import '$lib/components/home/create-thread.css';
@@ -96,7 +97,8 @@ import { useComposerAttachments } from '$lib/home/composer-attachments';
 import {
 	getComposerRecoveryKey,
 	useSubmissionTracker,
-	type ComposerRecovery
+	type ComposerRecovery,
+	type ContinuationRecovery
 } from '$lib/home/submission-tracker';
 import type { CompletionProvider } from '@convex/lib/validators';
 import {
@@ -441,11 +443,6 @@ export default function App({
 	const [prompt, setPrompt] = useState('');
 	const [answeringAgentQuestion, setAnsweringAgentQuestion] = useState(false);
 
-	const [composerContinuationOfRunId, setComposerContinuationOfRunId] = useState<Id<'runs'> | null>(
-		null
-	);
-
-	const [autoSubmitComposerContinuation, setAutoSubmitComposerContinuation] = useState(false);
 	const [currentError, setCurrentError] = useState<string | null>(null);
 
 	const [pendingAgentLaunches, setPendingAgentLaunches] = useState<PendingAgentLaunches>({});
@@ -871,6 +868,16 @@ export default function App({
 			: undefined;
 
 	const currentComposerScope = getComposerScope(currentThreadId, currentProjectPath);
+	const continuationScope = currentThreadId ? `continuation:${currentThreadId}` : null;
+
+	const continuationRecovery =
+		signedInUserId && continuationScope
+			? submissions.recovery(getComposerRecoveryKey(signedInUserId, continuationScope))
+			: undefined;
+
+	const currentContinuation: ContinuationRecovery | null = continuationRecovery?.continuation
+		? { ...continuationRecovery, continuation: continuationRecovery.continuation }
+		: null;
 
 	const currentRecoveredSubmission = (() => {
 		const userId = signedInUserIdRef.current;
@@ -881,7 +888,8 @@ export default function App({
 	})();
 
 	const isRetryableQueuedRun =
-		currentLifecycle?.phase === 'queued' && currentRecoveredSubmission != null;
+		currentLifecycle?.phase === 'queued' &&
+		(currentRecoveredSubmission != null || currentContinuation?.submissionId != null);
 
 	const isRunInProgress =
 		currentLifecycle != null &&
@@ -900,7 +908,8 @@ export default function App({
 			? null
 			: lifecycleResumeKind(currentLifecycle?.phase ?? 'idle', currentLifecycle?.run?.failureKind);
 
-	const canContinueWorking = latestRunResumeKind != null && !currentLifecycle?.run?.promptUnsent;
+	const canContinueWorking =
+		latestRunResumeKind != null && !currentLifecycle?.run?.promptUnsent && !currentContinuation;
 
 	const isLatestRunReady = isLatestRunReadyForThread({
 		threadId: currentThreadId,
@@ -1146,9 +1155,7 @@ export default function App({
 				submissions.storeRecovery(userId, scope, {
 					message: '',
 					prompt: latestPrompt,
-					attachments: finishedAttachments,
-					continuationOfRunId: composerContinuationOfRunIdRef.current ?? undefined,
-					autoSubmit: false
+					attachments: finishedAttachments
 				});
 			}
 
@@ -1160,8 +1167,6 @@ export default function App({
 			setCurrentThreadId(null);
 			setDraftWorkspacePath(null);
 			setPendingCreatedThreadId(null);
-			setComposerContinuationOfRunId(null);
-			setAutoSubmitComposerContinuation(false);
 		}
 	}
 
@@ -1479,11 +1484,6 @@ export default function App({
 
 		setAnsweringAgentQuestion(true);
 		setCurrentError(null);
-		const submittedModel = selectedModel;
-		const submittedReasoningEffort = selectedReasoningEffort;
-		const submittedFastMode = fastMode;
-		let continuationPrompt: string | null = null;
-		let continuationOfRunId: Id<'runs'> | undefined;
 
 		try {
 			const result = answer
@@ -1495,9 +1495,19 @@ export default function App({
 					})
 				: await skipAgentQuestion({ threadId, questionId: question.questionId });
 
-			if (result.continuation) {
-				continuationPrompt = result.continuation.prompt;
-				continuationOfRunId = result.continuation.runId;
+			if (result.continuation && signedInUserIdRef.current === userId) {
+				submissions.storeRecovery(userId, `continuation:${threadId}`, {
+					message: null,
+					prompt: result.continuation.prompt,
+					selectedModel,
+					reasoningEffort: selectedReasoningEffort,
+					fastMode,
+					continuation: {
+						questionId: question.questionId,
+						runId: result.continuation.runId,
+						status: 'ready'
+					}
+				});
 			}
 		} catch (error) {
 			if (
@@ -1510,46 +1520,17 @@ export default function App({
 		} finally {
 			if (signedInUserIdRef.current === userId) setAnsweringAgentQuestion(false);
 		}
-
-		if (signedInUserIdRef.current !== userId) return;
-
-		if (continuationPrompt !== null && currentThreadIdRef.current !== threadId) {
-			submissions.storeRecovery(userId, `thread:${threadId}`, {
-				message: 'Continuing from your answer when you return to this thread.',
-				prompt: continuationPrompt,
-				reasoningEffort: submittedReasoningEffort,
-				fastMode: submittedFastMode,
-				selectedModel: submittedModel,
-				continuationOfRunId,
-				autoSubmit: true
-			});
-
-			return;
-		}
-
-		if (continuationPrompt !== null) {
-			await submitPrompt({
-				answeredQuestionId: question.questionId,
-				continuationOfRunId,
-				prompt: continuationPrompt
-			});
-		}
 	}
 
 	const pendingAgentQuestionRef = useLatest(pendingAgentQuestion);
 
-	async function submitPrompt(continuation?: {
-		answeredQuestionId: Id<'agentQuestions'>;
-		continuationOfRunId: Id<'runs'> | undefined;
-		prompt: string;
-	}) {
+	async function submitPrompt(continuation?: ContinuationRecovery) {
 		const currentQuestion = pendingAgentQuestionRef.current;
 
-		if (currentQuestion && currentQuestion.questionId !== continuation?.answeredQuestionId) {
-			if (continuation) setCurrentError('Answer the new agent question before continuing.');
-
+		if (currentQuestion && currentQuestion.questionId !== continuation?.continuation.questionId)
 			return;
-		}
+
+		if (!continuation && currentContinuation?.continuation.status === 'ready') return;
 
 		const promptText = continuation?.prompt ?? prompt;
 
@@ -1625,13 +1606,10 @@ export default function App({
 			attachment.storageId ? [attachment.storageId] : []
 		);
 
-		const submittedModel = selectedModel;
-		const submittedReasoningEffort = selectedReasoningEffort;
-		const submittedFastMode = fastMode;
-
-		const submittedContinuationOfRunId = continuation
-			? continuation.continuationOfRunId
-			: (composerContinuationOfRunId ?? undefined);
+		const submittedModel = continuation?.selectedModel ?? selectedModel;
+		const submittedReasoningEffort = continuation?.reasoningEffort ?? selectedReasoningEffort;
+		const submittedFastMode = continuation?.fastMode ?? fastMode;
+		const submittedContinuationOfRunId = continuation?.continuation.runId;
 
 		const previousRunId = selectedThreadId ? (runState?.runId ?? null) : null;
 
@@ -1639,7 +1617,9 @@ export default function App({
 			? `thread:${selectedThreadId}`
 			: `draft:${workspacePath}`;
 
-		const originatingRecoveryScope = submissionScope;
+		const originatingRecoveryScope =
+			continuation && continuationScope ? continuationScope : submissionScope;
+
 		let recoveryScope = originatingRecoveryScope;
 
 		const originatingRecoveryKey = getComposerRecoveryKey(
@@ -1650,26 +1630,28 @@ export default function App({
 		const recoveredSubmission = submissions.recoveredSubmission(originatingRecoveryKey);
 		const freshSubmissionId = crypto.randomUUID();
 
-		const threadSubmissionId = resolveSubmissionId({
-			latestRun:
-				!selectedThreadId || !currentLifecycle || currentLifecycle.phase === 'idle'
-					? null
-					: {
-							runId: runState?.runId,
-							status: isLifecycleInProgress(currentLifecycle.phase) ? 'queued' : 'completed',
-							submissionId: currentRecoveredSubmission?.submissionId ?? ''
-						},
-			newSubmissionId: freshSubmissionId,
-			prompt: submittedPrompt,
-			storageIds: submittedStorageIds,
-			reasoningEffort: submittedReasoningEffort,
-			fastMode: submittedFastMode,
-			continuationOfRunId: submittedContinuationOfRunId,
-			recoveredSubmission: recoveredSubmission
-				? { ...recoveredSubmission, selectedModel: recoveredSubmission.selectedModel }
-				: undefined,
-			selectedModel: submittedModel
-		});
+		const threadSubmissionId =
+			continuation?.submissionId ??
+			resolveSubmissionId({
+				latestRun:
+					!selectedThreadId || !currentLifecycle || currentLifecycle.phase === 'idle'
+						? null
+						: {
+								runId: runState?.runId,
+								status: isLifecycleInProgress(currentLifecycle.phase) ? 'queued' : 'completed',
+								submissionId: currentRecoveredSubmission?.submissionId ?? ''
+							},
+				newSubmissionId: freshSubmissionId,
+				prompt: submittedPrompt,
+				storageIds: submittedStorageIds,
+				reasoningEffort: submittedReasoningEffort,
+				fastMode: submittedFastMode,
+				continuationOfRunId: submittedContinuationOfRunId,
+				recoveredSubmission: recoveredSubmission
+					? { ...recoveredSubmission, selectedModel: recoveredSubmission.selectedModel }
+					: undefined,
+				selectedModel: submittedModel
+			});
 
 		const runSubmissionId = threadSubmissionId;
 		submissions.clearRecovery(submittedUserId, originatingRecoveryScope);
@@ -1699,8 +1681,7 @@ export default function App({
 			reasoningEffort: submittedReasoningEffort,
 			fastMode: submittedFastMode,
 			selectedModel: submittedModel,
-			continuationOfRunId: submittedContinuationOfRunId,
-			autoSubmit: false,
+			continuation: continuation && { ...continuation.continuation, status: 'failed' },
 			submissionId
 		});
 
@@ -1715,14 +1696,6 @@ export default function App({
 				recoveryScope,
 				submissionRecovery(message, freshSubmission ? crypto.randomUUID() : reusedSubmissionId)
 			);
-
-			if (
-				continuation &&
-				isSubmittedUserCurrent() &&
-				currentThreadIdRef.current === selectedThreadId
-			) {
-				setCurrentError(message);
-			}
 		};
 
 		const clearSubmissionDelay = () => {
@@ -1839,10 +1812,14 @@ export default function App({
 
 					if (!isSubmissionCurrent() || !isSubmittedUserCurrent()) return;
 					launchedThreadId = createdThreadId;
-					submissions.holdLaunchedPrompt(submittedUserId, `thread:${createdThreadId}`, {
-						runId,
-						recovery: submissionRecovery(null, crypto.randomUUID())
-					});
+					submissions.holdLaunchedPrompt(
+						submittedUserId,
+						continuation ? recoveryScope : `thread:${createdThreadId}`,
+						{
+							runId,
+							recovery: submissionRecovery(null, crypto.randomUUID())
+						}
+					);
 
 					if (
 						currentThreadIdRef.current !== selectedThreadId ||
@@ -1858,11 +1835,12 @@ export default function App({
 						setDraftWorkspacePath(null);
 					}
 
-					if (!continuation) composerAttachments.clear({ discard: false });
+					if (!continuation) {
+						composerAttachments.clear({ discard: false });
 
-					if (composerContinuationOfRunIdRef.current === submittedContinuationOfRunId) {
-						setComposerContinuationOfRunId(null);
-						setAutoSubmitComposerContinuation(false);
+						if (continuationScope && currentContinuation) {
+							submissions.clearRecovery(submittedUserId, continuationScope);
+						}
 					}
 				},
 				threadId: threadId ?? undefined,
@@ -1908,7 +1886,6 @@ export default function App({
 
 	const runStateRef = useLatest(runState);
 	const pendingAgentLaunchesRef = useLatest(pendingAgentLaunches);
-	const composerContinuationOfRunIdRef = useLatest(composerContinuationOfRunId);
 	const promptRef = useLatest(prompt);
 
 	async function cancelRun() {
@@ -2011,8 +1988,6 @@ export default function App({
 		bumpProjectSelectionGeneration();
 		setPrompt('');
 		setAnsweringAgentQuestion(false);
-		setComposerContinuationOfRunId(null);
-		setAutoSubmitComposerContinuation(false);
 		composerAttachments.clear({
 			discard: true,
 			userId: previousUserId,
@@ -2099,8 +2074,6 @@ export default function App({
 
 		if (threadId === lastSyncedComposerThreadId.current) return;
 		lastSyncedComposerThreadId.current = threadId;
-		setComposerContinuationOfRunId(null);
-		setAutoSubmitComposerContinuation(false);
 
 		if (!thread) return;
 		setSelectedModel(thread.selectedModel);
@@ -2117,7 +2090,16 @@ export default function App({
 			currentLifecycle.run,
 			!isLifecycleInProgress(currentLifecycle.phase)
 		);
-	}, [signedInUserId, currentThreadId, currentLifecycle, submissions]);
+
+		if (continuationScope) {
+			submissions.settleLaunchedPrompt(
+				signedInUserId,
+				continuationScope,
+				currentLifecycle.run,
+				!isLifecycleInProgress(currentLifecycle.phase)
+			);
+		}
+	}, [signedInUserId, currentThreadId, currentLifecycle, submissions, continuationScope]);
 
 	useEffect(() => {
 		const userId = signedInUserId;
@@ -2137,11 +2119,6 @@ export default function App({
 			composerAttachments.replace(recovery.attachments);
 		}
 
-		setComposerContinuationOfRunId(recovery.continuationOfRunId ?? null);
-		setAutoSubmitComposerContinuation(
-			recovery.autoSubmit === true && recovery.continuationOfRunId !== undefined
-		);
-
 		setCurrentError(recovery.message);
 		submissions.restoreRecovery(recoveryKey, recovery);
 	}, [
@@ -2153,34 +2130,25 @@ export default function App({
 		submissions
 	]);
 
-	const submitRestoredContinuation = useEffectEvent(() => {
-		void submitPrompt();
+	const canSubmitContinuation = Boolean(
+		currentContinuation &&
+		canSend &&
+		localApi &&
+		isLatestRunReady &&
+		selectedModel &&
+		selectedReasoningEffort &&
+		(!pendingAgentQuestion ||
+			pendingAgentQuestion.questionId === currentContinuation.continuation.questionId)
+	);
+
+	const submitReadyContinuation = useEffectEvent(() => {
+		if (currentContinuation?.continuation.status === 'ready')
+			void submitPrompt(currentContinuation);
 	});
 
 	useEffect(() => {
-		if (
-			!autoSubmitComposerContinuation ||
-			!composerContinuationOfRunId ||
-			!canSend ||
-			pendingAgentQuestion ||
-			!localApi ||
-			!prompt.trim() ||
-			composerAttachments.items.some((attachment) => attachment.status !== 'ready')
-		) {
-			return;
-		}
-
-		setAutoSubmitComposerContinuation(false);
-		submitRestoredContinuation();
-	}, [
-		autoSubmitComposerContinuation,
-		composerContinuationOfRunId,
-		canSend,
-		pendingAgentQuestion,
-		localApi,
-		prompt,
-		composerAttachments
-	]);
+		if (canSubmitContinuation) submitReadyContinuation();
+	}, [canSubmitContinuation, continuationRecovery]);
 
 	const adoptInitialDraftSelection = useEffectEvent((workspacePath: string | null) => {
 		setHasResolvedInitialSelection(true);
@@ -2668,6 +2636,24 @@ export default function App({
 													notices={
 														<>
 															<PurchaseApprovals purchases={pendingApprovals} />
+															{currentContinuation?.continuation.status === 'failed' ? (
+																<ComposerNotice
+																	title="Could not continue after your answer"
+																	tone="error"
+																	action={
+																		<button
+																			type="button"
+																			className="border-border rounded-md border px-3 py-1 text-sm disabled:opacity-40"
+																			disabled={!canSubmitContinuation}
+																			onClick={() => void submitPrompt(currentContinuation)}
+																		>
+																			Retry continuation
+																		</button>
+																	}
+																>
+																	{currentContinuation.message}
+																</ComposerNotice>
+															) : null}
 															<ConversationNotices
 																key={currentThreadId}
 																error={conversationError}

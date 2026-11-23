@@ -3,6 +3,12 @@ import type { Id } from '@convex/_generated/dataModel';
 import type { ComposerAttachment } from '$lib/chat/attachments';
 import type { CatalogModelId } from '$lib/chat/model-catalog';
 
+type QuestionContinuation = {
+	questionId: Id<'agentQuestions'>;
+	runId: Id<'runs'>;
+	status: 'ready' | 'failed';
+};
+
 export type ComposerRecovery = {
 	message: string | null;
 	prompt: string;
@@ -12,9 +18,10 @@ export type ComposerRecovery = {
 	fastMode?: boolean;
 	selectedModel?: CatalogModelId;
 	submissionId?: string;
-	continuationOfRunId?: Id<'runs'>;
-	autoSubmit?: boolean;
+	continuation?: QuestionContinuation;
 };
+
+export type ContinuationRecovery = ComposerRecovery & { continuation: QuestionContinuation };
 
 type RecoveredSubmission = {
 	prompt: string;
@@ -23,7 +30,6 @@ type RecoveredSubmission = {
 	fastMode: boolean;
 	selectedModel: CatalogModelId;
 	submissionId: string;
-	continuationOfRunId?: Id<'runs'>;
 };
 
 type LaunchedPrompt = {
@@ -48,8 +54,7 @@ function resubmittable(recovery: ComposerRecovery): RecoveredSubmission | null {
 		reasoningEffort,
 		fastMode: recovery.fastMode ?? false,
 		selectedModel,
-		submissionId,
-		continuationOfRunId: recovery.continuationOfRunId
+		submissionId
 	};
 }
 
