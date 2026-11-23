@@ -17,9 +17,9 @@
 	"devDependencies": {
 		"@convex-dev/eslint-plugin": "5.0.1",
 		"@mermaid-lint/cli": "0.53.1",
-		"@oxlint/plugins": "1.90.0",
+		"@oxlint/plugins": "1.93.0",
 		"concurrently": "^10.0.0",
-		"oxlint": "1.90.0",
+		"oxlint": "1.93.0",
 		"turbo": "^2.9.8"
 	},
 	"engines": {

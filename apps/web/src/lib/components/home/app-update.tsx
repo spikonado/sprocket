@@ -137,11 +137,6 @@ export default function AppUpdate({
 		return () => watch.abort();
 	}, []);
 
-	useEffect(() => {
-		if (!restartNow || working || !continuesAgents || !tracked?.restartWhenReady) return;
-		void update();
-	});
-
 	async function updateSprocket(startedRevision: number) {
 		if (!updateState || !sprocketLabel) return;
 
@@ -205,6 +200,11 @@ export default function AppUpdate({
 			setBusy(false);
 		}
 	}
+
+	useEffect(() => {
+		if (!restartNow || working || !continuesAgents || !tracked?.restartWhenReady) return;
+		void update();
+	});
 
 	if (!label) return null;
 
