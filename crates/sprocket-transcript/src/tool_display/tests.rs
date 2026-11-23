@@ -46,7 +46,10 @@ fn multi_target_polls_keep_labels_commands_and_errors() {
             summaries
         );
         if name == "poll_cmd" {
-            assert_eq!(displays[0].command.as_deref(), Some("bun run build"));
+            assert_eq!(
+                serde_json::to_value(&displays[0].commands).unwrap(),
+                json!([{"start":0,"text":"bun run build"}])
+            );
             assert_eq!(displays[1].status, ToolStatus::Failed);
             assert_eq!(displays[1].error.as_deref(), Some("Unknown session."));
         }
@@ -372,7 +375,10 @@ fn command_aliases_and_fallbacks() {
             );
             assert_eq!(actual.label, None);
             assert_eq!(actual.summary, expected);
-            assert_eq!(actual.command.as_deref(), Some("bun run build"));
+            assert_eq!(
+                serde_json::to_value(&actual.commands).unwrap(),
+                json!([{"start":0,"text":"bun run build"}])
+            );
         }
     }
     for name in [
@@ -386,7 +392,10 @@ fn command_aliases_and_fallbacks() {
         let tool = ToolDisplayInput::new(name, &input, None, ToolStatus::Completed);
         let known = tool.display(Some("bun run build"));
         assert_eq!(known.summary, "bun run build");
-        assert_eq!(known.command.as_deref(), Some("bun run build"));
+        assert_eq!(
+            serde_json::to_value(&known.commands).unwrap(),
+            json!([{"start":0,"text":"bun run build"}])
+        );
         assert_eq!(
             tool.display(None).summary,
             if name.starts_with("control") {

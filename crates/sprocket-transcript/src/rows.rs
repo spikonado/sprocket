@@ -643,16 +643,26 @@ fn tool_display(
         return command_display(name, &display_input, commands);
     };
     let mut display = display_input.display(None);
+    let mut command_offset = 0;
     display.summary = targets
         .iter()
         .map(|target| {
             let target_display = command_display(name, target, commands);
-            match target_display.error {
+            display
+                .commands
+                .extend(target_display.commands.into_iter().map(|mut command| {
+                    command.start += command_offset;
+                    command
+                }));
+            let summary = match target_display.error {
                 Some(error) if display.error.is_none() => {
                     format!("{}: {error}", target_display.summary)
                 }
                 _ => target_display.summary,
-            }
+            };
+            // JavaScript string positions count UTF-16 code units.
+            command_offset += summary.encode_utf16().count() + 1;
+            summary
         })
         .collect::<Vec<_>>()
         .join("\n");

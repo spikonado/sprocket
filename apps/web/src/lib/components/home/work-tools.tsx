@@ -73,6 +73,20 @@ const WorkTools = memo(function WorkTools({ store, rowId }: Props) {
 
 	const hasDetail = expanded || row.hasMore || truncated || summary.includes('\n');
 
+	let commandEnd = 0;
+
+	const detail = row.commands?.map(({ start, text }, index) => {
+		const prefix = summary.slice(commandEnd, start);
+		commandEnd = start + text.length;
+
+		return (
+			<span key={index}>
+				{prefix}
+				<HighlightedCommand command={text} />
+			</span>
+		);
+	});
+
 	let onClick: (() => void) | undefined;
 
 	if (expandable) {
@@ -139,14 +153,8 @@ const WorkTools = memo(function WorkTools({ store, rowId }: Props) {
 					data-work-detail
 					className="bg-muted/50 text-foreground ml-5 max-h-80 overflow-y-auto rounded-md px-2 py-1.5 font-mono text-xs leading-5 [overflow-wrap:anywhere] whitespace-pre-wrap"
 				>
-					{row.command && summary.startsWith(row.command) ? (
-						<>
-							<HighlightedCommand command={row.command} />
-							{summary.slice(row.command.length)}
-						</>
-					) : (
-						summary
-					)}
+					{detail}
+					{summary.slice(commandEnd)}
 				</p>
 			) : null}
 			{row.error !== undefined ? (
