@@ -157,9 +157,17 @@
 				$('connect').disabled = true;
 			}
 
-			$('connect').addEventListener('click', () =>
-				connect().catch((error) => ($('status').textContent = error.message))
-			);
+			$('connect').addEventListener('click', async () => {
+				$('connect').disabled = true;
+
+				try {
+					await connect();
+				} catch (error) {
+					$('status').textContent = error.message;
+				} finally {
+					$('connect').disabled = false;
+				}
+			});
 		</script>
 	</body>
 </html>
