@@ -1,8 +1,12 @@
 ---
+import { Image } from 'astro:assets';
+import devBoard from '@/assets/rp2350-devboard.png';
 import Footer from '@/components/footer.astro';
 import LineIcon, { type LineIconName } from '@/components/line-icon.astro';
+import Film from '@/components/sprocket/film.astro';
 import InstallRow from '@/components/sprocket/install-row.astro';
 import LivePreview from '@/components/sprocket/live-preview.astro';
+import LoopClip from '@/components/sprocket/loop-clip.astro';
 import ReleaseBadge from '@/components/sprocket/release-badge.astro';
 import BaseLayout from '@/layouts/base-layout.astro';
 import { fetchLatestSprocketRelease } from '@/lib/latest-sprocket-release';
@@ -16,6 +20,33 @@ import { marketingButtonPrimaryClass, marketingSectionBodyClass } from '@/styles
 import { cn } from '@/utils';
 
 const release = await fetchLatestSprocketRelease();
+
+const media = (id: string) => ({ src: `/media/${id}.mp4`, poster: `/media/${id}.webp` });
+
+const clips = [
+	{
+		id: 'browser',
+		heading: 'Tests in a real browser',
+		body: 'Sprocket clicks through your app, fills forms, and shows you the browser as it works.'
+	},
+	{
+		id: 'firmware',
+		heading: 'Writes and runs firmware',
+		body: 'It builds, flashes, and reads serial output, and keeps long commands running.'
+	},
+	{
+		id: 'purchasing',
+		heading: 'Buys what the project needs',
+		body: 'You approve the store and the amount with your passkey. Your card details never reach the agent.'
+	}
+] as const;
+
+const cardClass =
+	'flex scroll-mt-24 flex-col gap-5 rounded-3xl bg-surface/70 p-3 pb-6 ring-1 ring-border/60';
+
+const cardMediaClass = 'overflow-hidden rounded-2xl bg-background ring-1 ring-border/60';
+const cardHeadingClass = 'text-xl font-semibold tracking-tight text-foreground';
+const cardBodyClass = 'mt-2 max-w-prose text-[0.9375rem] leading-relaxed text-muted-foreground';
 
 const capabilities = [
 	{
@@ -182,6 +213,84 @@ const subheadingClass =
 			</div>
 
 			<LivePreview />
+		</section>
+
+		<section
+			id="film"
+			aria-labelledby="film-heading"
+			data-ph-capture-attribute-section="sprocket_film"
+			class="scroll-mt-24 border-t border-border/70 px-4 py-20 sm:px-6 lg:px-8 lg:py-28"
+		>
+			<div class="mx-auto max-w-6xl">
+				<div class="grid gap-4 lg:grid-cols-2 lg:items-end lg:gap-16">
+					<h2 id="film-heading" class={subheadingClass}>Watch Sprocket build an entire project</h2>
+					<p class={marketingSectionBodyClass}>
+						One real project, from the first prompt to a working device.
+					</p>
+				</div>
+				<div
+					class="mt-10 overflow-hidden rounded-3xl border border-border/70 shadow-[0_30px_80px_-40px_oklch(0.2_0.02_260/0.7)]"
+				>
+					<Film
+						{...media('film')}
+						label="Sprocket building a project from the first prompt to a working device"
+					/>
+				</div>
+			</div>
+		</section>
+
+		<section
+			id="projects"
+			aria-labelledby="projects-heading"
+			data-ph-capture-attribute-section="sprocket_projects"
+			class="scroll-mt-24 border-t border-border/70 px-4 py-20 sm:px-6 lg:px-8 lg:py-28"
+		>
+			<div class="mx-auto max-w-6xl">
+				<h2 id="projects-heading" class={subheadingClass}>
+					Real projects created with the help of Sprocket
+				</h2>
+			</div>
+			<ul class="mx-auto mt-12 grid max-w-6xl gap-6 md:grid-cols-3">
+				<li
+					id="rp2350-devboard"
+					data-ph-capture-attribute-section="sprocket_rp2350_devboard"
+					class={cn(cardClass, 'md:col-span-3')}
+				>
+					<div class={cardMediaClass}>
+						<Image
+							src={devBoard}
+							alt="3D render of a long, narrow RP2350 board with USB-C, a battery connector, a microSD socket, and a Wi-Fi module"
+							widths={[800, 1200, devBoard.width]}
+							sizes="(min-width: 1152px) 1128px, 100vw"
+							class="h-auto w-full"
+						/>
+					</div>
+					<div class="px-3">
+						<h3 class={cardHeadingClass}>RP2350 Wi-Fi dev board</h3>
+						<p class={cardBodyClass}>
+							A 28 × 78.5 mm, 4-layer KiCad board with a priced BOM. Five assembled boards cost
+							$73.36 each.
+						</p>
+					</div>
+				</li>
+				{
+					clips.map(({ id, heading, body }) => (
+						<li id={id} data-ph-capture-attribute-section={`sprocket_${id}`} class={cardClass}>
+							<div class={cardMediaClass}>
+								<LoopClip
+									{...media(id)}
+									label={`Sprocket at work: ${heading.toLowerCase()}`}
+									class="aspect-square object-cover"
+								/>
+							</div>
+							<div class="px-3">
+								<h3 class={cardHeadingClass}>{heading}</h3>
+								<p class={cardBodyClass}>{body}</p>
+							</div>
+						</li>
+					))
+				}
+			</ul>
 		</section>
 
 		<section
