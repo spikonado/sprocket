@@ -21,9 +21,8 @@ Here's what each Rust crate is for; you may create more crates when needed.
 
 ## Available testing commands
 
-- Only run `prek run -a` and other small tests locally. Don't run any rust compilations or checks.
-- Prek covers formatting and linting.
-- Aside from these, look at the CI on GitHub when you open a PR.
+- `prek run -a` covers formatting and linting.
+- Don't run long compilations locally for things that can be verified through CI.
 
 ### Nix environment
 
@@ -45,7 +44,6 @@ Reliability comes from fewer moving parts. Add recovery, retries, validation, or
 - Put Rust unit tests for `foo.rs` in `foo/tests.rs`, declared as `#[cfg(test)] mod tests;`. Test-only helpers live there too, or in `foo/test_support.rs` when other modules' tests use them.
 - Before adding a Convex function, table field, or index, check whether an existing query or mutation already serves the need. Store only the state the feature needs and derive the rest.
 - Make sure that changes are made in all the layers of the app when needed.
-- User docs live in `docs/` and publish on every push to `main`. Update them in the PR that changes user-facing behavior. Mark features that aren't in a stable release with `<Snippet file="unreleased.mdx" />`, and remove the mark once they ship.
 
 ### Backwards compatibility
 
