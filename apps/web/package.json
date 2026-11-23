@@ -32,7 +32,7 @@
 		"@opentelemetry/api": "^1.10.0",
 		"@pierre/trees": "1.0.0-beta.6",
 		"@pierre/words": "0.2.2",
-		"@posthog/convex": "2.1.8",
+		"@posthog/convex": "2.1.9",
 		"@sprocket/error-tracking": "workspace:*",
 		"@workos-inc/authkit-js": "^0.20.0",
 		"clsx": "catalog:",
