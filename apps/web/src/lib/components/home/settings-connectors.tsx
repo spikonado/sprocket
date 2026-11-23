@@ -17,7 +17,7 @@ type ConnectorsApi = GitHubApi &
 
 const details: Record<ConnectorStatus['id'], { logo: string; description: string }> = {
 	kicad: {
-		logo: '/kicad.svg',
+		logo: `${import.meta.env.BASE_URL}kicad.svg`,
 		description: 'Lets the agent design PCBs'
 	}
 };

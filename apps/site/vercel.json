@@ -8,6 +8,12 @@
 			"main": false
 		}
 	},
+	"headers": [
+		{
+			"source": "/demo/kicanvas/(.*)",
+			"headers": [{ "key": "Access-Control-Allow-Origin", "value": "*" }]
+		}
+	],
 	"redirects": [
 		{
 			"source": "/",

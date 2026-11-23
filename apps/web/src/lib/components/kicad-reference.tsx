@@ -16,7 +16,7 @@ export default function KicadReference({
 	return (
 		<ReferenceCard
 			data-kicad-reference={path}
-			icon={<img src="/kicad.svg" alt="" className="size-5" />}
+			icon={<img src={`${import.meta.env.BASE_URL}kicad.svg`} alt="" className="size-5" />}
 			title={projectName(path)}
 			kind="KiCad project"
 			onOpen={fileLinks && target ? () => fileLinks.open(target) : undefined}

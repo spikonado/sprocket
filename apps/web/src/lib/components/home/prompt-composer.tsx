@@ -547,7 +547,7 @@ export default function PromptComposer({
 						<div className="mx-auto mb-3 flex w-full max-w-[48rem] items-center px-5" role="status">
 							<span className="sr-only">Agent is running</span>
 							<img
-								src="/logo.svg"
+								src={`${import.meta.env.BASE_URL}logo.svg`}
 								alt=""
 								className="motion-safe:animate-tornado-wobble size-6 origin-top"
 							/>

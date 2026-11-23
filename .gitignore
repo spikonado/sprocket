@@ -22,5 +22,6 @@ coverage
 
 .worktrees
 dist
+apps/site/public/demo
 ref-repos
 target
