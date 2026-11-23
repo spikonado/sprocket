@@ -163,6 +163,10 @@ jobs:
     env:
       # Dev builds publish on every main push, and LTO triples their build time.
       CARGO_PROFILE_RELEASE_LTO: ${{ needs.prepare.outputs.npm-tag == 'dev' && 'false' || 'true' }}
+      CARGO_PROFILE_RELEASE_DEBUG: ${{ !startsWith(matrix.runner, 'windows-') && 'line-tables-only' || '0' }}
+      CARGO_PROFILE_RELEASE_STRIP: ${{ !startsWith(matrix.runner, 'windows-') && 'none' || 'symbols' }}
+      CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: ${{ startsWith(matrix.runner, 'macos-') && 'packed' || 'off' }}
+      CLI_PATH: ${{ matrix.rust-target && format('target/{0}/release', matrix.rust-target) || 'target/release' }}/${{ matrix.executable }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -180,6 +184,8 @@ jobs:
         shell: bash
         env:
           SPROCKET_VERSION: ${{ needs.prepare.outputs.version }}
+          # zig's lld omits the GNU build ID that PostHog matches symbols by.
+          RUSTFLAGS: -C link-arg=-Wl,--build-id=sha1
         run: >-
           cargo zigbuild --locked --release -p sprocket-cli
           --target "${{ matrix.rust-target }}.${{ matrix.glibc-version }}"
@@ -189,15 +195,18 @@ jobs:
         env:
           SPROCKET_VERSION: ${{ needs.prepare.outputs.version }}
         run: cargo build --locked --release -p sprocket-cli
+      - name: Upload native debug symbols
+        if: runner.os != 'Windows'
+        uses: ./.github/actions/upload-native-symbols
+        with:
+          binary: ${{ env.CLI_PATH }}
+          api-key: ${{ secrets.POSTHOG_PERSONAL_API_KEY }}
+          project-id: ${{ vars.POSTHOG_PROJECT_ID }}
       - name: Stage native CLI
         shell: bash
         run: |
           mkdir -p artifact
-          if [[ -n "${{ matrix.rust-target }}" ]]; then
-            cp "target/${{ matrix.rust-target }}/release/${{ matrix.executable }}" artifact/
-          else
-            cp "target/release/${{ matrix.executable }}" artifact/
-          fi
+          cp "$CLI_PATH" artifact/
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.id }}

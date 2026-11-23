@@ -1,0 +1,42 @@
+name: Upload native debug symbols
+description: Strip the Rust CLI's binary and upload its debug symbols to PostHog.
+
+inputs:
+  binary:
+    description: Path to the unstripped sprocket executable.
+    required: true
+  api-key:
+    description: PostHog personal API key.
+    required: true
+  project-id:
+    description: PostHog project ID.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+    - name: Split debug symbols
+      shell: bash
+      env:
+        BINARY: ${{ inputs.binary }}
+      run: |
+        mkdir -p .native-symbols
+        if [[ "$RUNNER_OS" == "macOS" ]]; then
+          # Cargo uplifts the dSYM as a symlink into deps/.
+          cp -RL "$BINARY.dSYM" .native-symbols/
+          strip "$BINARY"
+        else
+          readelf -n "$BINARY" | grep 'Build ID:'
+          cp "$BINARY" .native-symbols/
+          # GNU strip can't read the cross-compiled arm64 binary.
+          rustup component add llvm-tools
+          "$(rustc --print sysroot)/lib/rustlib/$(rustc --print host-tuple)/bin/llvm-strip" "$BINARY"
+        fi
+    - name: Upload debug symbols
+      shell: bash
+      env:
+        POSTHOG_CLI_HOST: https://eu.posthog.com
+        POSTHOG_CLI_API_KEY: ${{ inputs.api-key }}
+        POSTHOG_CLI_PROJECT_ID: ${{ inputs.project-id }}
+      run: bunx @posthog/cli@0.19.0 symbol-sets upload --directory .native-symbols

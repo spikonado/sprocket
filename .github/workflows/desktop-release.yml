@@ -79,6 +79,10 @@ jobs:
             electron_args: --win nsis --x64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
+    env:
+      CARGO_PROFILE_RELEASE_DEBUG: ${{ !startsWith(matrix.runner, 'windows-') && 'line-tables-only' || '0' }}
+      CARGO_PROFILE_RELEASE_STRIP: ${{ !startsWith(matrix.runner, 'windows-') && 'none' || 'symbols' }}
+      CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: ${{ startsWith(matrix.runner, 'macos-') && 'packed' || 'off' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
@@ -115,6 +119,13 @@ jobs:
         env:
           SPROCKET_VERSION: ${{ needs.prepare.outputs.version }}
         run: cargo build --locked --release -p sprocket-cli
+      - name: Upload native debug symbols
+        if: runner.os != 'Windows'
+        uses: ./.github/actions/upload-native-symbols
+        with:
+          binary: target/release/sprocket
+          api-key: ${{ secrets.POSTHOG_PERSONAL_API_KEY }}
+          project-id: ${{ vars.POSTHOG_PROJECT_ID }}
       - name: Load optional Apple API key
         if: runner.os == 'macOS'
         shell: bash
