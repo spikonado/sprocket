@@ -1,35 +1,35 @@
 {
-	"version": "1.4.4",
+	"version": "1.4.5",
 	"platforms": {
 		"darwin-arm64": {
-			"url": "https://registry.npmjs.org/@oven/bun-darwin-aarch64/-/bun-darwin-aarch64-1.4.4.tgz",
-			"bytes": 41545333,
-			"sha256": "be5f17d636d699b2eaa2c1a8ac802c87f0815ccb5fe26cbe63d2395354ae5d0d"
+			"url": "https://registry.npmjs.org/@oven/bun-darwin-aarch64/-/bun-darwin-aarch64-1.4.5.tgz",
+			"bytes": 41036588,
+			"sha256": "88c398ee13212e8b189119a2bddc7d240ae4f1252c1d0ae2ac1fd44c921fdcb1"
 		},
 		"darwin-x64": {
-			"url": "https://registry.npmjs.org/@oven/bun-darwin-x64-baseline/-/bun-darwin-x64-baseline-1.4.4.tgz",
-			"bytes": 43895192,
-			"sha256": "1f4b4d1fa9e3b1dcb7890e4594703c7d5fac54c950964d89a2770760bc2cacbd"
+			"url": "https://registry.npmjs.org/@oven/bun-darwin-x64-baseline/-/bun-darwin-x64-baseline-1.4.5.tgz",
+			"bytes": 43925447,
+			"sha256": "477144886f6cb00238da93e805b225cc85a8933a1d6da895234794dd28aab6b1"
 		},
 		"linux-arm64": {
-			"url": "https://registry.npmjs.org/@oven/bun-linux-aarch64/-/bun-linux-aarch64-1.4.4.tgz",
-			"bytes": 53132992,
-			"sha256": "ab95e7e692a53d25a1baa98ee395a17f5f264aedfb3cb15811432d54142f70eb"
+			"url": "https://registry.npmjs.org/@oven/bun-linux-aarch64/-/bun-linux-aarch64-1.4.5.tgz",
+			"bytes": 52595012,
+			"sha256": "c3cd56594c9d5d025df87f77c68ad4699a49b52551f0f3232be6f727533fe08c"
 		},
 		"linux-x64": {
-			"url": "https://registry.npmjs.org/@oven/bun-linux-x64-baseline/-/bun-linux-x64-baseline-1.4.4.tgz",
-			"bytes": 52418564,
-			"sha256": "2ce69fadd00b741513c52adb8aad3fbee93170d0abaa3b6d04df47ca8659bd40"
+			"url": "https://registry.npmjs.org/@oven/bun-linux-x64-baseline/-/bun-linux-x64-baseline-1.4.5.tgz",
+			"bytes": 51946584,
+			"sha256": "c18ff4130882eaa8209f0b3e66a202abd1e07a137f38a254d0b7431bc6a03827"
 		},
 		"win32-arm64": {
-			"url": "https://registry.npmjs.org/@oven/bun-windows-aarch64/-/bun-windows-aarch64-1.4.4.tgz",
-			"bytes": 50843293,
-			"sha256": "8cb207c5a3ed94289f46edcb36e640ed174d2117d14855dd9c4f45a4c4475677"
+			"url": "https://registry.npmjs.org/@oven/bun-windows-aarch64/-/bun-windows-aarch64-1.4.5.tgz",
+			"bytes": 50487214,
+			"sha256": "716455e0c0b14f499f32a433175a8e0cc931312d51033621f60ed95e0ade3d6b"
 		},
 		"win32-x64": {
-			"url": "https://registry.npmjs.org/@oven/bun-windows-x64-baseline/-/bun-windows-x64-baseline-1.4.4.tgz",
-			"bytes": 55606170,
-			"sha256": "ad1576a7c9a524b1dc377608c0bc16529c3f121f59c21aba981c019a528ff4fc"
+			"url": "https://registry.npmjs.org/@oven/bun-windows-x64-baseline/-/bun-windows-x64-baseline-1.4.5.tgz",
+			"bytes": 55298167,
+			"sha256": "a1ff85b3016f55d7bf28cc12284fc7d445f3e2601211a898d7c6b33e07b2e0e8"
 		}
 	}
 }
