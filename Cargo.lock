@@ -6430,15 +6430,15 @@ dependencies = [
 
 [[package]]
 name = "lzma-rust2"
-version = "0.21.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fde178a3caf126c440fa15628147772d8ee590a39477d711353fbe2e58a73a5b"
-
-[[package]]
-name = "lzma-rust2"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1c46f3fcd2e888afdb01a07efc071cb21300e07c68d32c3e8b01b5c8cb1fcaa"
+
+[[package]]
+name = "lzma-rust2"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef1d73c59a56771343712b22ea5615092c612c16ba291c0979e3105dfeec4890"
 
 [[package]]
 name = "macro_rules_attribute"
@@ -6835,13 +6835,13 @@ dependencies = [
 
 [[package]]
 name = "nsis"
-version = "0.6.0"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9e532a7cdb638d23e715042f8251581511c6bb8367848ea067e2526c117530d"
+checksum = "33694aa286becf1887816af144192bb29729a55bdb56d00ec57cbe1080a89941"
 dependencies = [
  "flate2",
  "goblin",
- "lzma-rust2 0.21.0",
+ "lzma-rust2 0.25.0",
 ]
 
 [[package]]
