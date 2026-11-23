@@ -39,8 +39,8 @@ pub struct ToolDisplay {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     pub summary: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub command: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub commands: Vec<String>,
     pub status: ToolStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -49,9 +49,9 @@ pub struct ToolDisplay {
 }
 
 impl ToolDisplay {
-    /// List rows drop the command, so command rows always load details to highlight it.
+    /// List rows drop the commands, so command rows always load details to highlight them.
     pub fn shorten(&mut self) -> bool {
-        let dropped_command = self.command.take().is_some();
+        let dropped_command = !std::mem::take(&mut self.commands).is_empty();
         let preview: String = self
             .summary
             .split(['\r', '\n'])
@@ -167,7 +167,7 @@ impl<'a> ToolDisplayInput<'a> {
         ToolDisplay {
             label: label(self.name),
             summary: self.summary(command),
-            command: command.map(str::to_owned),
+            commands: command.into_iter().map(str::to_owned).collect(),
             status,
             error,
             action,

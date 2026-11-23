@@ -647,6 +647,7 @@ fn tool_display(
         .iter()
         .map(|target| {
             let target_display = command_display(name, target, commands);
+            display.commands.extend(target_display.commands);
             match target_display.error {
                 Some(error) if display.error.is_none() => {
                     format!("{}: {error}", target_display.summary)

@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
-import { act, fireEvent, render, within } from '@testing-library/react';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react';
+import type { HighlightRequest, HighlightResponse } from '$lib/chat/code-highlighting-client';
+import { highlightCode } from '$lib/chat/code-highlighting';
 import { MarkdownFileLinksContext } from '$lib/chat/markdown-file-links';
 import { ConvexTestClient, ConvexTestProvider, fixtureId } from '$lib/convex-test-client';
 import { TranscriptStore } from '$lib/home/transcript-store';
@@ -85,6 +87,40 @@ afterEach(() => {
 });
 
 describe('tool rows', () => {
+	it('highlights each command of an expanded poll row inside its summary', async () => {
+		vi.stubGlobal(
+			'Worker',
+			class {
+				onmessage?: (event: MessageEvent<HighlightResponse>) => void;
+				async postMessage({ id, code, language }: HighlightRequest) {
+					const tokens = await highlightCode(code, language);
+					this.onmessage?.(new MessageEvent('message', { data: { id, tokens } }));
+				}
+			}
+		);
+
+		const commands = ['echo "hello"', "python3 -c 'print(1)'"];
+
+		const full = tool({
+			name: 'poll_cmd',
+			commands,
+			summary: `${commands[0]}\nSession missing: Unknown session.\n${commands[1]}`
+		});
+
+		const { props } = transcript(tool({ name: 'poll_cmd', hasMore: true }), full);
+		const view = render(<WorkTools {...props} />);
+
+		fireEvent.click(within(view.container).getByRole('button'));
+
+		await waitFor(() => {
+			expect(view.container.querySelectorAll('p .shiki')).toHaveLength(2);
+		});
+		expect(view.container.querySelector('p')?.textContent).toBe(full.summary);
+
+		const highlighted = [...view.container.querySelectorAll('p .shiki')];
+		expect(highlighted.map((element) => element.textContent)).toEqual(commands);
+	});
+
 	it.each(['apply_patch', 'poll_cmd', 'poll_subagent', 'poll_pr'])(
 		'expands one %s row to show the full summary',
 		(name) => {
