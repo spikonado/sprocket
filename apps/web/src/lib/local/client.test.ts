@@ -251,6 +251,7 @@ describe('transcript protocol', () => {
 				status,
 				label: 'Run command',
 				summary: 'bun test\nFull command summary',
+				commands: [{ start: 0, text: 'bun test' }],
 				hasMore: false,
 				action:
 					status === 'completed'
