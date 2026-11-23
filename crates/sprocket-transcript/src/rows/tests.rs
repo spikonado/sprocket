@@ -233,7 +233,7 @@ fn results_pair_with_their_calls_and_unmatched_results_stand_in_for_them() {
 }
 
 #[test]
-fn poll_rows_use_one_summary_for_previews_and_details() {
+fn poll_rows_preserve_each_command_in_one_detail() {
     let rows = fold(
         &[
             completion(
@@ -241,14 +241,15 @@ fn poll_rows_use_one_summary_for_previews_and_details() {
                 "poll",
                 vec![json!({
                     "type":"tool-call", "callId":"poll", "name":"poll_cmd",
-                    "input":{"sessionIds":["7","missing"]}
+                    "input":{"sessionIds":["7","missing","8"]}
                 })],
             ),
             result(
                 1,
                 json!({"name":"poll_cmd", "callId":"poll", "status":"completed", "output":[
                     {"sessionId":"7", "command":"bun run build", "workdir":"/repo"},
-                    {"sessionId":"missing", "error":"Unknown session."}
+                    {"sessionId":"missing", "error":"Unknown session."},
+                    {"sessionId":"8", "command":"printf 'first\\nsecond'\nsleep 10"}
                 ]}),
             ),
         ],
@@ -263,6 +264,7 @@ fn poll_rows_use_one_summary_for_previews_and_details() {
     };
     assert!(*has_more);
     assert_eq!(display.summary, "bun run build");
+    assert!(display.detail.is_empty());
     let details = item(&rows, &preview[0].id);
     let TranscriptRowBody::Tool {
         display, has_more, ..
@@ -273,7 +275,18 @@ fn poll_rows_use_one_summary_for_previews_and_details() {
     assert!(!has_more);
     assert_eq!(
         display.summary,
-        "bun run build\nSession missing: Unknown session."
+        "bun run build\nSession missing: Unknown session.\nprintf 'first\\nsecond'\nsleep 10"
+    );
+    assert_eq!(
+        serde_json::to_value(&display.detail).unwrap(),
+        json!([
+            {"kind":"command", "text":"bun run build"},
+            {"kind":"text", "text":"\n"},
+            {"kind":"text", "text":"Session missing"},
+            {"kind":"text", "text":": Unknown session."},
+            {"kind":"text", "text":"\n"},
+            {"kind":"command", "text":"printf 'first\\nsecond'\nsleep 10"}
+        ])
     );
     assert_eq!(display.status, ToolStatus::Completed);
 }
@@ -296,11 +309,11 @@ fn tools_only_send_display_summaries_and_item_scope_returns_the_full_summary() {
     let wire = serde_json::to_value(row).unwrap();
     assert_eq!(wire["summary"], "x".repeat(300));
     assert_eq!(wire["hasMore"], true);
-    assert!(wire.get("command").is_none());
+    assert!(wire.get("detail").is_none());
     assert!(!wire.to_string().contains("private input"));
     let full = serde_json::to_value(item(&rows, &row.id)).unwrap();
     assert_eq!(full["summary"], command);
-    assert_eq!(full["command"], command);
+    assert_eq!(full["detail"], json!([{"kind":"command", "text":command}]));
 }
 
 #[test]

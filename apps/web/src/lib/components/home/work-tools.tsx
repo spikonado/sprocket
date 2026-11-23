@@ -139,14 +139,9 @@ const WorkTools = memo(function WorkTools({ store, rowId }: Props) {
 					data-work-detail
 					className="bg-muted/50 text-foreground ml-5 max-h-80 overflow-y-auto rounded-md px-2 py-1.5 font-mono text-xs leading-5 [overflow-wrap:anywhere] whitespace-pre-wrap"
 				>
-					{row.command && summary.startsWith(row.command) ? (
-						<>
-							<HighlightedCommand command={row.command} />
-							{summary.slice(row.command.length)}
-						</>
-					) : (
-						summary
-					)}
+					{row.detail?.map(({ kind, text }, index) =>
+						kind === 'command' ? <HighlightedCommand key={index} command={text} /> : text
+					) ?? summary}
 				</p>
 			) : null}
 			{row.error !== undefined ? (

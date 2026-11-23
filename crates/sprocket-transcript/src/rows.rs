@@ -4,7 +4,8 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::tool_display::{
-    SessionCommands, ToolDisplay, ToolDisplayInput, ToolStatus, is_session_command, polled_targets,
+    SessionCommands, ToolDetail, ToolDisplay, ToolDisplayInput, ToolStatus, is_session_command,
+    polled_targets,
 };
 use crate::{
     LiveCompletionOverlay, TranscriptAttachmentMeta, TranscriptCompletionBody, TranscriptPart,
@@ -643,19 +644,28 @@ fn tool_display(
         return command_display(name, &display_input, commands);
     };
     let mut display = display_input.display(None);
-    display.summary = targets
+    let mut detail = Vec::new();
+    for (index, target) in targets.iter().enumerate() {
+        let target = command_display(name, target, commands);
+        if index > 0 {
+            detail.push(ToolDetail::Text("\n".into()));
+        }
+        if target.detail.is_empty() {
+            detail.push(ToolDetail::Text(target.summary));
+        } else {
+            detail.extend(target.detail);
+        }
+        if let Some(error) = target.error.filter(|_| display.error.is_none()) {
+            detail.push(ToolDetail::Text(format!(": {error}")));
+        }
+    }
+    display.summary = detail.iter().map(ToolDetail::text).collect();
+    if detail
         .iter()
-        .map(|target| {
-            let target_display = command_display(name, target, commands);
-            match target_display.error {
-                Some(error) if display.error.is_none() => {
-                    format!("{}: {error}", target_display.summary)
-                }
-                _ => target_display.summary,
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+        .any(|part| matches!(part, ToolDetail::Command(_)))
+    {
+        display.detail = detail;
+    }
     display
 }
 

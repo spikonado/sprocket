@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
-import { act, fireEvent, render, within } from '@testing-library/react';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react';
 import { MarkdownFileLinksContext } from '$lib/chat/markdown-file-links';
+import { highlightCode } from '$lib/chat/code-highlighting';
+import type { HighlightRequest, HighlightResponse } from '$lib/chat/code-highlighting-client';
 import { ConvexTestClient, ConvexTestProvider, fixtureId } from '$lib/convex-test-client';
 import { TranscriptStore } from '$lib/home/transcript-store';
 import type {
@@ -105,6 +107,43 @@ describe('tool rows', () => {
 			expect(view.container.querySelector('p')?.textContent).toBe(full.summary);
 		}
 	);
+
+	it('highlights each command in an expanded row', async () => {
+		vi.stubGlobal(
+			'Worker',
+			class {
+				onmessage?: (event: MessageEvent<HighlightResponse>) => void;
+				async postMessage({ id, code, language }: HighlightRequest) {
+					const tokens = await highlightCode(code, language);
+					this.onmessage?.(new MessageEvent('message', { data: { id, tokens } }));
+				}
+			}
+		);
+		const summary = 'sleep 30\nSession missing: Unknown session.\nprintf "hello"\nsleep 10';
+		const row = tool({ name: 'poll_cmd', summary: 'sleep 30', hasMore: true });
+
+		const { props } = transcript(row, {
+			...row,
+			summary,
+			detail: [
+				{ kind: 'command', text: 'sleep 30' },
+				{ kind: 'text', text: '\nSession missing: Unknown session.\n' },
+				{ kind: 'command', text: 'printf "hello"\nsleep 10' }
+			],
+			hasMore: false
+		});
+
+		const view = render(<WorkTools {...props} />);
+
+		fireEvent.click(within(view.container).getByRole('button'));
+		const expanded = view.container.querySelector('p');
+		expect(expanded?.textContent).toBe(summary);
+		await waitFor(() => {
+			expect(
+				Array.from(expanded?.querySelectorAll('.shiki') ?? [], (node) => node.textContent)
+			).toEqual(['sleep 30', 'printf "hello"\nsleep 10']);
+		});
+	});
 
 	it('subscribes to full summary only while expanded and releases it on unmount', () => {
 		const row = tool({ hasMore: true });

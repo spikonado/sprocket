@@ -34,13 +34,28 @@ pub enum ToolDisplayAction {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", content = "text", rename_all = "camelCase")]
+pub enum ToolDetail {
+    Command(String),
+    Text(String),
+}
+
+impl ToolDetail {
+    pub fn text(&self) -> &str {
+        match self {
+            Self::Command(text) | Self::Text(text) => text,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolDisplay {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     pub summary: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub command: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub detail: Vec<ToolDetail>,
     pub status: ToolStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -49,9 +64,10 @@ pub struct ToolDisplay {
 }
 
 impl ToolDisplay {
-    /// List rows drop the command, so command rows always load details to highlight it.
+    /// List rows drop the detail, so rows with commands always load details to highlight them.
     pub fn shorten(&mut self) -> bool {
-        let dropped_command = self.command.take().is_some();
+        let dropped_detail = !self.detail.is_empty();
+        self.detail.clear();
         let preview: String = self
             .summary
             .split(['\r', '\n'])
@@ -60,7 +76,7 @@ impl ToolDisplay {
             .chars()
             .take(ROW_SUMMARY_CHARS)
             .collect();
-        let has_more = dropped_command || preview != self.summary;
+        let has_more = dropped_detail || preview != self.summary;
         self.summary = preview;
         has_more
     }
@@ -164,10 +180,20 @@ impl<'a> ToolDisplayInput<'a> {
             }
             _ => None,
         };
+        let summary = self.summary(command);
+        let mut detail = Vec::new();
+        if let Some(command) = command
+            && let Some(suffix) = summary.strip_prefix(command)
+        {
+            detail.push(ToolDetail::Command(command.to_owned()));
+            if !suffix.is_empty() {
+                detail.push(ToolDetail::Text(suffix.to_owned()));
+            }
+        }
         ToolDisplay {
             label: label(self.name),
-            summary: self.summary(command),
-            command: command.map(str::to_owned),
+            summary,
+            detail,
             status,
             error,
             action,
