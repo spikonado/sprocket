@@ -40,6 +40,7 @@ import AuthGate from '$lib/components/home/auth-gate';
 import BrowserSignInOverlay from '$lib/components/home/browser-signin-overlay';
 import CalmCentered from '$lib/components/home/calm-centered';
 import PromptComposer from '$lib/components/home/prompt-composer';
+import type { QuestionAnswer } from '$lib/components/home/agent-question';
 import ConversationNotices from '$lib/components/home/conversation-notices';
 import PurchaseApprovals from '$lib/components/home/purchase-approvals';
 import CreateThreadHeading from '$lib/components/home/create-thread-heading';
@@ -438,7 +439,6 @@ export default function App({
 
 	const [fastMode, setFastMode] = useState(false);
 	const [prompt, setPrompt] = useState('');
-	const [selectedQuestionOptionId, setSelectedQuestionOptionId] = useState<string | null>(null);
 	const [answeringAgentQuestion, setAnsweringAgentQuestion] = useState(false);
 
 	const [composerContinuationOfRunId, setComposerContinuationOfRunId] = useState<Id<'runs'> | null>(
@@ -1162,7 +1162,6 @@ export default function App({
 			setPendingCreatedThreadId(null);
 			setComposerContinuationOfRunId(null);
 			setAutoSubmitComposerContinuation(false);
-			setSelectedQuestionOptionId(null);
 		}
 	}
 
@@ -1471,44 +1470,30 @@ export default function App({
 		}
 	}
 
-	async function settleAgentQuestion(action: 'answer' | 'skip') {
+	async function settleAgentQuestion(answer: QuestionAnswer | null) {
 		const question = pendingAgentQuestion;
 		const threadId = currentThreadId;
 		const userId = signedInUserIdRef.current;
 
 		if (!question || !threadId || !userId || answeringAgentQuestion) return;
 
-		if (action === 'answer' && !selectedQuestionOptionId && !prompt.trim()) return;
-
 		setAnsweringAgentQuestion(true);
 		setCurrentError(null);
-		const submittedPrompt = prompt;
-		const submittedOptionId = selectedQuestionOptionId;
-		const answerText = submittedPrompt.trim();
-		const submittedAttachments = composerAttachments.snapshot();
-
-		const submittedStorageIds = submittedAttachments.flatMap((attachment) =>
-			attachment.storageId ? [attachment.storageId] : []
-		);
-
 		const submittedModel = selectedModel;
 		const submittedReasoningEffort = selectedReasoningEffort;
 		const submittedFastMode = fastMode;
 		let continuationPrompt: string | null = null;
 		let continuationOfRunId: Id<'runs'> | undefined;
-		setPrompt('');
-		setSelectedQuestionOptionId(null);
 
 		try {
-			const result =
-				action === 'answer'
-					? await answerAgentQuestion({
-							threadId,
-							questionId: question.questionId,
-							optionId: submittedOptionId ?? undefined,
-							text: answerText || undefined
-						})
-					: await skipAgentQuestion({ threadId, questionId: question.questionId });
+			const result = answer
+				? await answerAgentQuestion({
+						threadId,
+						questionId: question.questionId,
+						optionId: answer.optionId ?? undefined,
+						text: answer.text || undefined
+					})
+				: await skipAgentQuestion({ threadId, questionId: question.questionId });
 
 			if (result.continuation) {
 				continuationPrompt = result.continuation.prompt;
@@ -1520,8 +1505,6 @@ export default function App({
 				currentThreadIdRef.current === threadId &&
 				pendingAgentQuestionRef.current?.questionId === question.questionId
 			) {
-				setPrompt(submittedPrompt);
-				setSelectedQuestionOptionId(submittedOptionId);
 				setCurrentError(error instanceof Error ? error.message : String(error));
 			}
 		} finally {
@@ -1534,8 +1517,6 @@ export default function App({
 			submissions.storeRecovery(userId, `thread:${threadId}`, {
 				message: 'Continuing from your answer when you return to this thread.',
 				prompt: continuationPrompt,
-				attachments: submittedAttachments,
-				storageIds: submittedStorageIds,
 				reasoningEffort: submittedReasoningEffort,
 				fastMode: submittedFastMode,
 				selectedModel: submittedModel,
@@ -1547,51 +1528,39 @@ export default function App({
 		}
 
 		if (continuationPrompt !== null) {
-			setComposerContinuationOfRunId(continuationOfRunId ?? null);
-			setPrompt(continuationPrompt);
-
-			await submitPrompt(
-				{ answeredQuestionId: question.questionId, continuationOfRunId },
-				continuationPrompt
-			);
+			await submitPrompt({
+				answeredQuestionId: question.questionId,
+				continuationOfRunId,
+				prompt: continuationPrompt
+			});
 		}
 	}
 
 	const pendingAgentQuestionRef = useLatest(pendingAgentQuestion);
 
-	async function submitPrompt(
-		options?: {
-			answeredQuestionId: Id<'agentQuestions'>;
-			continuationOfRunId: Id<'runs'> | undefined;
-		},
-		promptOverride?: string
-	) {
+	async function submitPrompt(continuation?: {
+		answeredQuestionId: Id<'agentQuestions'>;
+		continuationOfRunId: Id<'runs'> | undefined;
+		prompt: string;
+	}) {
 		const currentQuestion = pendingAgentQuestionRef.current;
 
-		if (currentQuestion) {
-			if (
-				options?.answeredQuestionId &&
-				currentQuestion.questionId !== options.answeredQuestionId
-			) {
-				setCurrentError('Answer the new agent question before continuing.');
+		if (currentQuestion && currentQuestion.questionId !== continuation?.answeredQuestionId) {
+			if (continuation) setCurrentError('Answer the new agent question before continuing.');
 
-				return;
-			}
-
-			if (!options?.answeredQuestionId) {
-				await settleAgentQuestion('answer');
-
-				return;
-			}
+			return;
 		}
 
-		const promptText = promptOverride ?? prompt;
+		const promptText = continuation?.prompt ?? prompt;
 
 		if (isSubmittingPrompt) return;
 
-		if (!promptText.trim() && composerAttachments.items.length === 0) return;
+		if (!promptText.trim() && (continuation || composerAttachments.items.length === 0)) return;
 
-		if (composerAttachments.items.some((attachment) => attachment.status !== 'ready')) {
+		if (
+			!continuation &&
+			composerAttachments.items.some((attachment) => attachment.status !== 'ready')
+		) {
 			setCurrentError('Wait for file uploads to finish, or remove failed files before sending.');
 
 			return;
@@ -1650,7 +1619,7 @@ export default function App({
 
 		const isSubmittedUserCurrent = () => signedInUserIdRef.current === submittedUserId;
 		const submittedPrompt = promptText.trim();
-		const submittedAttachments = composerAttachments.snapshot();
+		const submittedAttachments = continuation ? [] : composerAttachments.snapshot();
 
 		const submittedStorageIds = submittedAttachments.flatMap((attachment) =>
 			attachment.storageId ? [attachment.storageId] : []
@@ -1660,8 +1629,9 @@ export default function App({
 		const submittedReasoningEffort = selectedReasoningEffort;
 		const submittedFastMode = fastMode;
 
-		const submittedContinuationOfRunId =
-			options?.continuationOfRunId ?? composerContinuationOfRunId ?? undefined;
+		const submittedContinuationOfRunId = continuation
+			? continuation.continuationOfRunId
+			: (composerContinuationOfRunId ?? undefined);
 
 		const previousRunId = selectedThreadId ? (runState?.runId ?? null) : null;
 
@@ -1745,6 +1715,14 @@ export default function App({
 				recoveryScope,
 				submissionRecovery(message, freshSubmission ? crypto.randomUUID() : reusedSubmissionId)
 			);
+
+			if (
+				continuation &&
+				isSubmittedUserCurrent() &&
+				currentThreadIdRef.current === selectedThreadId
+			) {
+				setCurrentError(message);
+			}
 		};
 
 		const clearSubmissionDelay = () => {
@@ -1767,7 +1745,7 @@ export default function App({
 			latestSubmissionSequencesByRecoveryScope.delete(submissionTrackingKey);
 		}, submissionPreparationTimeoutMs);
 
-		setPrompt('');
+		if (!continuation) setPrompt('');
 		setCurrentError(null);
 		submissions.startSubmitting(submissionScope, submissionSequence);
 
@@ -1880,7 +1858,7 @@ export default function App({
 						setDraftWorkspacePath(null);
 					}
 
-					composerAttachments.clear({ discard: false });
+					if (!continuation) composerAttachments.clear({ discard: false });
 
 					if (composerContinuationOfRunIdRef.current === submittedContinuationOfRunId) {
 						setComposerContinuationOfRunId(null);
@@ -2033,7 +2011,6 @@ export default function App({
 		bumpProjectSelectionGeneration();
 		setPrompt('');
 		setAnsweringAgentQuestion(false);
-		setSelectedQuestionOptionId(null);
 		setComposerContinuationOfRunId(null);
 		setAutoSubmitComposerContinuation(false);
 		composerAttachments.clear({
@@ -2736,8 +2713,6 @@ export default function App({
 															: null
 													}
 													usageThreadId={currentThreadId}
-													selectedQuestionOptionId={selectedQuestionOptionId}
-													onSelectedQuestionOptionIdChange={setSelectedQuestionOptionId}
 													canSend={canSend}
 													submitting={
 														hasPendingAgentLaunch
@@ -2752,7 +2727,8 @@ export default function App({
 													projectPaths={composerProjectPaths}
 													onSubmit={() => void submitPrompt()}
 													onCancel={() => void cancelRun()}
-													onSkipQuestion={() => void settleAgentQuestion('skip')}
+													onAnswerQuestion={(answer) => void settleAgentQuestion(answer)}
+													onSkipQuestion={() => void settleAgentQuestion(null)}
 												/>
 											</div>
 										</div>

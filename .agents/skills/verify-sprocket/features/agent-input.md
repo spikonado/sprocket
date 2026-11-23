@@ -1,6 +1,6 @@
 # Agent input
 
-An agent can stop and ask the user something. A question from `ask_question` takes over the composer until the user answers or skips it, and the thread's inbox row reads `Needs input`. A purchase an agent starts with Agentcard shows an approval notice above the prompt.
+An agent can stop and ask the user something. A question from `ask_question` appears above the message draft, and the thread's inbox row reads `Needs input`. A purchase an agent starts with Agentcard shows an approval notice above the prompt.
 
 ## Sub-features
 
@@ -19,11 +19,11 @@ An agent can stop and ask the user something. A question from `ask_question` tak
 
 Precondition: an open thread, and the dev `tiers` table has rows, as in [threads.md](./threads.md). Run every step in that one thread.
 
-- **Ask.** Send `Use ask_question to ask me "Pick one" with options A and B, then reply with my answer.` Poll plain `snapshot` until `group "Agent question"` appears, within about 30 s. It holds the text `Pick one`, `button "Collapse question" [expanded=true]` and one button per option plus `button "Let me (the agent) decide"`. `button "Skip question"` replaces `Send message`, and `button "Attach files"` and `button "Select model"` are `[disabled]`.
+- **Ask.** Send `Use ask_question to ask me "Pick one" with options A and B, then reply with my answer.` Before it appears, type a follow-up in the message composer. Wait for `group "Agent question"`. It shows `Pick one`, the options, an empty `textbox "Answer to agent question"`, and `Skip question`. Verify the follow-up stays in the message composer.
 - **Inbox.** The thread's `group` in `region "Unsettled"` shows `Needs input` next to the project name.
-- **Answer.** Click `button "A"`. Its `aria-pressed` is `true` and `button "Send answer"` replaces `Skip question`. Click `Send answer`. The question leaves the composer, the row drops `Needs input`, `Conversation history` shows `button "Asked 1 question" [expanded=false]`, and the reply names A.
+- **Answer.** Click `button "A"`. Its `aria-pressed` is `true` and `button "Send answer"` replaces `Skip question`. Click `Send answer`. The question leaves the composer, the row drops `Needs input`, `Conversation history` shows `button "Asked 1 question" [expanded=false]`, and the reply names A. Verify the follow-up is still in the composer.
 - **Skip.** Send `Ask the same question again with ask_question, then reply skipped if I skip it.` and click `button "Skip question"`. The question leaves the composer and the reply is `skipped`.
-- **Collapse.** Ask once more. Click `button "Collapse question"`. The group shows only the question text and `button "Expand question" [expanded=false]`. Click it and the options return. Skip it to finish the run.
+- **Collapse.** Ask once more. Click `button "Collapse question"`. The options disappear. Click `button "Expand question"` and the options return. Skip it to finish the run.
 
 ## Gotchas
 

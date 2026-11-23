@@ -1,7 +1,7 @@
 import { ArrowUp, Paperclip, Square } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Id } from '@convex/_generated/dataModel';
-import { canSubmitQuestionAnswer, type AgentQuestionOption } from '@convex/lib/agentQuestions';
+import type { AgentQuestionOption } from '@convex/lib/agentQuestions';
 import type { ComposerAttachment } from '$lib/chat/attachments';
 import { containsDraggedFiles, shouldSubmitComposerFromKeydown } from '$lib/chat/composer';
 import { applyPathSelection, getActiveAtMention } from '$lib/chat/at-paths';
@@ -12,7 +12,7 @@ import {
 	type CatalogModelId,
 	type ModelCatalog
 } from '$lib/chat/model-catalog';
-import AgentQuestion from '$lib/components/home/agent-question';
+import AgentQuestion, { type QuestionAnswer } from '$lib/components/home/agent-question';
 import RunningCommands from '$lib/components/home/running-commands';
 import ComposerAttachments from '$lib/components/home/composer-attachments';
 import ComposerSkillMenu from '$lib/components/home/composer-skill-menu';
@@ -59,8 +59,6 @@ export type PromptComposerProps = {
 	onContinueWorking?: () => void;
 	runningCommands?: { api: CommandApi; scope: TranscriptScopeRequest } | null;
 	usageThreadId?: Id<'threadRecords'> | null;
-	selectedQuestionOptionId?: string | null;
-	onSelectedQuestionOptionIdChange?: (optionId: string | null) => void;
 	canSend: boolean;
 	submitting: 'request' | 'agentLaunch' | null;
 	isRunning: boolean;
@@ -72,6 +70,7 @@ export type PromptComposerProps = {
 	projectPaths?: ComposerPathSource | null;
 	onSubmit: () => void;
 	onCancel: () => void;
+	onAnswerQuestion?: (answer: QuestionAnswer) => void;
 	onSkipQuestion?: () => void;
 };
 
@@ -109,8 +108,6 @@ export default function PromptComposer({
 	onContinueWorking,
 	runningCommands = null,
 	usageThreadId = null,
-	selectedQuestionOptionId = null,
-	onSelectedQuestionOptionIdChange,
 	canSend,
 	submitting,
 	isRunning,
@@ -119,6 +116,7 @@ export default function PromptComposer({
 	projectPaths = null,
 	onSubmit,
 	onCancel,
+	onAnswerQuestion,
 	onSkipQuestion
 }: PromptComposerProps) {
 	const continueWorkingVisible = showContinueWorking && Boolean(onContinueWorking);
@@ -137,31 +135,22 @@ export default function PromptComposer({
 	const [pathsDismissed, setPathsDismissed] = useState(false);
 	const [pathHighlightedIndex, setPathHighlightedIndex] = useState(0);
 	const [draggingFiles, setDraggingFiles] = useState(false);
-	const [trackedPendingQuestionId, setTrackedPendingQuestionId] = useState<string | null>(null);
-
 	const answeringQuestion = pendingQuestion != null;
-	const composerLocked = (isRunning && !answeringQuestion) || isSubmitting;
+	const composerLocked = isRunning || answeringQuestion || isSubmitting;
 
 	const hasMessageContent = Boolean(prompt.trim()) || attachments.length > 0;
 
-	const canAnswerQuestion = canSubmitQuestionAnswer({
-		selectedOptionId: selectedQuestionOptionId,
-		text: prompt
-	});
-
-	const canSubmitContent = answeringQuestion ? canAnswerQuestion : hasMessageContent;
 	const attachmentsPending = attachments.some((attachment) => attachment.status !== 'ready');
-	const canAttachMore = !isSubmitting && !answeringQuestion;
+	const canAttachMore = !isSubmitting;
 	const skillMention = getActiveSkillMention(prompt, caretPosition);
 	const skillQuery = skillMention?.query ?? null;
 	const skillPrefix = skillMention?.prefix ?? '$';
 	const atMention = getActiveAtMention(prompt, caretPosition);
 	const atQuery = atMention?.query ?? null;
 
-	const skillsPopupOpen =
-		skillQuery !== null && atQuery === null && !skillsDismissed && !answeringQuestion;
+	const skillsPopupOpen = skillQuery !== null && atQuery === null && !skillsDismissed;
 
-	const pathsPopupOpen = atQuery !== null && !pathsDismissed && !answeringQuestion && !isSubmitting;
+	const pathsPopupOpen = atQuery !== null && !pathsDismissed && !isSubmitting;
 	const paths = useComposerPaths(projectPaths, pathsPopupOpen ? atQuery : null);
 	const activePathIndex = Math.min(pathHighlightedIndex, Math.max(0, paths.entries.length - 1));
 	const popupOpen = skillsPopupOpen || pathsPopupOpen;
@@ -421,13 +410,7 @@ export default function PromptComposer({
 			}
 		}
 
-		if (
-			!canSend ||
-			isSubmitting ||
-			composerLocked ||
-			!canSubmitContent ||
-			(!answeringQuestion && attachmentsPending)
-		) {
+		if (!canSend || composerLocked || !hasMessageContent || attachmentsPending) {
 			return;
 		}
 
@@ -443,10 +426,6 @@ export default function PromptComposer({
 
 		event.preventDefault();
 		onSubmit();
-	}
-
-	function toggleQuestionOption(optionId: string) {
-		onSelectedQuestionOptionIdChange?.(selectedQuestionOptionId === optionId ? null : optionId);
 	}
 
 	function handleModelChange(modelId: CatalogModelId, effort: string) {
@@ -503,28 +482,6 @@ export default function PromptComposer({
 	useEffect(() => {
 		if (!canAttachMore) setDraggingFiles(false);
 	}, [canAttachMore]);
-
-	useEffect(() => {
-		const nextId = pendingQuestion?.questionId ?? null;
-
-		if (nextId === trackedPendingQuestionId) return;
-		setTrackedPendingQuestionId(nextId);
-
-		if (selectedQuestionOptionId !== null) {
-			onSelectedQuestionOptionIdChange?.(null);
-		}
-
-		if (prompt.trim()) {
-			onPromptChange?.('');
-		}
-	}, [
-		pendingQuestion,
-		trackedPendingQuestionId,
-		selectedQuestionOptionId,
-		prompt,
-		onSelectedQuestionOptionIdChange,
-		onPromptChange
-	]);
 
 	useEffect(() => {
 		if (skillQuery === null) {
@@ -621,11 +578,13 @@ export default function PromptComposer({
 										question={pendingQuestion.question}
 										options={pendingQuestion.options}
 										runEnded={runEnded}
-										selectedOptionId={selectedQuestionOptionId}
-										onToggleOption={toggleQuestionOption}
+										canSend={canSend}
+										submitting={isSubmitting}
+										onAnswer={onAnswerQuestion}
+										onSkip={onSkipQuestion}
 									/>
 								) : null}
-								{attachments.length > 0 && !answeringQuestion ? (
+								{attachments.length > 0 ? (
 									<ComposerAttachments
 										attachments={attachments}
 										disabled={isSubmitting}
@@ -665,11 +624,7 @@ export default function PromptComposer({
 										value={prompt}
 										rows={1}
 										className="text-foreground placeholder:text-muted-foreground field-sizing-content max-h-40 min-h-17 w-full resize-none overflow-y-auto border-0 bg-transparent px-0 py-0 text-base leading-6 outline-none sm:text-[14px]"
-										placeholder={
-											answeringQuestion
-												? 'Add detail, or type a custom answer'
-												: 'Ask anything, use / for commands, @ to tag files/folders, and $ for skills'
-										}
+										placeholder="Ask anything, use / for commands, @ to tag files/folders, and $ for skills"
 										disabled={isSubmitting}
 										role="combobox"
 										aria-autocomplete="list"
@@ -735,7 +690,7 @@ export default function PromptComposer({
 													models={modelCatalog.models}
 													reasoningEffort={selectedReasoningEffort}
 													fastMode={fastMode}
-													disabled={composerLocked || answeringQuestion}
+													disabled={composerLocked}
 													onSelect={handleModelChange}
 													onFastModeChange={onFastModeChange}
 												/>
@@ -747,27 +702,7 @@ export default function PromptComposer({
 										{usageThreadId ? (
 											<ThreadUsageButton threadId={usageThreadId} modelCatalog={modelCatalog} />
 										) : null}
-										{answeringQuestion && canAnswerQuestion ? (
-											<button
-												type="button"
-												className="bg-primary/90 text-primary-foreground hover:bg-primary h-11 rounded-full px-4 text-[13px] transition enabled:cursor-pointer disabled:pointer-events-none disabled:opacity-30 sm:h-10"
-												onClick={onSubmit}
-												disabled={!canSend || isSubmitting}
-												data-ph-capture-attribute-action="submit_answer"
-											>
-												Send answer
-											</button>
-										) : answeringQuestion ? (
-											<button
-												type="button"
-												className="text-muted-foreground enabled:hover:text-foreground enabled:hover:bg-hover-fill h-11 rounded-full border border-[var(--hairline)] px-4 text-[13px] transition enabled:cursor-pointer disabled:opacity-40 sm:h-10"
-												data-ph-capture-attribute-action="skip_question"
-												disabled={isSubmitting}
-												onClick={onSkipQuestion}
-											>
-												Skip question
-											</button>
-										) : isRunning ? (
+										{answeringQuestion ? null : isRunning ? (
 											<button
 												type="button"
 												className="flex size-11 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:scale-105 hover:bg-rose-500 disabled:pointer-events-none disabled:opacity-60 disabled:hover:scale-100 sm:size-10"
@@ -784,7 +719,7 @@ export default function PromptComposer({
 												className="bg-primary/90 text-primary-foreground hover:bg-primary flex size-11 items-center justify-center rounded-full transition-all duration-150 hover:scale-105 enabled:cursor-pointer disabled:pointer-events-none disabled:opacity-30 disabled:hover:scale-100 sm:size-10"
 												onClick={onSubmit}
 												disabled={
-													!canSend || isSubmitting || !canSubmitContent || attachmentsPending
+													!canSend || isSubmitting || !hasMessageContent || attachmentsPending
 												}
 												aria-label="Send message"
 												data-ph-capture-attribute-action="send_message"

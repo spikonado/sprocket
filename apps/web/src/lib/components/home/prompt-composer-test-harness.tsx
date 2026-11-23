@@ -15,10 +15,6 @@ export default function PromptComposerTestHarness({
 
 	const [fastMode, setFastMode] = useState(composerProps.fastMode);
 
-	const [selectedQuestionOptionId, setSelectedQuestionOptionId] = useState(
-		composerProps.selectedQuestionOptionId
-	);
-
 	return (
 		<PromptComposer
 			{...composerProps}
@@ -41,11 +37,6 @@ export default function PromptComposerTestHarness({
 			onFastModeChange={(next) => {
 				setFastMode(next);
 				composerProps.onFastModeChange?.(next);
-			}}
-			selectedQuestionOptionId={selectedQuestionOptionId}
-			onSelectedQuestionOptionIdChange={(next) => {
-				setSelectedQuestionOptionId(next);
-				composerProps.onSelectedQuestionOptionIdChange?.(next);
 			}}
 		/>
 	);

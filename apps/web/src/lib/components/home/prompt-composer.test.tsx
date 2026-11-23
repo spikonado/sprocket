@@ -62,7 +62,7 @@ function renderComposer(overrides: Partial<PromptComposerProps> = {}) {
 	const composer = document.querySelector<HTMLElement>('[aria-label="Message composer"]');
 
 	if (!composer) throw new Error('Message composer was not rendered');
-	const textarea = composer.querySelector<HTMLTextAreaElement>('textarea');
+	const textarea = composer.querySelector<HTMLTextAreaElement>('textarea[role="combobox"]');
 
 	if (!textarea) throw new Error('Composer textarea was not rendered');
 
@@ -1054,8 +1054,8 @@ describe('PromptComposer Fast mode', () => {
 });
 
 describe('PromptComposer agent questions', () => {
-	it('drops the answer draft and shows one question action at a time', async () => {
-		const onSelectedQuestionOptionIdChange = vi.fn();
+	it('keeps the message draft focused and separate when a question arrives', async () => {
+		const onAnswerQuestion = vi.fn();
 		const onSkipQuestion = vi.fn();
 
 		const actions = () =>
@@ -1065,8 +1065,17 @@ describe('PromptComposer agent questions', () => {
 					['Send answer', 'Skip question', 'Stop generation', 'Send message'].includes(name ?? '')
 				);
 
-		const { textarea } = renderComposer({
-			prompt: 'draft answer',
+		const { textarea, props, rerender } = renderComposer({
+			isRunning: true,
+			onAnswerQuestion,
+			onSkipQuestion
+		});
+
+		textarea.focus();
+		await typeInComposer(textarea, 'Draft follow-up');
+		textarea.setSelectionRange(6, 6);
+		rerender({
+			...props,
 			pendingQuestion: {
 				questionId: 'question-1',
 				question: 'Which board should I target?',
@@ -1074,22 +1083,32 @@ describe('PromptComposer agent questions', () => {
 					{ id: 'option-a', label: 'Option A' },
 					{ id: 'option-b', label: 'Option B' }
 				]
-			},
-			isRunning: true,
-			onSelectedQuestionOptionIdChange,
-			onSkipQuestion
+			}
 		});
 
-		expect(textarea.value).toBe('');
-		expect(textarea.getAttribute('placeholder')).toBe('Add detail, or type a custom answer');
+		expect(textarea.value).toBe('Draft follow-up');
+		expect(document.activeElement).toBe(textarea);
+		expect(textarea.selectionStart).toBe(6);
 		expect(actions()).toEqual(['Skip question']);
 
 		await click(findButton('Skip question'));
 		expect(onSkipQuestion).toHaveBeenCalled();
 
 		await click(findButton('Option A'));
-		expect(onSelectedQuestionOptionIdChange).toHaveBeenCalledWith('option-a');
 		expect(actions()).toEqual(['Send answer']);
+
+		const answer = screen.getByRole<HTMLTextAreaElement>('textbox', {
+			name: 'Answer to agent question'
+		});
+
+		await typeInComposer(answer, 'Use the dev board');
+		await pressKey(answer, { key: 'Enter' });
+		expect(onAnswerQuestion).toHaveBeenCalledWith({
+			optionId: 'option-a',
+			text: 'Use the dev board'
+		});
+		rerender(props);
+		expect(textarea.value).toBe('Draft follow-up');
 	});
 
 	it('expands the question from its text but collapses it only from the chevron', async () => {

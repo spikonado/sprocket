@@ -1212,7 +1212,6 @@ it('replaces Stop with Skip question while a question is pending', async () => {
 	const client = createConvexFixtures();
 	client.registerPaginatedQuery(api.inbox.list, [thread]);
 	client.registerQuery(api.threads.getByThreadId, thread);
-	client.registerQuery(api.agentQuestions.headPendingForThread, question);
 	client.registerMutation(api.agentRuntime.requestCancellation, true);
 	client.registerMutation(api.agentQuestions.skip, { continuation: undefined });
 
@@ -1224,16 +1223,20 @@ it('replaces Stop with Skip question while a question is pending', async () => {
 	);
 	await projectTrigger('Alpha');
 	fireEvent.click(await screen.findByText('Fix the robot'));
-	expect(await screen.findByText(question.question)).toBeTruthy();
-	expect(screen.queryByRole('button', { name: 'Send answer' })).toBeNull();
+	const composer = screen.getByRole<HTMLTextAreaElement>('combobox');
+	fireEvent.change(composer, { target: { value: 'Follow-up draft' } });
 
 	await act(async () => {
+		client.registerQuery(api.agentQuestions.headPendingForThread, question);
 		client.registerQuery(api.chat.selectedThreadLifecycle, {
 			threadId: thread._id,
 			phase: 'waiting_for_input',
 			run: { runId, startedAt: 1 }
 		});
 	});
+	expect(await screen.findByText(question.question)).toBeTruthy();
+	expect(composer.value).toBe('Follow-up draft');
+	expect(screen.queryByRole('button', { name: 'Send answer' })).toBeNull();
 	expect(screen.queryByRole('button', { name: 'Stop generation' })).toBeNull();
 	expect(screen.getByText('Agent is running')).toBeTruthy();
 	fireEvent.click(screen.getByRole('button', { name: 'Skip question' }));
@@ -1248,6 +1251,7 @@ it('replaces Stop with Skip question while a question is pending', async () => {
 	await act(async () => {
 		client.registerQuery(api.agentQuestions.headPendingForThread, null);
 	});
+	expect(composer.value).toBe('Follow-up draft');
 	fireEvent.click(await screen.findByRole('button', { name: 'Stop generation' }));
 	await waitFor(() =>
 		expect(mutation).toHaveBeenCalledWith(api.agentRuntime.requestCancellation, { runId })
@@ -1479,6 +1483,7 @@ it('launches the continuation prompt after an agent question is answered', async
 		question: { ...question, status: 'answered', answer: { optionId: 'option-a' } },
 		continuation: { runId: continuationRunId, prompt: 'Continue with the robot fix' }
 	});
+	const mutation = vi.spyOn(client, 'mutation');
 
 	await renderApp(
 		client,
@@ -1488,6 +1493,8 @@ it('launches the continuation prompt after an agent question is answered', async
 	fireEvent.click(await screen.findByText('Fix the robot'));
 	expect(await screen.findByText('Which board should I target?')).toBeTruthy();
 
+	const composer = screen.getByRole<HTMLTextAreaElement>('combobox');
+	fireEvent.change(composer, { target: { value: 'Follow-up draft' } });
 	fireEvent.change(screen.getByPlaceholderText('Add detail, or type a custom answer'), {
 		target: { value: 'Use board A' }
 	});
@@ -1495,6 +1502,11 @@ it('launches the continuation prompt after an agent question is answered', async
 	await act(async () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Send answer' }));
 	});
+	expect(mutation).toHaveBeenCalledWith(
+		api.agentQuestions.answer,
+		{ threadId: thread._id, questionId, optionId: 'option-a', text: 'Use board A' },
+		{}
+	);
 
 	await waitFor(() =>
 		expect(runAgent).toHaveBeenCalledWith(
@@ -1504,6 +1516,7 @@ it('launches the continuation prompt after an agent question is answered', async
 			})
 		)
 	);
+	expect(composer.value).toBe('Follow-up draft');
 });
 
 it('launches a continuation answered before leaving the thread when returning to it', async () => {

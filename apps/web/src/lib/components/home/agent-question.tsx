@@ -1,24 +1,40 @@
 import { ChevronRight } from 'lucide-react';
 import { useState } from 'react';
-import { AGENT_DECIDE_OPTION_ID, type AgentQuestionOption } from '@convex/lib/agentQuestions';
+import {
+	AGENT_DECIDE_OPTION_ID,
+	canSubmitQuestionAnswer,
+	type AgentQuestionOption
+} from '@convex/lib/agentQuestions';
+import { shouldSubmitComposerFromKeydown } from '$lib/chat/composer';
+
+export type QuestionAnswer = { optionId: string | null; text: string };
 
 type Props = {
 	question: string;
 	options: AgentQuestionOption[];
 	runEnded: boolean;
-	selectedOptionId: string | null;
-	onToggleOption: (optionId: string) => void;
+	canSend: boolean;
+	submitting: boolean;
+	onAnswer?: (answer: QuestionAnswer) => void;
+	onSkip?: () => void;
 };
 
 export default function AgentQuestion({
 	question,
 	options,
 	runEnded,
-	selectedOptionId,
-	onToggleOption
+	canSend,
+	submitting,
+	onAnswer,
+	onSkip
 }: Props) {
 	const [expanded, setExpanded] = useState(!runEnded);
 	const [previousRunEnded, setPreviousRunEnded] = useState(runEnded);
+	const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
+	const [text, setText] = useState('');
+	const hasAnswer = canSubmitQuestionAnswer({ selectedOptionId, text });
+	const canAnswer = canSend && !submitting && hasAnswer;
+	const sendAnswer = () => onAnswer?.({ optionId: selectedOptionId, text: text.trim() });
 
 	if (runEnded !== previousRunEnded) {
 		setPreviousRunEnded(runEnded);
@@ -65,7 +81,8 @@ export default function AgentQuestion({
 												: 'border-border text-muted-foreground hover:text-foreground hover:bg-hover-fill'
 									}`}
 									aria-pressed={isSelected}
-									onClick={() => onToggleOption(option.id)}
+									disabled={submitting}
+									onClick={() => setSelectedOptionId(isSelected ? null : option.id)}
 								>
 									{option.label}
 								</button>
@@ -74,6 +91,50 @@ export default function AgentQuestion({
 					})}
 				</ul>
 			) : null}
+			<div className="mt-2 flex items-end gap-2">
+				<textarea
+					aria-label="Answer to agent question"
+					placeholder="Add detail, or type a custom answer"
+					className="border-border text-foreground placeholder:text-muted-foreground focus-visible:border-ring field-sizing-content max-h-24 min-h-11 min-w-0 flex-1 resize-none rounded-lg border bg-transparent px-3 py-2.5 text-base outline-none sm:text-[13px]"
+					rows={1}
+					value={text}
+					disabled={submitting}
+					onChange={(event) => setText(event.target.value)}
+					onKeyDown={(event) => {
+						if (
+							!canAnswer ||
+							window.matchMedia?.('(pointer: coarse)').matches ||
+							!shouldSubmitComposerFromKeydown(event.nativeEvent)
+						) {
+							return;
+						}
+
+						event.preventDefault();
+						sendAnswer();
+					}}
+				/>
+				{hasAnswer ? (
+					<button
+						type="button"
+						className="bg-primary/90 text-primary-foreground hover:bg-primary h-11 shrink-0 rounded-full px-4 text-[13px] transition enabled:cursor-pointer disabled:opacity-30"
+						onClick={sendAnswer}
+						disabled={!canAnswer}
+						data-ph-capture-attribute-action="submit_answer"
+					>
+						Send answer
+					</button>
+				) : (
+					<button
+						type="button"
+						className="border-border text-muted-foreground enabled:hover:text-foreground enabled:hover:bg-hover-fill h-11 shrink-0 rounded-full border px-4 text-[13px] transition enabled:cursor-pointer disabled:opacity-40"
+						onClick={onSkip}
+						disabled={submitting}
+						data-ph-capture-attribute-action="skip_question"
+					>
+						Skip question
+					</button>
+				)}
+			</div>
 		</div>
 	);
 }
