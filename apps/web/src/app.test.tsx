@@ -1449,7 +1449,7 @@ it('renders transcript snapshots progressively and allows sending before older h
 	await waitFor(() => expect(screen.queryByText('Loading history')).toBeNull());
 });
 
-it.each([false, true])(
+it.each(['none', 'same settings', 'new model'])(
 	'keeps the draft through an answer and continuation (retry: %s)',
 	async (retry) => {
 		const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
@@ -1472,7 +1472,7 @@ it.each([false, true])(
 			threadId: thread._id
 		}));
 
-		if (retry) runAgent.mockRejectedValueOnce(new Error('Local agent unavailable.'));
+		if (retry !== 'none') runAgent.mockRejectedValueOnce(new Error('Local agent unavailable.'));
 
 		const client = createConvexFixtures();
 		client.registerPaginatedQuery(api.inbox.list, [thread]);
@@ -1489,22 +1489,28 @@ it.each([false, true])(
 		});
 		const mutation = vi.spyOn(client, 'mutation');
 
-		await renderApp(
-			client,
-			createRuntime(
-				createLocalApi({
-					listProjectAttachments: async () => [alpha],
-					runAgent,
-					uploadTranscriptAttachment: async () => ({
-						storageId: fixtureId<'_storage'>('draft-file'),
-						name: 'notes.txt',
-						mediaType: 'text/plain',
-						size: 5,
-						url: 'https://sprocket.test/notes'
-					})
+		const runtime = createRuntime(
+			createLocalApi({
+				listProjectAttachments: async () => [alpha],
+				runAgent,
+				uploadTranscriptAttachment: async () => ({
+					storageId: fixtureId<'_storage'>('draft-file'),
+					name: 'notes.txt',
+					mediaType: 'text/plain',
+					size: 5,
+					url: 'https://sprocket.test/notes'
 				})
-			)
+			})
 		);
+
+		runtime.fetchGatewayModelCatalog = async () => ({
+			...modelCatalog,
+			models: [
+				...modelCatalog.models,
+				{ ...modelCatalog.models[0], id: 'model-two', label: 'Model Two' }
+			]
+		});
+		await renderApp(client, runtime);
 		await projectTrigger('Alpha');
 		fireEvent.click(await screen.findByText('Fix the robot'));
 		expect(await screen.findByText('Which board should I target?')).toBeTruthy();
@@ -1539,10 +1545,34 @@ it.each([false, true])(
 			)
 		);
 
-		if (retry) {
+		if (retry === 'new model') {
+			await act(async () => {
+				client.registerQuery(api.agentQuestions.headPendingForThread, null);
+				client.registerQuery(api.chat.selectedThreadLifecycle, {
+					threadId: thread._id,
+					phase: 'completed',
+					run: { runId: continuationRunId, startedAt: 1 }
+				});
+			});
+			fireEvent.click(screen.getByRole('button', { name: 'Select model' }));
+			fireEvent.click(screen.getByRole('button', { name: 'Model Two' }));
+		}
+
+		if (retry !== 'none') {
 			fireEvent.click(await screen.findByRole('button', { name: 'Retry continuation' }));
 			await waitFor(() => expect(runAgent).toHaveBeenCalledTimes(2));
-			expect(runAgent.mock.calls[1]).toEqual(runAgent.mock.calls[0]);
+			const [first, second] = runAgent.mock.calls.map(([request]) => request);
+
+			if (retry === 'same settings') {
+				expect(second).toEqual(first);
+			} else {
+				expect(second).toEqual({
+					...first,
+					selectedModel: 'model-two',
+					submissionId: second.submissionId
+				});
+				expect(second.submissionId).not.toBe(first.submissionId);
+			}
 		}
 
 		expect(composer.value).toBe('Follow-up draft');

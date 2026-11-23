@@ -1606,9 +1606,10 @@ export default function App({
 			attachment.storageId ? [attachment.storageId] : []
 		);
 
-		const submittedModel = continuation?.selectedModel ?? selectedModel;
-		const submittedReasoningEffort = continuation?.reasoningEffort ?? selectedReasoningEffort;
-		const submittedFastMode = continuation?.fastMode ?? fastMode;
+		const queuedContinuation = continuation?.continuation.status === 'ready' ? continuation : null;
+		const submittedModel = queuedContinuation?.selectedModel ?? selectedModel;
+		const submittedReasoningEffort = queuedContinuation?.reasoningEffort ?? selectedReasoningEffort;
+		const submittedFastMode = queuedContinuation?.fastMode ?? fastMode;
 		const submittedContinuationOfRunId = continuation?.continuation.runId;
 
 		const previousRunId = selectedThreadId ? (runState?.runId ?? null) : null;
@@ -1630,8 +1631,15 @@ export default function App({
 		const recoveredSubmission = submissions.recoveredSubmission(originatingRecoveryKey);
 		const freshSubmissionId = crypto.randomUUID();
 
+		const continuationRetryId =
+			continuation?.selectedModel === submittedModel &&
+			continuation.reasoningEffort === submittedReasoningEffort &&
+			continuation.fastMode === submittedFastMode
+				? continuation.submissionId
+				: undefined;
+
 		const threadSubmissionId =
-			continuation?.submissionId ??
+			continuationRetryId ??
 			resolveSubmissionId({
 				latestRun:
 					!selectedThreadId || !currentLifecycle || currentLifecycle.phase === 'idle'
