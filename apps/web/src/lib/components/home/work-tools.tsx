@@ -75,18 +75,14 @@ const WorkTools = memo(function WorkTools({ store, rowId }: Props) {
 
 	let commandEnd = 0;
 
-	const detail = row.commands?.map((command, index) => {
-		const start = summary.indexOf(command, commandEnd);
-
-		if (start === -1) return null;
-
+	const detail = row.commands?.map(({ start, text }, index) => {
 		const prefix = summary.slice(commandEnd, start);
-		commandEnd = start + command.length;
+		commandEnd = start + text.length;
 
 		return (
 			<span key={index}>
 				{prefix}
-				<HighlightedCommand command={command} />
+				<HighlightedCommand command={text} />
 			</span>
 		);
 	});

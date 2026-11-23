@@ -248,8 +248,8 @@ fn poll_rows_use_one_summary_for_previews_and_details() {
                 1,
                 json!({"name":"poll_cmd", "callId":"poll", "status":"completed", "output":[
                     {"sessionId":"7", "command":"bun run build", "workdir":"/repo"},
-                    {"sessionId":"missing", "error":"Unknown session."},
-                    {"sessionId":"8", "command":"echo done"}
+                    {"sessionId":"missing", "error":"Unknown session 🚫."},
+                    {"sessionId":"8", "command":":"}
                 ]}),
             ),
         ],
@@ -274,10 +274,16 @@ fn poll_rows_use_one_summary_for_previews_and_details() {
     assert!(!has_more);
     assert_eq!(
         display.summary,
-        "bun run build\nSession missing: Unknown session.\necho done"
+        "bun run build\nSession missing: Unknown session 🚫.\n:"
     );
     assert_eq!(display.status, ToolStatus::Completed);
-    assert_eq!(display.commands, ["bun run build", "echo done"]);
+    assert_eq!(
+        serde_json::to_value(&display.commands).unwrap(),
+        json!([
+            {"start":0,"text":"bun run build"},
+            {"start":"bun run build\nSession missing: Unknown session 🚫.\n".encode_utf16().count(),"text":":"}
+        ])
+    );
 }
 
 #[test]
@@ -302,7 +308,7 @@ fn tools_only_send_display_summaries_and_item_scope_returns_the_full_summary() {
     assert!(!wire.to_string().contains("private input"));
     let full = serde_json::to_value(item(&rows, &row.id)).unwrap();
     assert_eq!(full["summary"], command);
-    assert_eq!(full["commands"], json!([command]));
+    assert_eq!(full["commands"], json!([{"start":0,"text":command}]));
 }
 
 #[test]

@@ -34,13 +34,19 @@ pub enum ToolDisplayAction {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct CommandHighlight {
+    pub start: usize,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolDisplay {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     pub summary: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub commands: Vec<String>,
+    pub commands: Vec<CommandHighlight>,
     pub status: ToolStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -167,7 +173,13 @@ impl<'a> ToolDisplayInput<'a> {
         ToolDisplay {
             label: label(self.name),
             summary: self.summary(command),
-            commands: command.into_iter().map(str::to_owned).collect(),
+            commands: command
+                .into_iter()
+                .map(|text| CommandHighlight {
+                    start: 0,
+                    text: text.to_owned(),
+                })
+                .collect(),
             status,
             error,
             action,

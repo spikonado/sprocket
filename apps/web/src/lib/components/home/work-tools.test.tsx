@@ -99,12 +99,18 @@ describe('tool rows', () => {
 			}
 		);
 
-		const commands = ['echo "hello"', "python3 -c 'print(1)'"];
+		const first = 'echo "hello"';
+		const prefix = `${first}\nSession missing: Unknown session 🚫.\n`;
+
+		const commands = [
+			{ start: 0, text: first },
+			{ start: prefix.length, text: ':' }
+		];
 
 		const full = tool({
 			name: 'poll_cmd',
 			commands,
-			summary: `${commands[0]}\nSession missing: Unknown session.\n${commands[1]}`
+			summary: `${prefix}:`
 		});
 
 		const { props } = transcript(tool({ name: 'poll_cmd', hasMore: true }), full);
@@ -118,7 +124,10 @@ describe('tool rows', () => {
 		expect(view.container.querySelector('p')?.textContent).toBe(full.summary);
 
 		const highlighted = [...view.container.querySelectorAll('p .shiki')];
-		expect(highlighted.map((element) => element.textContent)).toEqual(commands);
+		expect(highlighted.map((element) => element.textContent)).toEqual(
+			commands.map(({ text }) => text)
+		);
+		expect(highlighted[1].previousSibling?.textContent).toBe(prefix.slice(first.length));
 	});
 
 	it.each(['apply_patch', 'poll_cmd', 'poll_subagent', 'poll_pr'])(
