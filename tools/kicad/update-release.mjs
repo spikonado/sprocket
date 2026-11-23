@@ -74,7 +74,6 @@ const KIPY_PATCHES = [
 const ROUTING_TOOLS_PATCHES = [
 	'routing-tools-board-escalation.patch',
 	'routing-tools-plane-layer-warning.patch',
-	'routing-tools-review-teardrop-pours.patch',
 	'routing-tools-signal-review.patch',
 	'routing-tools-fanout-check.patch'
 ];
