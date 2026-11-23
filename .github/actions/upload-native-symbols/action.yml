@@ -1,0 +1,50 @@
+name: Upload native debug symbols
+description: Upload the Rust CLI's debug symbols to PostHog, then strip the binary.
+
+inputs:
+  binary:
+    description: Path to the unstripped sprocket executable.
+    required: true
+  api-key:
+    description: PostHog personal API key.
+    required: true
+  project-id:
+    description: PostHog project ID.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+    - name: Stage debug symbols
+      shell: bash
+      env:
+        BINARY: ${{ inputs.binary }}
+      run: |
+        mkdir -p .native-symbols
+        if [[ "$RUNNER_OS" == "macOS" ]]; then
+          # Cargo uplifts the dSYM as a symlink into deps/.
+          cp -RL "$BINARY.dSYM" .native-symbols/
+        else
+          readelf -n "$BINARY" | grep 'Build ID:'
+          cp "$BINARY" .native-symbols/
+        fi
+    - name: Upload debug symbols
+      shell: bash
+      env:
+        POSTHOG_CLI_HOST: https://eu.posthog.com
+        POSTHOG_CLI_API_KEY: ${{ inputs.api-key }}
+        POSTHOG_CLI_PROJECT_ID: ${{ inputs.project-id }}
+      run: bunx @posthog/cli@0.19.0 symbol-sets upload --directory .native-symbols
+    - name: Strip packaged binary
+      shell: bash
+      env:
+        BINARY: ${{ inputs.binary }}
+      run: |
+        if [[ "$RUNNER_OS" == "Linux" ]] && command -v zig >/dev/null; then
+          zig objcopy --strip-all "$BINARY" "$BINARY.stripped"
+          mv "$BINARY.stripped" "$BINARY"
+          chmod +x "$BINARY"
+        else
+          strip "$BINARY"
+        fi
