@@ -1,64 +1,64 @@
 {
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"kicad": {
-		"version": "10.99.0-6344-g8c85ac1452",
-		"commit": "8c85ac1452"
+		"version": "10.99.0-6868-gdf8ee89812",
+		"commit": "df8ee89812"
 	},
 	"platforms": {
 		"darwin-arm64": {
-			"url": "https://github.com/spikonado/sprocket/releases/download/kicad-connector-v0.2.0/kicad-unified-universal-20261108-0410-8c85ac1452.dmg",
-			"bytes": 1131882723,
-			"sha256": "20fdea3b2ce6e2f1171006aead2c0cef606719f8f4eb5c07642a7bce1be48c81"
+			"url": "https://github.com/spikonado/sprocket/releases/download/kicad-connector-v0.3.0/kicad-unified-universal-20261122-0207-df8ee89812.dmg",
+			"bytes": 1133865901,
+			"sha256": "a76b008b789917c5be418569f3ed7b433e94249e9ada0ec44f0c21fa5718d6cb"
 		},
 		"darwin-x64": {
-			"url": "https://github.com/spikonado/sprocket/releases/download/kicad-connector-v0.2.0/kicad-unified-universal-20261108-0410-8c85ac1452.dmg",
-			"bytes": 1131882723,
-			"sha256": "20fdea3b2ce6e2f1171006aead2c0cef606719f8f4eb5c07642a7bce1be48c81"
+			"url": "https://github.com/spikonado/sprocket/releases/download/kicad-connector-v0.3.0/kicad-unified-universal-20261122-0207-df8ee89812.dmg",
+			"bytes": 1133865901,
+			"sha256": "a76b008b789917c5be418569f3ed7b433e94249e9ada0ec44f0c21fa5718d6cb"
 		},
 		"linux-x64": {
-			"url": "https://github.com/spikonado/sprocket/releases/download/kicad-connector-v0.2.0/kicad-nightly-10.99.0.6344.g8c85ac1452-x86_64.AppImage",
-			"bytes": 494368430,
-			"sha256": "1ee3f4f09d60ab60c9451dfee82e101c510f76724d20f69f0a30ed483baed12a"
+			"url": "https://github.com/spikonado/sprocket/releases/download/kicad-connector-v0.3.0/kicad-nightly-10.99.0.6868.gdf8ee89812-x86_64.AppImage",
+			"bytes": 500617563,
+			"sha256": "18bed587706fc43b1e87b9ce8efb87a4b958131a3aa31e22ffe099a246e7d571"
 		},
 		"win32-arm64": {
-			"url": "https://github.com/spikonado/sprocket/releases/download/kicad-connector-v0.2.0/kicad-nightly-10.99.0.6344.g8c85ac1452-arm64.exe",
-			"bytes": 897342736,
-			"sha256": "8e23c97494a00a8592450a596d994dcd57c3553a6654f54485f6e6bfe958244f"
+			"url": "https://github.com/spikonado/sprocket/releases/download/kicad-connector-v0.3.0/kicad-nightly-10.99.0.6868.gdf8ee89812-arm64.exe",
+			"bytes": 898639784,
+			"sha256": "eb67f6d0fe913bbd375003ddab7ec9e88080370e687e41761b3fa4680145840b"
 		},
 		"win32-x64": {
-			"url": "https://github.com/spikonado/sprocket/releases/download/kicad-connector-v0.2.0/kicad-nightly-10.99.0.6344.g8c85ac1452-x86_64.exe",
-			"bytes": 902241752,
-			"sha256": "3b4ffa83f5628c346103a616d100d07b44f5815b6adc7847b40605375a069b18"
+			"url": "https://github.com/spikonado/sprocket/releases/download/kicad-connector-v0.3.0/kicad-nightly-10.99.0.6868.gdf8ee89812-x86_64.exe",
+			"bytes": 904046872,
+			"sha256": "bcda362419a578e70ee9e0d6640c3f81b5a74130b15abadde07e93ab1e3483d1"
 		}
 	},
 	"kipy": {
 		"commit": "76b47d25a826a56a301660f5f572dda968c84d59",
-		"url": "https://github.com/spikonado/sprocket/releases/download/kicad-connector-v0.2.0/kicad_python-0.9.0.dev0-py3-none-any.whl",
+		"url": "https://github.com/spikonado/sprocket/releases/download/kicad-connector-v0.3.0/kicad_python-0.9.0.dev0-py3-none-any.whl",
 		"bytes": 359959,
 		"sha256": "d9c949bca2298aa62bb2586d872efa1bf759d25d3f96454259d8e11883e186a6"
 	},
 	"routingTools": {
-		"version": "0.23.8",
+		"version": "0.24.2",
 		"platforms": {
 			"darwin-arm64": {
-				"url": "https://github.com/spikonado/sprocket/releases/download/kicad-connector-v0.2.0/kicad-routing-tools-0.23.8-darwin-arm64.tar.gz",
-				"bytes": 13233600,
-				"sha256": "7c7699ee24e72ff5358f87e1bfa6d8a7437ca35de79da3ff7b9ebf8e331f75e9"
+				"url": "https://github.com/spikonado/sprocket/releases/download/kicad-connector-v0.3.0/kicad-routing-tools-0.24.2-darwin-arm64.tar.gz",
+				"bytes": 13865127,
+				"sha256": "95a14a0d19d6ae91b0cca40a212c4d509fb670466d31c6f62deb85d507060515"
 			},
 			"darwin-x64": {
-				"url": "https://github.com/spikonado/sprocket/releases/download/kicad-connector-v0.2.0/kicad-routing-tools-0.23.8-darwin-x64.tar.gz",
-				"bytes": 13280209,
-				"sha256": "b8a2f945b1bc6086f5d6109f222847116bf42413a3c17ed7dbbfd4ff6f91dd34"
+				"url": "https://github.com/spikonado/sprocket/releases/download/kicad-connector-v0.3.0/kicad-routing-tools-0.24.2-darwin-x64.tar.gz",
+				"bytes": 13908364,
+				"sha256": "a3fb9d6248724951a5a82b608155d6a1689a59349c72eb0f3050b17ec30ebf47"
 			},
 			"linux-x64": {
-				"url": "https://github.com/spikonado/sprocket/releases/download/kicad-connector-v0.2.0/kicad-routing-tools-0.23.8-linux-x64.tar.gz",
-				"bytes": 13303098,
-				"sha256": "915dc426a5a9be07ce5eaff04f00be5a9f3f2dbd806ceebc370cb1b8ada500c4"
+				"url": "https://github.com/spikonado/sprocket/releases/download/kicad-connector-v0.3.0/kicad-routing-tools-0.24.2-linux-x64.tar.gz",
+				"bytes": 13925337,
+				"sha256": "c87b1c6e026653dbb2b0a9445de9d04f8e1f33d2497997808e4e5e178f491fd8"
 			},
 			"win32-x64": {
-				"url": "https://github.com/spikonado/sprocket/releases/download/kicad-connector-v0.2.0/kicad-routing-tools-0.23.8-win32-x64.tar.gz",
-				"bytes": 13192757,
-				"sha256": "8eb5908adda1b4e4daabeaa30feaa8261e9d2557a53e8b8cf7760d7a4e87d0f9"
+				"url": "https://github.com/spikonado/sprocket/releases/download/kicad-connector-v0.3.0/kicad-routing-tools-0.24.2-win32-x64.tar.gz",
+				"bytes": 13823546,
+				"sha256": "e755fa41facbd4d884e48af5aa513c50e31d1b8432b758be85454c2e574de4ce"
 			}
 		}
 	}

@@ -195,18 +195,9 @@ index 9df09d7..6c6cfa4 100644
 
      python3 -X utf8 py_tools/route_review.py routed.kicad_pcb
      python3 -X utf8 py_tools/route_review.py routed.kicad_pcb --top 12 --json review.json
-@@ -52,7 +56,7 @@ import statistics
- import sys
- from collections import defaultdict
-
--from kicad_parser import parse_kicad_pcb  # noqa: E402
-+from kicad_parser import parse_kicad_pcb, pour_zones  # noqa: E402
- from placement.grouping import BoardView  # noqa: E402
-
-
 @@ -92,6 +96,7 @@ def review(pcb_file, cell=2.0, hot=0.5, top=8, pcb=None):
      name = view.name_of
-     poured = {z.net_id for z in (pcb.zones or ()) if z.net_id}
+     poured = {z.net_id for z in pour_zones(pcb.zones) if z.net_id}
      tracks = [s for s in pcb.segments if not getattr(s, 'graphic', False) and s.net_id]
 +    planes = pcb.board_info.plane_layers
      clearance = board_default_netclass_clearance(pcb_file) or 0.2
