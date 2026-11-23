@@ -4,10 +4,11 @@ import type { DemoTranscripts } from './transcript-api';
 
 const WORDS_PER_CHUNK = 3;
 
-function wait(ms: number, signal: AbortSignal) {
+/** Rejects when the signal aborts, and resolves after `ms` unless it is `null`. */
+function wait(ms: number | null, signal: AbortSignal) {
 	return new Promise<void>((resolve, reject) => {
 		signal.throwIfAborted();
-		const timer = setTimeout(resolve, ms);
+		const timer = ms === null ? undefined : setTimeout(resolve, ms);
 
 		signal.addEventListener(
 			'abort',
@@ -36,13 +37,15 @@ function cancelledItem(row: TranscriptRow): TranscriptRow {
 
 /**
  * Streams a recorded run into the transcript the way the local server would while the agent works.
+ * A tool recorded as running stays running until the signal aborts, after `onPending` is called.
  * Resolves with the rows that played, which is fewer than the recording when the signal aborts.
  */
 export async function playRun(
 	transcripts: DemoTranscripts,
 	threadId: string,
 	run: TranscriptFixture,
-	signal: AbortSignal
+	signal: AbortSignal,
+	onPending: () => void
 ): Promise<TranscriptFixture> {
 	const played: TranscriptFixture = { rows: [], work: {}, items: {} };
 
@@ -76,10 +79,13 @@ export async function playRun(
 
 				for (const item of run.work[row.id] ?? []) {
 					const detail = run.items[item.id];
+					const pending = item.kind === 'tool' && item.status === 'running';
 					transcripts.putWorkItem(threadId, row.id, startedItem(item));
 
+					if (pending) onPending();
+
 					try {
-						await wait(450 + Math.random() * 250, signal);
+						await wait(pending ? null : 450 + Math.random() * 250, signal);
 					} catch (error) {
 						if (detail) transcripts.putDetail(threadId, cancelledItem(detail));
 						transcripts.putWorkItem(threadId, row.id, cancelledItem(item));

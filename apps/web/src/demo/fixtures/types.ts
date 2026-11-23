@@ -29,4 +29,6 @@ export type DemoThread = {
 	question?: DemoQuestion;
 	/** Played the first time the thread opens, as if the agent were working on it. */
 	liveRun?: Step[];
+	/** Awaits approval once the live run reaches its tool recorded as running. */
+	purchase?: { merchant: string; amountCents: number; currency: string };
 };

@@ -39,14 +39,13 @@ import { useStore } from '$lib/store';
 import { applyTheme, type SprocketTheme } from '$lib/theme';
 import { cn } from '$lib/utils';
 import { isWorking, type DemoState } from './demo-state';
-import { modelCatalog } from './fixtures/models';
-import { artifactContents, artifacts, project, workspaceFiles } from './fixtures/project';
+import { artifactContents, artifacts, project, workspace } from './fixtures/project';
 import { workspaceApi } from './workspace-api';
 import './demo.css';
 
 type Thread = Doc<'threadRecords'>;
 
-const filesApi = workspaceApi(workspaceFiles);
+const filesApi = workspaceApi(workspace);
 const NARROW = '(max-width: 767px)';
 
 function treeSummaryReader(state: DemoState): ThreadTreeSummaryRead {
@@ -116,11 +115,11 @@ function DemoSidebar({
 	);
 }
 
-function modelSelection(record: Thread | undefined) {
-	return {
-		model: record?.selectedModel ?? modelCatalog.defaultModelId,
-		effort: record?.reasoningEffort ?? modelCatalog.defaultReasoningEffort
-	};
+type ModelSelection = { model?: string; effort?: string };
+
+/** A new thread's model is left unset, so the composer picks the catalog's default once it loads. */
+function modelSelection(record: Thread | undefined): ModelSelection {
+	return { model: record?.selectedModel, effort: record?.reasoningEffort };
 }
 
 export default function DemoApp({
@@ -156,6 +155,8 @@ export default function DemoApp({
 	const run = currentThreadId ? state.run(currentThreadId) : null;
 	const working = run !== null && isWorking(run);
 	const pendingQuestion = run?.status === 'waiting' ? run.question : null;
+	const catalog = state.catalog;
+	const modelCatalog = catalog.status === 'ready' ? catalog.catalog : undefined;
 
 	const [selection, setSelection] = useState(() => ({
 		threadId: currentThreadId,
@@ -236,7 +237,7 @@ export default function DemoApp({
 		if (pendingQuestion && currentThreadId) {
 			if (!selectedQuestionOptionId && !prompt.trim()) return;
 			state.answer(currentThreadId, selectedQuestionOptionId, prompt);
-		} else if (prompt.trim()) {
+		} else if (prompt.trim() && selection.model && selection.effort) {
 			setCurrentThreadId(
 				state.submitPrompt(currentThreadId, prompt.trim(), selection.model, selection.effort)
 			);
@@ -271,7 +272,7 @@ export default function DemoApp({
 						search={search}
 						onSearchChange={setSearch}
 						projects={[project]}
-						models={modelCatalog.models}
+						models={modelCatalog?.models ?? []}
 						selectedProjects={[]}
 						currentThreadId={currentThreadId}
 						settledOpen={settledOpen}
@@ -333,7 +334,9 @@ export default function DemoApp({
 										<ThreadTranscript
 											key={currentThreadId}
 											store={transcript}
-											activeRunId={run?.status === 'running' ? run.runId : null}
+											activeRunId={
+												run?.status === 'running' || run?.status === 'paying' ? run.runId : null
+											}
 											project={project}
 											artifacts={artifacts}
 											onOpenArtifact={(artifactId) => artifactPanel.openArtifact(artifactId)}
@@ -357,20 +360,28 @@ export default function DemoApp({
 											/>
 										)}
 
+										{catalog.status === 'loading' ? (
+											<div className="text-muted-foreground mb-3 text-sm">Loading models…</div>
+										) : null}
+
 										<div className={!currentThreadId ? 'create-thread-composer' : ''}>
 											<PromptComposer
 												notices={
 													<>
-														<PurchaseApprovals purchases={[]} />
+														<PurchaseApprovals
+															purchases={
+																currentThreadId ? state.pendingPurchases(currentThreadId) : []
+															}
+														/>
 														<ConversationNotices
 															key={currentThreadId}
 															error={null}
 															runError={null}
 															reconnecting={false}
 															syncing={false}
-															catalogError={false}
-															catalogLoading={false}
-															onRetryCatalog={() => {}}
+															catalogError={catalog.status === 'failed'}
+															catalogLoading={catalog.status === 'loading'}
+															onRetryCatalog={() => void state.loadCatalog()}
 														/>
 													</>
 												}

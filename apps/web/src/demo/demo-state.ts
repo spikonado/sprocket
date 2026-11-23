@@ -1,4 +1,6 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
+import type { api } from '@convex/_generated/api';
+import type { FunctionReturnType } from 'convex/server';
 import {
 	AGENT_DECIDE_OPTION_ID,
 	finalizeQuestionOptions,
@@ -8,14 +10,15 @@ import {
 import type { InboxState } from '@convex/lib/inboxState';
 import { reasoningEffortIds, type SupportedReasoningEffort } from '@convex/lib/models';
 import type { TokenUsageTotals } from '@convex/lib/validators';
+import { fetchGatewayModelCatalog, type ModelCatalog } from '$lib/chat/model-catalog';
 import type { PendingAgentQuestion } from '$lib/components/home/prompt-composer';
 import { fixtureId } from '$lib/convex-test-client';
 import type { InboxSectionData } from '$lib/project/inbox';
 import type { ThreadTreeSummary } from '$lib/project/useThreadTree';
 import type { Store } from '$lib/store';
-import { previewReply } from './fixtures/preview-reply';
+import { DOWNLOAD_URL, previewReply } from './fixtures/preview-reply';
 import { joinRuns, prompt, recordRun, type Step } from './fixtures/rows';
-import type { DemoQuestion, DemoThread } from './fixtures/types';
+import type { DemoQuestion, DemoThread, TranscriptFixture } from './fixtures/types';
 import { runUsage } from './fixtures/usage';
 import { playRun } from './play-run';
 import { DemoTranscripts } from './transcript-api';
@@ -26,19 +29,33 @@ export type RunState =
 	| { status: 'idle' }
 	| { status: 'scheduled'; steps: Step[] }
 	| { status: 'running'; runId: string; abort: AbortController }
+	| { status: 'paying'; runId: string; abort: AbortController; purchase: Purchase }
 	| {
 			status: 'waiting';
 			question: PendingAgentQuestion;
 			continueWith: DemoQuestion['continueWith'];
 	  };
 
-type ThreadState = { record: Thread; run: RunState; runIds: string[] };
+type Purchase = FunctionReturnType<typeof api.payments.pendingThreadApprovals>[number];
+
+type ThreadState = {
+	record: Thread;
+	run: RunState;
+	runIds: string[];
+	purchase?: DemoThread['purchase'];
+};
+
+/** A finished run's transcript, or `null` while it plays. */
+type RunRecord = { model: string; fixture: TranscriptFixture | null };
+
+export type CatalogState =
+	{ status: 'loading' } | { status: 'ready'; catalog: ModelCatalog } | { status: 'failed' };
 
 const USER_ID = 'demo-user';
 const TITLE_CHARS = 48;
 
 export function isWorking(run: RunState) {
-	return run.status === 'running' || run.status === 'scheduled';
+	return run.status === 'running' || run.status === 'paying' || run.status === 'scheduled';
 }
 
 function reasoningEffort(effort: string): SupportedReasoningEffort {
@@ -72,7 +89,8 @@ export class DemoState implements Store<number> {
 	readonly transcripts: DemoTranscripts;
 	readonly repositoryKey: string;
 	#threads = new Map<string, ThreadState>();
-	#usage = new Map<string, TokenUsageTotals[]>();
+	#runs = new Map<string, RunRecord>();
+	#catalog: CatalogState = { status: 'loading' };
 	#cache = new Map<string, unknown>();
 	#listeners = new Set<() => void>();
 	#version = 0;
@@ -95,7 +113,7 @@ export class DemoState implements Store<number> {
 
 				if (!runId) continue;
 				runIds.push(runId);
-				this.#usage.set(runId, [runUsage(thread.model, fixture)]);
+				this.#runs.set(runId, { model: thread.model, fixture });
 			}
 
 			const record: Thread = {
@@ -114,7 +132,7 @@ export class DemoState implements Store<number> {
 			if (thread.parentId) record.parentThreadId = fixtureId<'threadRecords'>(thread.parentId);
 
 			if (thread.settled) record.archivedAt = lastMessageAt;
-			this.#threads.set(thread.id, { run, runIds, record });
+			this.#threads.set(thread.id, { run, runIds, record, purchase: thread.purchase });
 		}
 	}
 
@@ -184,8 +202,37 @@ export class DemoState implements Store<number> {
 		});
 	}
 
+	get catalog(): CatalogState {
+		return this.#catalog;
+	}
+
+	async loadCatalog() {
+		this.#setCatalog({ status: 'loading' });
+
+		try {
+			const catalog = await fetchGatewayModelCatalog(import.meta.env.PUBLIC_MODEL_GATEWAY_URL);
+
+			this.#setCatalog({ status: 'ready', catalog });
+		} catch {
+			this.#setCatalog({ status: 'failed' });
+		}
+	}
+
 	runUsage(runId: string): TokenUsageTotals[] {
-		return this.#usage.get(runId) ?? [];
+		return this.#cached(`run-usage:${runId}`, () => {
+			const run = this.#runs.get(runId);
+			const catalog = this.#catalog.status === 'ready' ? this.#catalog.catalog : undefined;
+
+			return run?.fixture ? [runUsage(run.model, run.fixture, catalog)] : [];
+		});
+	}
+
+	pendingPurchases(threadId: string): Purchase[] {
+		return this.#cached(`purchases:${threadId}`, () => {
+			const run = this.run(threadId);
+
+			return run.status === 'paying' ? [run.purchase] : [];
+		});
 	}
 
 	threadUsage(threadId: string) {
@@ -250,18 +297,18 @@ export class DemoState implements Store<number> {
 	cancel(threadId: string) {
 		const run = this.run(threadId);
 
-		if (run.status === 'running') run.abort.abort();
+		if (run.status === 'running' || run.status === 'paying') run.abort.abort();
 	}
 
 	async #play(threadId: string, steps: Step[]) {
 		const thread = this.#threads.get(threadId);
 
 		if (!thread) return;
-		const runId = `run-${threadId}-${this.#usage.size}`;
+		const runId = `run-${threadId}-${this.#runs.size}`;
 		const fixture = recordRun(runId, steps);
 		const abort = new AbortController();
 
-		this.#usage.set(runId, []);
+		this.#runs.set(runId, { model: thread.record.selectedModel, fixture: null });
 		this.#set(threadId, {
 			run: { status: 'running', runId, abort },
 			runIds: [...thread.runIds, runId],
@@ -273,14 +320,38 @@ export class DemoState implements Store<number> {
 			}
 		});
 
-		const played = await playRun(this.transcripts, threadId, fixture, abort.signal);
-		this.#usage.set(runId, [runUsage(thread.record.selectedModel, played)]);
+		const played = await playRun(this.transcripts, threadId, fixture, abort.signal, () =>
+			this.#awaitApproval(threadId, runId, abort)
+		);
+
+		this.#runs.set(runId, { model: thread.record.selectedModel, fixture: played });
+
 		const record = this.record(threadId) ?? thread.record;
 
 		this.#set(threadId, {
 			run: { status: 'idle' },
 			record: { ...record, status: abort.signal.aborted ? 'cancelled' : 'completed' }
 		});
+	}
+
+	#awaitApproval(threadId: string, runId: string, abort: AbortController) {
+		const thread = this.#threads.get(threadId);
+
+		if (!thread?.purchase) return;
+		const { merchant, amountCents, currency } = thread.purchase;
+
+		const purchase: Purchase = {
+			_id: fixtureId<'purchases'>(`purchase-${runId}`),
+			threadId: thread.record._id,
+			merchant,
+			amount: amountCents,
+			currency,
+			status: 'awaiting_approval',
+			createdAt: Date.now(),
+			approvalUrl: DOWNLOAD_URL
+		};
+
+		this.#set(threadId, { run: { status: 'paying', runId, abort, purchase } });
 	}
 
 	#createThread(text: string, model: string, effort: string): Id<'threadRecords'> {
@@ -331,6 +402,15 @@ export class DemoState implements Store<number> {
 
 		if (!thread) return;
 		this.#threads.set(threadId, { ...thread, ...update });
+		this.#changed();
+	}
+
+	#setCatalog(catalog: CatalogState) {
+		this.#catalog = catalog;
+		this.#changed();
+	}
+
+	#changed() {
 		this.#cache.clear();
 		this.#version += 1;
 

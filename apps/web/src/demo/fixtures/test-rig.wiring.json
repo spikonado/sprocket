@@ -1,0 +1,76 @@
+{
+	"title": "RP2350 dev board bench rig",
+	"parts": [
+		{
+			"id": "board",
+			"name": "RP2350 dev board (rev A)",
+			"logic": 3.3,
+			"pins": {
+				"right": ["GND.1", "3V3", "SDA", "SCL", "VBUS", "GND.2", "GP16"]
+			}
+		},
+		{
+			"id": "bme",
+			"name": "SparkFun BME280 (Qwiic)",
+			"logic": 3.3,
+			"pins": {
+				"left": ["GND.1", "3V3.1", "SDA.1", "SCL.1"],
+				"right": ["GND.2", "3V3.2", "SDA.2", "SCL.2"]
+			},
+			"photo": "https://www.sparkfun.com/media/catalog/product/1/5/15440-SparkFun_Atmospheric_Sensor_Breakout_-_BME280__Qwiic_-04a.jpg",
+			"link": "https://www.sparkfun.com/sparkfun-atmospheric-sensor-breakout-bme280-qwiic.html"
+		},
+		{
+			"id": "oled",
+			"name": "SparkFun Qwiic OLED 1.3in",
+			"logic": 3.3,
+			"pins": { "left": ["GND", "3V3", "SDA", "SCL"] },
+			"photo": "https://www.sparkfun.com/media/catalog/product/2/3/23453-Qwiic-OLED-Feature-WithDisplay.jpg",
+			"link": "https://www.sparkfun.com/sparkfun-qwiic-oled-1-3in-128x64.html"
+		},
+		{
+			"id": "servo",
+			"name": "Servo, generic sub-micro",
+			"pins": { "left": ["SIGNAL", "V+", "GND"] },
+			"photo": "https://www.sparkfun.com/media/catalog/product/0/9/09065-01a.jpg",
+			"link": "https://www.sparkfun.com/servo-generic-sub-micro-size.html"
+		}
+	],
+	"rails": [
+		{ "id": "VBUS", "volts": 5 },
+		{ "id": "GND", "volts": 0 }
+	],
+	"steps": [
+		{
+			"title": "Sensor on Qwiic",
+			"note": "One 100 mm Qwiic cable from J4 to either BME280 port carries all four wires. Leave the BME280's I2C jumper closed: its 4.7 kΩ pull-ups in parallel with R30 and R31 make 1.5 kΩ, inside the 3 mA I2C limit.",
+			"wires": [
+				{ "from": "board.GND.1", "to": "bme.GND.1", "why": "J4 pin 1" },
+				{ "from": "board.3V3", "to": "bme.3V3.1", "why": "J4 pin 2" },
+				{ "from": "board.SDA", "to": "bme.SDA.1", "why": "GPIO4, I2C0" },
+				{ "from": "board.SCL", "to": "bme.SCL.1", "why": "GPIO5, I2C0" }
+			]
+		},
+		{
+			"title": "Display",
+			"note": "A second Qwiic cable from the BME280's other port. The OLED answers on 0x3D and the BME280 on 0x77, so no address jumpers change.",
+			"wires": [
+				{ "from": "bme.GND.2", "to": "oled.GND" },
+				{ "from": "bme.3V3.2", "to": "oled.3V3" },
+				{ "from": "bme.SDA.2", "to": "oled.SDA" },
+				{ "from": "bme.SCL.2", "to": "oled.SCL" }
+			]
+		},
+		{
+			"title": "Servo",
+			"note": "Solder 1×14 headers into J5 and J6 first, as in docs/assembly.md. VBUS only carries 5 V while USB is plugged in. The servo runs at 5 V but reads the 3.3 V pulse fine.",
+			"wires": [
+				{ "from": "board.VBUS", "to": "VBUS", "why": "J6 pin 2" },
+				{ "from": "board.GND.2", "to": "GND", "why": "J6 pin 1" },
+				{ "from": "servo.V+", "to": "VBUS" },
+				{ "from": "servo.GND", "to": "GND" },
+				{ "from": "board.GP16", "to": "servo.SIGNAL", "why": "J5 pin 6, PWM0 A at 50 Hz" }
+			]
+		}
+	]
+}

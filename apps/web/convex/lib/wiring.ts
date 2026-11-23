@@ -115,7 +115,7 @@ export type PartGeometry = {
 };
 
 const GROUND_NAME = /^(GND|VSS|V-|-|0V)$/i;
-const POWER_NAME = /^(VCC|VDD|VIN|VM|VS|VBAT|V\+|\+|\d+(\.\d+)?V|\dV\d)$/i;
+const POWER_NAME = /^(VCC|VDD|VIN|VM|VS|VBAT|VBUS|V\+|\+|\d+(\.\d+)?V|\dV\d)$/i;
 
 function baseName(pin: string) {
 	return pin.replace(/\.\d+$/, '');

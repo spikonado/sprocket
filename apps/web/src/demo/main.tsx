@@ -19,6 +19,9 @@ const params = new URLSearchParams(window.location.search);
 const themeParam = params.get('theme');
 const theme = isSprocketTheme(themeParam) ? themeParam : DEFAULT_THEME;
 const state = new DemoState(project.repositoryKey, threads);
+
+void state.loadCatalog();
+
 const threadParam = params.get('thread');
 
 const initialThreadId = fixtureId<'threadRecords'>(

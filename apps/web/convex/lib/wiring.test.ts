@@ -23,6 +23,7 @@ describe('pinRole', () => {
 		['GND_MOTO', 'ground', undefined],
 		['VCC 5V', 'power', 5],
 		['5V MOTO', 'power', 5],
+		['VBUS', 'power', undefined],
 		['gnd\tmoto.1', 'ground', undefined],
 		['PWM_MOTO', 'signal', undefined]
 	])('classifies %s as %s', (name, role, volts) => {
