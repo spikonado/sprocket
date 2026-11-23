@@ -100,7 +100,7 @@ describe('tool rows', () => {
 		);
 
 		const first = 'echo "hello"';
-		const prefix = `${first}\nSession missing: Unknown session 🚫.\n`;
+		const prefix = `${first}\nSession missing: Unknown session \u{10400}.\n`;
 
 		const commands = [
 			{ start: 0, text: first },

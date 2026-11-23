@@ -248,7 +248,7 @@ fn poll_rows_use_one_summary_for_previews_and_details() {
                 1,
                 json!({"name":"poll_cmd", "callId":"poll", "status":"completed", "output":[
                     {"sessionId":"7", "command":"bun run build", "workdir":"/repo"},
-                    {"sessionId":"missing", "error":"Unknown session 🚫."},
+                    {"sessionId":"missing", "error":"Unknown session \u{10400}."},
                     {"sessionId":"8", "command":":"}
                 ]}),
             ),
@@ -274,14 +274,14 @@ fn poll_rows_use_one_summary_for_previews_and_details() {
     assert!(!has_more);
     assert_eq!(
         display.summary,
-        "bun run build\nSession missing: Unknown session 🚫.\n:"
+        "bun run build\nSession missing: Unknown session \u{10400}.\n:"
     );
     assert_eq!(display.status, ToolStatus::Completed);
     assert_eq!(
         serde_json::to_value(&display.commands).unwrap(),
         json!([
             {"start":0,"text":"bun run build"},
-            {"start":"bun run build\nSession missing: Unknown session 🚫.\n".encode_utf16().count(),"text":":"}
+            {"start":"bun run build\nSession missing: Unknown session \u{10400}.\n".encode_utf16().count(),"text":":"}
         ])
     );
 }
