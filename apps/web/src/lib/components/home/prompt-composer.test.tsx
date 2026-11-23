@@ -1054,7 +1054,30 @@ describe('PromptComposer Fast mode', () => {
 });
 
 describe('PromptComposer agent questions', () => {
-	it('drops the answer draft and shows one question action at a time', async () => {
+	it('keeps the draft but resets the selected option as questions change', async () => {
+		const { props, textarea, rerender } = renderComposer({ isRunning: true });
+		const draft = 'Also check the pin assignments';
+		await typeInComposer(textarea, draft);
+
+		const pendingQuestion = {
+			questionId: 'question-1',
+			question: 'Which board should I target?',
+			options: [{ id: 'option-a', label: 'Option A' }]
+		};
+
+		rerender({ ...props, pendingQuestion });
+		expect(textarea.value).toBe(draft);
+
+		await click(findButton('Option A'));
+		rerender({ ...props, pendingQuestion: { ...pendingQuestion, questionId: 'question-2' } });
+		expect(textarea.value).toBe(draft);
+		expect(findButton('Option A').getAttribute('aria-pressed')).toBe('false');
+
+		rerender(props);
+		expect(textarea.value).toBe(draft);
+	});
+
+	it('shows one question action at a time', async () => {
 		const onSelectedQuestionOptionIdChange = vi.fn();
 		const onSkipQuestion = vi.fn();
 
@@ -1066,7 +1089,6 @@ describe('PromptComposer agent questions', () => {
 				);
 
 		const { textarea } = renderComposer({
-			prompt: 'draft answer',
 			pendingQuestion: {
 				questionId: 'question-1',
 				question: 'Which board should I target?',
@@ -1080,7 +1102,6 @@ describe('PromptComposer agent questions', () => {
 			onSkipQuestion
 		});
 
-		expect(textarea.value).toBe('');
 		expect(textarea.getAttribute('placeholder')).toBe('Add detail, or type a custom answer');
 		expect(actions()).toEqual(['Skip question']);
 

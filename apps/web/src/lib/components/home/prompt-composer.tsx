@@ -513,17 +513,11 @@ export default function PromptComposer({
 		if (selectedQuestionOptionId !== null) {
 			onSelectedQuestionOptionIdChange?.(null);
 		}
-
-		if (prompt.trim()) {
-			onPromptChange?.('');
-		}
 	}, [
 		pendingQuestion,
 		trackedPendingQuestionId,
 		selectedQuestionOptionId,
-		prompt,
-		onSelectedQuestionOptionIdChange,
-		onPromptChange
+		onSelectedQuestionOptionIdChange
 	]);
 
 	useEffect(() => {
