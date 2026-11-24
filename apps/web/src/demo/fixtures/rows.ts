@@ -125,11 +125,3 @@ export function recordRun(runId: string, steps: Step[]): TranscriptFixture {
 
 	return fixture;
 }
-
-export function joinRuns(...runs: TranscriptFixture[]): TranscriptFixture {
-	return {
-		rows: runs.flatMap((run) => run.rows),
-		work: Object.assign({}, ...runs.map((run) => run.work)),
-		items: Object.assign({}, ...runs.map((run) => run.items))
-	};
-}

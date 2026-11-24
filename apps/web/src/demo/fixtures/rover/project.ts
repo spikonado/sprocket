@@ -1,52 +1,51 @@
 import { demoProject } from '../demo-project';
-import { prompt, recordRun, say, think, tool, work } from '../rows';
+import { prompt, say, think, tool, work } from '../rows';
 import type { DemoThread } from '../types';
 
 const drift: DemoThread = {
 	id: 'rover-drift',
-	title: 'Why does the rover drift left?',
+	title: "Fix the rover's left drift",
 	model: 'gpt-6-luna',
 	effort: 'high',
-	minutesAgo: 9,
-	runs: [
-		recordRun('run-rover-drift-1', [
-			prompt(
-				"The rover drifts left when I send it straight down the hallway. I recorded bags/hallway_run. It's on the network as rover.local if you need it."
+	minutesAgo: 38,
+	steps: [
+		prompt(
+			"The rover drifts left when I send it straight down the hallway. I recorded bags/hallway_run. It's on the network as rover.local if you need it."
+		),
+		work(
+			tool('exec_cmd', 'ros2 bag info bags/hallway_run'),
+			tool(
+				'exec_cmd',
+				'python3 scratch/wheel_tracking.py bags/hallway_run --topics /wheel/left /wheel/right /cmd_vel'
 			),
-			work(
-				tool('exec_cmd', 'ros2 bag info bags/hallway_run'),
-				tool(
-					'exec_cmd',
-					'python3 scratch/wheel_tracking.py bags/hallway_run --topics /wheel/left /wheel/right /cmd_vel'
-				),
-				think(
-					'Reading the wheel speeds',
-					'Both wheels get the same 0.30 m/s setpoint. The right wheel averages 0.299 m/s and the left 0.288 m/s, 3.8% slow the whole run. A steady error like that is what a P-only loop leaves behind.'
-				),
-				tool('exec_cmd', 'cat config/wheels.yaml rover_control/rover_control/wheel_pid.py'),
-				think(
-					'Checking the gains',
-					'`ki` is 0.0, so nothing removes the steady error. The left gearmotor has more friction: in the bag it needs 14% PWM to start turning, against 9% for the right. Add integral gain, and stop integrating while the output is saturated so it does not wind up against the limit.'
-				),
-				tool('apply_patch', 'config/wheels.yaml\nrover_control/rover_control/wheel_pid.py'),
-				tool(
-					'exec_cmd',
-					'colcon build --packages-select rover_control && colcon test --packages-select rover_control'
-				),
-				tool(
-					'exec_cmd',
-					'rsync -a --exclude build --exclude install ./ rover.local:~/rover_ws/src/rover/'
-				),
-				tool(
-					'exec_cmd',
-					'ssh rover.local "cd rover_ws && colcon build --packages-select rover_control && ros2 launch rover_control straight_line.launch.py distance:=5.0"'
-				),
-				tool(
-					'exec_cmd',
-					'scp -r rover.local:~/rover_ws/bags/straight_5m bags/ && python3 scratch/wheel_tracking.py bags/straight_5m'
-				)
+			think(
+				'Reading the wheel speeds',
+				'Both wheels get the same 0.30 m/s setpoint. The right wheel averages 0.299 m/s and the left 0.288 m/s, 3.8% slow the whole run. A steady error like that is what a P-only loop leaves behind.'
 			),
-			say(`The left wheel ran 3.8% slow because the wheel PID had no integral term. The left gearmotor has more friction, and a P-only loop leaves a steady error.
+			tool('exec_cmd', 'cat config/wheels.yaml rover_control/rover_control/wheel_pid.py'),
+			think(
+				'Checking the gains',
+				'`ki` is 0.0, so nothing removes the steady error. The left gearmotor has more friction: in the bag it needs 14% PWM to start turning, against 9% for the right. Add integral gain, and stop integrating while the output is saturated so it does not wind up against the limit.'
+			),
+			tool('apply_patch', 'config/wheels.yaml\nrover_control/rover_control/wheel_pid.py'),
+			tool(
+				'exec_cmd',
+				'colcon build --packages-select rover_control && colcon test --packages-select rover_control'
+			),
+			tool(
+				'exec_cmd',
+				'rsync -a --exclude build --exclude install ./ rover.local:~/rover_ws/src/rover/'
+			),
+			tool(
+				'exec_cmd',
+				'ssh rover.local "cd rover_ws && colcon build --packages-select rover_control && ros2 launch rover_control straight_line.launch.py distance:=5.0"'
+			),
+			tool(
+				'exec_cmd',
+				'scp -r rover.local:~/rover_ws/bags/straight_5m bags/ && python3 scratch/wheel_tracking.py bags/straight_5m'
+			)
+		),
+		say(`The left wheel ran 3.8% slow because the wheel PID had no integral term. The left gearmotor has more friction, and a P-only loop leaves a steady error.
 
 I set \`ki\` to 2.0 and stopped the integral from winding up while the output is saturated. Then I drove 5 m straight on the rover:
 
@@ -56,7 +55,6 @@ I set \`ki\` to 2.0 and stopped the integral from winding up while the output is
 | After | −0.2% | −0.1% | 3 cm left |
 
 Both wheels settle within 0.4 s of a speed change, and neither overshoots by more than 4%. The 3 cm that's left is in the range of the floor and tire differences, and \`robot_localization\` corrects it with the IMU.`)
-		])
 	]
 };
 

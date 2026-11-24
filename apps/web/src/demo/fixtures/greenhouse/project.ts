@@ -1,5 +1,5 @@
 import { demoProject } from '../demo-project';
-import { prompt, recordRun, say, think, tool, work } from '../rows';
+import { prompt, say, think, tool, work } from '../rows';
 import type { DemoThread } from '../types';
 import wiring from './greenhouse.wiring.json?raw';
 
@@ -7,50 +7,49 @@ const WIRING = 'docs/greenhouse.wiring.json';
 
 const wire: DemoThread = {
 	id: 'greenhouse-wiring',
-	title: 'Wire the greenhouse vent controller',
+	title: 'Wire the vent controller',
 	model: 'fable-5.2',
 	effort: 'high',
 	minutesAgo: 20,
-	runs: [
-		recordRun('run-greenhouse-wiring-1', [
-			prompt(
-				'I want the roof vent to open when the greenhouse gets hot and log soil moisture to Home Assistant. Pick SparkFun parts that need no soldering where possible, and draw the wiring.'
+	steps: [
+		prompt(
+			'I want the roof vent to open when the greenhouse gets hot and log soil moisture to Home Assistant. Pick SparkFun parts that need no soldering where possible, and draw the wiring.'
+		),
+		work(
+			think(
+				'Planning the parts',
+				'Home Assistant speaks Matter and MQTT, so any Wi-Fi board works. A Thing Plus has a Qwiic port and a LiPo charger, so the air sensor plugs in without soldering. The soil probe is analog, so it needs an ADC pin, and a hobby servo can push a small vent arm.'
 			),
-			work(
-				think(
-					'Planning the parts',
-					'Home Assistant speaks Matter and MQTT, so any Wi-Fi board works. A Thing Plus has a Qwiic port and a LiPo charger, so the air sensor plugs in without soldering. The soil probe is analog, so it needs an ADC pin, and a hobby servo can push a small vent arm.'
-				),
-				tool('read_skill', '$designing-wiring-diagram'),
-				tool('read_skill', '$selecting-hardware-parts'),
-				tool('web_search', 'SparkFun Thing Plus ESP32 Qwiic Wi-Fi (10 results)'),
-				tool('scrape_url', 'https://www.sparkfun.com/sparkfun-thing-plus-esp32-c6.html'),
-				tool(
-					'scrape_url',
-					'https://docs.sparkfun.com/SparkFun_Thing_Plus_ESP32_C6/hardware_overview/'
-				),
-				think(
-					'Checking the board',
-					'The Qwiic port is on the low-power I2C bus, IO6 and IO7, with 2.2 kΩ pull-ups. The 3.3 V regulator gives 500 mA. VUSB carries 5 V only from USB-C, which suits the servo, so the controller has to run from a USB-C supply.'
-				),
-				tool(
-					'scrape_url',
-					'https://www.sparkfun.com/sparkfun-atmospheric-sensor-breakout-bme280-qwiic.html'
-				),
-				tool('scrape_url', 'https://www.sparkfun.com/sparkfun-soil-moisture-sensor.html'),
-				tool(
-					'scrape_url',
-					'https://learn.sparkfun.com/tutorials/soil-moisture-sensor-hookup-guide/all'
-				),
-				think(
-					'Reading the soil guide',
-					'The probe corrodes if it carries current all the time. The guide powers it from a GPIO only while reading, which also saves battery.'
-				),
-				tool('scrape_url', 'https://www.sparkfun.com/servo-generic-sub-micro-size.html'),
-				tool('apply_patch', WIRING),
-				tool('bind_artifact', WIRING)
+			tool('read_skill', '$designing-wiring-diagram'),
+			tool('read_skill', '$selecting-hardware-parts'),
+			tool('web_search', 'SparkFun Thing Plus ESP32 Qwiic Wi-Fi (10 results)'),
+			tool('scrape_url', 'https://www.sparkfun.com/sparkfun-thing-plus-esp32-c6.html'),
+			tool(
+				'scrape_url',
+				'https://docs.sparkfun.com/SparkFun_Thing_Plus_ESP32_C6/hardware_overview/'
 			),
-			say(`It's four SparkFun parts, and only the soil probe needs soldering. The wiring check passes.
+			think(
+				'Checking the board',
+				'The Qwiic port is on the low-power I2C bus, IO6 and IO7, with 2.2 kΩ pull-ups. The 3.3 V regulator gives 500 mA. VUSB carries 5 V only from USB-C, which suits the servo, so the controller has to run from a USB-C supply.'
+			),
+			tool(
+				'scrape_url',
+				'https://www.sparkfun.com/sparkfun-atmospheric-sensor-breakout-bme280-qwiic.html'
+			),
+			tool('scrape_url', 'https://www.sparkfun.com/sparkfun-soil-moisture-sensor.html'),
+			tool(
+				'scrape_url',
+				'https://learn.sparkfun.com/tutorials/soil-moisture-sensor-hookup-guide/all'
+			),
+			think(
+				'Reading the soil guide',
+				'The probe corrodes if it carries current all the time. The guide powers it from a GPIO only while reading, which also saves battery.'
+			),
+			tool('scrape_url', 'https://www.sparkfun.com/servo-generic-sub-micro-size.html'),
+			tool('apply_patch', WIRING),
+			tool('bind_artifact', WIRING)
+		),
+		say(`It's four SparkFun parts, and only the soil probe needs soldering. The wiring check passes.
 
 | Part | SKU | Price |
 | --- | --- | --- |
@@ -66,18 +65,17 @@ const wire: DemoThread = {
 - The servo runs from VUSB, so power the controller from a USB-C supply, not the LiPo.
 
 artifact:wiring`)
-		])
 	]
 };
 
 const order: DemoThread = {
 	id: 'greenhouse-order',
-	title: 'Order the vent parts from SparkFun',
+	title: 'Order the SparkFun parts',
 	model: 'opus-5.5',
 	effort: 'medium',
 	minutesAgo: 2,
-	runs: [],
-	liveRun: [
+	working: true,
+	steps: [
 		prompt(
 			'Order the parts from SparkFun to my saved address, cheapest shipping. Go ahead if the total is under $80.'
 		),

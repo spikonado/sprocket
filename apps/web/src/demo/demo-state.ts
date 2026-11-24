@@ -18,7 +18,7 @@ import type { ThreadTreeSummary } from '$lib/project/useThreadTree';
 import type { Store } from '$lib/store';
 import { DOWNLOAD_URL, previewReply } from './fixtures/preview-reply';
 import type { DemoProject } from './fixtures/demo-project';
-import { joinRuns, prompt, recordRun, type Step } from './fixtures/rows';
+import { prompt, recordRun, type Step } from './fixtures/rows';
 import type { DemoQuestion, DemoThread, TranscriptFixture } from './fixtures/types';
 import { runUsage } from './fixtures/usage';
 import { playRun } from './play-run';
@@ -28,7 +28,7 @@ type Thread = Doc<'threadRecords'>;
 
 export type RunState =
 	| { status: 'idle' }
-	| { status: 'scheduled'; steps: Step[] }
+	| { status: 'unopened'; steps: Step[]; shows: 'working' | 'waiting' | 'idle' }
 	| { status: 'running'; runId: string; abort: AbortController }
 	| { status: 'paying'; runId: string; abort: AbortController; purchase: Purchase }
 	| {
@@ -43,6 +43,8 @@ type ThreadState = {
 	record: Thread;
 	run: RunState;
 	runIds: string[];
+	/** Asked once the opening run finishes. */
+	question?: DemoQuestion;
 	purchase?: DemoThread['purchase'];
 };
 
@@ -56,7 +58,15 @@ const USER_ID = 'demo-user';
 const TITLE_CHARS = 48;
 
 export function isWorking(run: RunState) {
-	return run.status === 'running' || run.status === 'paying' || run.status === 'scheduled';
+	return (
+		run.status === 'running' ||
+		run.status === 'paying' ||
+		(run.status === 'unopened' && run.shows === 'working')
+	);
+}
+
+function isWaiting(run: RunState) {
+	return run.status === 'waiting' || (run.status === 'unopened' && run.shows === 'waiting');
 }
 
 function reasoningEffort(effort: string): SupportedReasoningEffort {
@@ -71,12 +81,7 @@ function section(state: InboxState, rows: Thread[]): InboxSectionData {
 	return { state, rows, loading: false, canLoadMore: false, loadMore() {} };
 }
 
-function initialRun(thread: DemoThread): RunState {
-	if (thread.liveRun) return { status: 'scheduled', steps: thread.liveRun };
-
-	if (!thread.question) return { status: 'idle' };
-	const { questionId, question, options, continueWith } = thread.question;
-
+function waitingRun({ questionId, question, options, continueWith }: DemoQuestion): RunState {
 	return {
 		status: 'waiting',
 		question: { questionId, question, options: finalizeQuestionOptions(options) },
@@ -84,10 +89,16 @@ function initialRun(thread: DemoThread): RunState {
 	};
 }
 
+function initialRun(thread: DemoThread): RunState {
+	const shows = thread.working ? 'working' : thread.question ? 'waiting' : 'idle';
+
+	return { status: 'unopened', steps: thread.steps, shows };
+}
+
 /** The threads, runs and usage a signed-in user's Convex deployment would hold, kept in memory. */
 export class DemoState implements Store<number> {
 	readonly userId = USER_ID;
-	readonly transcripts: DemoTranscripts;
+	readonly transcripts = new DemoTranscripts();
 	#threads = new Map<string, ThreadState>();
 	#runs = new Map<string, RunRecord>();
 	#catalog: CatalogState = { status: 'loading' };
@@ -103,22 +114,9 @@ export class DemoState implements Store<number> {
 			threads.map((thread) => ({ thread, repositoryKey: project.repositoryKey }))
 		);
 
-		this.transcripts = new DemoTranscripts(
-			Object.fromEntries(threads.map(({ thread }) => [thread.id, joinRuns(...thread.runs)]))
-		);
-
 		for (const { thread, repositoryKey } of threads) {
 			const lastMessageAt = now - thread.minutesAgo * 60_000;
 			const run = initialRun(thread);
-			const runIds: string[] = [];
-
-			for (const fixture of thread.runs) {
-				const runId = fixture.rows[0]?.runId;
-
-				if (!runId) continue;
-				runIds.push(runId);
-				this.#runs.set(runId, { model: thread.model, fixture });
-			}
 
 			const record: Thread = {
 				_id: fixtureId<'threadRecords'>(thread.id),
@@ -136,7 +134,13 @@ export class DemoState implements Store<number> {
 			if (thread.parentId) record.parentThreadId = fixtureId<'threadRecords'>(thread.parentId);
 
 			if (thread.settled) record.archivedAt = lastMessageAt;
-			this.#threads.set(thread.id, { run, runIds, record, purchase: thread.purchase });
+			this.#threads.set(thread.id, {
+				run,
+				runIds: [],
+				record,
+				question: thread.question,
+				purchase: thread.purchase
+			});
 		}
 	}
 
@@ -196,8 +200,8 @@ export class DemoState implements Store<number> {
 		return this.#cached(`summary:${threadId}`, () => {
 			const descendants = this.#descendants(threadId).map((id) => this.run(id));
 			const own = this.run(threadId);
-			const descendantsActive = descendants.some((run) => run.status !== 'idle');
-			const waitingForInput = own.status === 'waiting';
+			const descendantsActive = descendants.some((run) => isWorking(run) || isWaiting(run));
+			const waitingForInput = isWaiting(own);
 
 			return {
 				workingDescendantCount: descendants.filter(isWorking).length,
@@ -264,7 +268,7 @@ export class DemoState implements Store<number> {
 	open(threadId: string) {
 		const run = this.run(threadId);
 
-		if (run.status === 'scheduled') void this.#play(threadId, run.steps);
+		if (run.status === 'unopened') void this.#play(threadId, run.steps);
 	}
 
 	submitPrompt(
@@ -320,12 +324,7 @@ export class DemoState implements Store<number> {
 		this.#set(threadId, {
 			run: { status: 'running', runId, abort },
 			runIds: [...thread.runIds, runId],
-			record: {
-				...thread.record,
-				status: 'running',
-				lastMessageAt: Date.now(),
-				archivedAt: undefined
-			}
+			record: { ...thread.record, status: 'running' }
 		});
 
 		const played = await playRun(this.transcripts, threadId, fixture, abort.signal, () =>
@@ -335,9 +334,11 @@ export class DemoState implements Store<number> {
 		this.#runs.set(runId, { model: thread.record.selectedModel, fixture: played });
 
 		const record = this.record(threadId) ?? thread.record;
+		const { question } = this.#threads.get(threadId) ?? thread;
 
 		this.#set(threadId, {
-			run: { status: 'idle' },
+			run: question && !abort.signal.aborted ? waitingRun(question) : { status: 'idle' },
+			question: undefined,
 			record: { ...record, status: abort.signal.aborted ? 'cancelled' : 'completed' }
 		});
 	}

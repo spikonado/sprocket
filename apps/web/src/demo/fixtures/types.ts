@@ -25,10 +25,11 @@ export type DemoThread = {
 	minutesAgo: number;
 	parentId?: string;
 	settled?: boolean;
-	runs: TranscriptFixture[];
+	/** Shown as working in the sidebar until the thread first opens. */
+	working?: true;
+	/** Played the first time the thread opens. */
+	steps: Step[];
 	question?: DemoQuestion;
-	/** Played the first time the thread opens, as if the agent were working on it. */
-	liveRun?: Step[];
 	/** Awaits approval once the live run reaches its tool recorded as running. */
 	purchase?: { merchant: string; amountCents: number; currency: string };
 };
