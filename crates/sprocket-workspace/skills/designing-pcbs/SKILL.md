@@ -250,7 +250,7 @@ DRC passes on boards whose copper overheats or whose signals radiate. Before cal
 - Planes cut or slit by other tracks.
 - Hot-loop and input capacitors at their pins, as in [Placing parts](#placing-parts).
 
-Then run `signal_review.py` on the USB, QSPI, SD, and clock nets and `route_review.py` on the board, and fix what they flag and what breaks these rules:
+Then run `signal_review.py` and `route_review.py` on the whole board, and fix what they flag and what breaks these rules:
 
 - No track of another net on a plane layer.
 - A GND via next to each signal via of a high-speed net, so its return current can change planes with it. `check_return_vias.py` reports the ones that lack it.
