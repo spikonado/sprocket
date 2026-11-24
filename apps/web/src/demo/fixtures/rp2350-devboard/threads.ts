@@ -1,5 +1,4 @@
-import type { AgentQuestionAnswer } from '@convex/lib/agentQuestions';
-import { prompt, say, think, tool, work, type Step } from '../rows';
+import { prompt, say, think, tool, work } from '../rows';
 import type { DemoThread } from '../types';
 
 const SCHEMATIC = 'hardware/rp2350-devboard.kicad_sch';
@@ -8,15 +7,6 @@ const BOARD = 'hardware/rp2350-devboard.kicad_pcb';
 const ERC = `kicad-cli sch erc --format json --severity-all --exit-code-violations -o /tmp/erc.json ${SCHEMATIC}`;
 
 const DRC = `kicad-cli pcb drc --format json --severity-all --schematic-parity --exit-code-violations -o /tmp/drc.json ${BOARD}`;
-
-const VIAS_IN_PADS = `python3 scratch/vias_in_pads.py ${BOARD} --smd-only`;
-
-const REGENERATE_FAB = [
-	tool('exec_cmd', DRC),
-	tool('exec_cmd', `kicad-cli pcb export gerbers -o fab/gerbers ${BOARD}`),
-	tool('exec_cmd', 'cd fab && zip -r rp2350-devboard-gerbers.zip gerbers'),
-	tool('apply_patch', 'hardware/bom.md\ndocs/assembly.md')
-];
 
 const FIRMWARE_BUILD = 'cmake -S firmware -B firmware/build && cmake --build firmware/build';
 
@@ -54,17 +44,10 @@ const boardBuild: DemoThread = {
 			tool('exec_cmd', DRC),
 			think(
 				'Reading the reports',
-				"ERC: 0 errors, 0 warnings. DRC: 0 errors, 0 unconnected items, and the board matches the schematic. The only note is R7: its silk line touched U3's pin-1 mark and was trimmed, so it no longer matches its library footprint. DRC doesn't price the via process, so check for vias in pads by hand."
-			),
-			tool('exec_cmd', VIAS_IN_PADS),
-			think(
-				'Checking the vias',
-				'82 vias sit in or touch SMD pads, on the decoupling caps, U1, U2, U3 and J1. Open barrels there would wick solder away from the joints, so the order needs resin-filled, capped vias.'
+				"ERC: 0 errors, 0 warnings. DRC: 0 errors, 0 unconnected items, and the board matches the schematic. The only note is R7: its silk line touched U3's pin-1 mark and was trimmed, so it no longer matches its library footprint."
 			)
 		),
-		say(
-			"The schematic and layout are done, and ERC and DRC are both clean. DRC can't see one cost: 82 vias sit in or touch SMD pads, so PCBWay has to fill and cap them. My layout review also found four major routing issues worth fixing in the same pass. Pricing the BOM next."
-		),
+		say('The schematic and layout are done, and ERC and DRC are both clean. Pricing the BOM next.'),
 		work(
 			tool(
 				'exec_cmd',
@@ -100,10 +83,9 @@ Getting the PCBWay quote now.`),
 			tool('exec_cmd', 'agent-browser snapshot -i'),
 			think(
 				'Reading the quote',
-				'5 PCBs at 28 × 78.54 mm, 4 layers, ENIG: $156.77. That is $32.20 base, $29.84 ENIG and $94.73 for resin-filled, capped vias. Tented it would be $62.04. Assembly is the $88.00 minimum for one board and for five, since there are 82 SMD parts and no through-hole joints. The $29 new-customer promo would apply too. Quote without it.'
+				'5 PCBs at 28 × 78.54 mm, 4 layers, ENIG: $156.77, including resin-filled, capped vias for the vias in the fine-pitch pads. Assembly is the $88.00 minimum for one board and for five, since there are 82 SMD parts and no through-hole joints. The $29 new-customer promo would apply too. Quote without it.'
 			),
-			tool('apply_patch', 'hardware/bom.md'),
-			tool('ask_question', 'How should we handle the vias in pads?')
+			tool('apply_patch', 'hardware/bom.md')
 		),
 		say(`PCBWay quoted the board. Shipping isn't included.
 
@@ -114,99 +96,9 @@ Getting the PCBWay quote now.`),
 | Parts | $37.60 | $122.01 |
 | **Total** | **$282.37** | **$366.78** |
 
-$94.73 of the PCB price is the filled vias. Moving them off their pads would bring five boards down to $272.05, but it needs another layout pass. How should I handle them?
-
 kicad:hardware/rp2350-devboard.kicad_pro`)
-	],
-	question: {
-		questionId: 'via-question',
-		question: 'How should we handle the vias in pads?',
-		options: [
-			{ id: 'move-vias', label: 'Move the vias off the pads' },
-			{ id: 'move-and-reroute', label: 'Move them and fix the major routing findings' },
-			{ id: 'keep-filled', label: 'Keep filled, capped vias' }
-		],
-		continueWith: viaContinuation
-	}
-};
-
-type ViaPlan = { change: string; tools: Step; reply: string };
-
-const MOVE_VIAS: ViaPlan = {
-	change:
-		'Move each in-pad via beside its pad on a short track, keeping the 0.6/0.3 mm via size. The tight spots are the decoupling caps around U1 and J1. The 0.2 mm thermal vias in the U1, U5 and U6 exposed pads stay, since the paste is windowed there.',
-	tools: work(tool('apply_patch', BOARD), tool('exec_cmd', VIAS_IN_PADS), ...REGENERATE_FAB),
-	reply: `Done. None of the signal vias touch an SMD pad now, so the board can be ordered with tented vias.
-
-- DRC is clean again.
-- \`fab/gerbers/\` and \`fab/rp2350-devboard-gerbers.zip\` are regenerated. Upload the new zip.
-- The PCB drops to $62.04, so one board is $187.64 and five are $272.05 ($54.41 each).
-- \`docs/assembly.md\` now asks for tented vias.`
-};
-
-const VIA_PLANS = new Map<string, ViaPlan>([
-	['move-vias', MOVE_VIAS],
-	[
-		'move-and-reroute',
-		{
-			change: `${MOVE_VIAS.change} Then fix the review's four major findings: QSPI_SD3 straight to U2 pin 7, SD_CLK and SD_D3 down the right side with the other SD lines, VBAT from U5's BAT pins at full width, and D+ joined at J1's A6 and B6.`,
-			tools: work(
-				tool('apply_patch', BOARD),
-				tool('exec_cmd', VIAS_IN_PADS),
-				tool('exec_cmd', `python3 scratch/net_lengths.py ${BOARD}`),
-				...REGENERATE_FAB
-			),
-			reply: `Done. The vias are off the pads and the four major review findings are rerouted.
-
-- QSPI_SD3 no longer loops out to the left edge, and SD_CLK and SD_D3 follow the other SD lines down the right side.
-- VBAT leaves U5's BAT pins at 0.4 mm on F.Cu, with no 0.15 mm neck.
-- D+ joins A6 and B6 at J1, so there is no stub in either plug orientation.
-- DRC is clean, and \`fab/\` is regenerated. The PCB drops to $62.04, so five boards are $272.05.`
-		}
-	],
-	[
-		'keep-filled',
-		{
-			change:
-				"Filled, capped vias are a standard PCBWay process, and the fab notes already ask for them. The $94.73 is per order, so it doesn't grow with five boards.",
-			tools: work(tool('apply_patch', 'docs/assembly.md')),
-			reply:
-				'Left the layout as it is. `docs/assembly.md` already asks for resin-filled, capped vias, and I added the line for the order remarks. Moving the vias off the pads is a layout-only change for rev B.'
-		}
 	]
-]);
-
-function viaContinuation(answer: AgentQuestionAnswer): Step[] {
-	if (answer.optionId === undefined) {
-		return [
-			work(
-				think(
-					'Reading your answer',
-					`You wrote: "${answer.text}". I will plan the change around it.`
-				)
-			),
-			say(
-				`Got it: "${answer.text}". I'll make that change, rerun DRC, and regenerate the fab files if the copper moves.`
-			)
-		];
-	}
-
-	const plan = VIA_PLANS.get(answer.optionId);
-	const chosen = plan ?? MOVE_VIAS;
-
-	return [
-		work(
-			think(
-				'Applying the choice',
-				plan
-					? chosen.change
-					: `You left it to me. The board isn't ordered yet, and the filled vias are about a quarter of the five-board cost. ${chosen.change}`
-			)
-		),
-		chosen.tools,
-		say(plan ? chosen.reply : `I moved the vias off the pads.\n\n${chosen.reply}`)
-	];
-}
+};
 
 const BOARD_TASK =
 	"Write firmware/boards/rp2350_devboard.h from pico-sdk's pico2_w.h. Flash is 16 MB. The RM2 is wired like the Pico 2 W on GPIO23/24/25/29, with WL_GPIO1 on U6's PS/SYNC and WL_GPIO2 sensing VBUS, but WL_GPIO0 has no LED and GPIO29 has no VSYS sense. Add defines for PSRAM CS (GPIO8), microSD card detect (GPIO9), the WS2812B (GPIO22) and VBAT (GPIO28).";
