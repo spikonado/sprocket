@@ -1,7 +1,6 @@
 import type { AgentQuestionAnswer } from '@convex/lib/agentQuestions';
 import { prompt, say, think, tool, work, type Step } from '../rows';
 import type { DemoThread } from '../types';
-import dashboardScreenshot from './dashboard-screenshot.webp?url';
 
 const SCHEMATIC = 'hardware/rp2350-devboard.kicad_sch';
 const BOARD = 'hardware/rp2350-devboard.kicad_pcb';
@@ -21,23 +20,37 @@ const REGENERATE_FAB = [
 
 const FIRMWARE_BUILD = 'cmake -S firmware -B firmware/build && cmake --build firmware/build';
 
-const orderPack: DemoThread = {
-	id: 'order-pack',
-	title: 'Get a PCBWay quote',
+const boardBuild: DemoThread = {
+	id: 'board-build',
+	title: 'Build the RP2350 dev board',
 	model: 'opus-5.5',
-	effort: 'medium',
-	minutesAgo: 12,
+	effort: 'high',
+	minutesAgo: 1,
 	steps: [
 		prompt(
-			'The RP2350 board in hardware/ is routed. Check ERC and DRC, price the BOM for 1 and 5 boards, get a PCBWay turnkey quote, and write up how to order and bring it up.'
+			'Design an RP2350 dev board with Wi-Fi, USB-C, LiPo charging, 8 MB PSRAM and microSD. Lay it out for PCBWay turnkey assembly and get me a quote for 1 and 5 boards.'
 		),
 		work(
 			think(
-				'Planning the checks',
-				'Run ERC and DRC first so the quote is for a board that is ready to order. Then price the same 38 placed BOM lines that the fab files use.'
+				'Planning the board',
+				'RP2350A with 16 MB flash and an APS6404L on QSPI CS1. A Raspberry Pi RM2 wired like the Pico 2 W gives Wi-Fi without RF layout. A BQ24074 charger with power path feeds a TPS63001 buck-boost, so 3V3 holds down to a 3.0 V cell. Four layers, every part on the top side so PCBWay assembles one side only.'
 			),
 			tool('read_skill', '$designing-pcbs'),
+			tool('read_skill', '$selecting-hardware-parts'),
+			tool(
+				'lookup_parts',
+				'RP2350A, RMC20452T, W25Q128JVSIQ, APS6404L-3SQR-SN, BQ24074RGTR, TPS63001DRCR, USB4105-GF-A'
+			),
+			tool(
+				'apply_patch',
+				'hardware/rp2350-devboard.kicad_sch\nhardware/mcu.kicad_sch\nhardware/memory.kicad_sch\nhardware/power.kicad_sch\nhardware/wireless.kicad_sch\nhardware/io.kicad_sch'
+			),
 			tool('exec_cmd', ERC),
+			think(
+				'Placing the parts',
+				'28 × 78.54 mm with 2×14 header holes. USB-C and the charger at one end, the RM2 antenna clear of copper at the other, and the RP2350 in the middle with its decoupling caps on the pins.'
+			),
+			tool('apply_patch', BOARD),
 			tool('exec_cmd', DRC),
 			think(
 				'Reading the reports',
@@ -50,7 +63,7 @@ const orderPack: DemoThread = {
 			)
 		),
 		say(
-			"ERC and DRC are both clean. DRC can't see one cost: 82 vias sit in or touch SMD pads, so PCBWay has to fill and cap them. Pricing the BOM next."
+			"The schematic and layout are done, and ERC and DRC are both clean. DRC can't see one cost: 82 vias sit in or touch SMD pads, so PCBWay has to fill and cap them. My layout review also found four major routing issues worth fixing in the same pass. Pricing the BOM next."
 		),
 		work(
 			tool(
@@ -89,7 +102,8 @@ Getting the PCBWay quote now.`),
 				'Reading the quote',
 				'5 PCBs at 28 × 78.54 mm, 4 layers, ENIG: $156.77. That is $32.20 base, $29.84 ENIG and $94.73 for resin-filled, capped vias. Tented it would be $62.04. Assembly is the $88.00 minimum for one board and for five, since there are 82 SMD parts and no through-hole joints. The $29 new-customer promo would apply too. Quote without it.'
 			),
-			tool('apply_patch', 'hardware/bom.md')
+			tool('apply_patch', 'hardware/bom.md'),
+			tool('ask_question', 'How should we handle the vias in pads?')
 		),
 		say(`PCBWay quoted the board. Shipping isn't included.
 
@@ -100,10 +114,20 @@ Getting the PCBWay quote now.`),
 | Parts | $37.60 | $122.01 |
 | **Total** | **$282.37** | **$366.78** |
 
-$94.73 of the PCB price is the filled vias. Moving the 82 vias off their pads would bring the PCB down to $62.04.
+$94.73 of the PCB price is the filled vias. Moving them off their pads would bring five boards down to $272.05, but it needs another layout pass. How should I handle them?
 
 kicad:hardware/rp2350-devboard.kicad_pro`)
-	]
+	],
+	question: {
+		questionId: 'via-question',
+		question: 'How should we handle the vias in pads?',
+		options: [
+			{ id: 'move-vias', label: 'Move the vias off the pads' },
+			{ id: 'move-and-reroute', label: 'Move them and fix the major routing findings' },
+			{ id: 'keep-filled', label: 'Keep filled, capped vias' }
+		],
+		continueWith: viaContinuation
+	}
 };
 
 type ViaPlan = { change: string; tools: Step; reply: string };
@@ -183,45 +207,6 @@ function viaContinuation(answer: AgentQuestionAnswer): Step[] {
 		say(plan ? chosen.reply : `I moved the vias off the pads.\n\n${chosen.reply}`)
 	];
 }
-
-const viaCost: DemoThread = {
-	id: 'via-cost',
-	title: 'Cut the filled-via cost',
-	model: 'sonnet-5.5',
-	effort: 'high',
-	minutesAgo: 3,
-	steps: [
-		prompt('Filled vias are $94.73 of the PCB price. What are my options before I order?'),
-		work(
-			tool('exec_cmd', VIAS_IN_PADS),
-			tool('exec_cmd', 'cat review/findings.json'),
-			think(
-				'Weighing the options',
-				"82 vias touch SMD pads. Tented vias bring the PCB from $156.77 to $62.04, so five boards drop from $366.78 to $272.05. PCBWay's via-in-pad option prices the same as filling every via, so it saves nothing. The review also lists four major routing findings, and a layout pass could fix those at the same time."
-			),
-			tool('ask_question', 'How should we handle the vias in pads?')
-		),
-		say(`82 vias sit in or touch SMD pads, so PCBWay has to fill and cap every via. There are three ways to handle it.
-
-| Option | Change | Effect |
-| --- | --- | --- |
-| Move the vias | Each in-pad via moves beside its pad | PCB $62.04, five boards $272.05. Needs DRC and new Gerbers. |
-| Move them and reroute | Also fix QSPI_SD3, SD_CLK and SD_D3, the VBAT neck and the USB D+ loop | Same saving, and fixes the review's four major findings. More layout work. |
-| Keep filled vias | Order as is | Five boards stay at $366.78. No layout change. |
-
-Which one should I do?`)
-	],
-	question: {
-		questionId: 'via-question',
-		question: 'How should we handle the vias in pads?',
-		options: [
-			{ id: 'move-vias', label: 'Move the vias off the pads' },
-			{ id: 'move-and-reroute', label: 'Move them and fix the major routing findings' },
-			{ id: 'keep-filled', label: 'Keep filled, capped vias' }
-		],
-		continueWith: viaContinuation
-	}
-};
 
 const BOARD_TASK =
 	"Write firmware/boards/rp2350_devboard.h from pico-sdk's pico2_w.h. Flash is 16 MB. The RM2 is wired like the Pico 2 W on GPIO23/24/25/29, with WL_GPIO1 on U6's PS/SYNC and WL_GPIO2 sensing VBUS, but WL_GPIO0 has no LED and GPIO29 has no VSYS sense. Add defines for PSRAM CS (GPIO8), microSD card detect (GPIO9), the WS2812B (GPIO22) and VBAT (GPIO28).";
@@ -320,95 +305,6 @@ const firmwareBattery: DemoThread = {
 	]
 };
 
-const psram: DemoThread = {
-	id: 'psram',
-	title: 'Enable the 8 MB PSRAM',
-	model: 'kimi-k3.1-pro',
-	effort: 'high',
-	minutesAgo: 1,
-	working: true,
-	steps: [
-		prompt('Bring up the 8 MB PSRAM on GPIO8 and add a read/write test at boot.'),
-		work(
-			think(
-				'Planning the PSRAM setup',
-				'The APS6404L (U3) sits on QSPI chip select 1, which is GPIO8. GPIO8 resets with a pull-down, and R7 (2.2 kΩ) holds CE# high against it. Switch GPIO8 to XIP_CS1, then set up the QMI M1 window and put the chip in quad mode.'
-			),
-			tool('parse_file', 'https://datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf'),
-			tool('parse_file', 'https://www.pjrc.com/store/APS6404L_3SQR.pdf'),
-			tool(
-				'apply_patch',
-				'firmware/src/psram.h\nfirmware/src/psram.c\nfirmware/src/main.c\nfirmware/CMakeLists.txt'
-			),
-			tool('exec_cmd', FIRMWARE_BUILD),
-			think(
-				'Checking the errata',
-				"Erratum RP2350-E14: the bootrom's `connect_internal_flash()` sets up the pads for GPIO0 instead of GPIO8. Clear GPIO8's pad isolation after that call, or CS1 never reaches the pin."
-			),
-			tool('exec_cmd', 'grep -n "psram" firmware/build/devboard.map | head')
-		),
-		say(`The PSRAM is mapped at \`0x11000000\`.
-
-- \`psram_init()\` clears GPIO8's pad isolation for erratum E14, switches it to XIP_CS1, and sets up the QMI M1 window for the APS6404L in quad mode at the flash clock divider.
-- \`main.c\` writes a pattern over all 8 MB at boot, reads it back, and prints the result.
-
-PSRAM_CS runs 39.1 mm with 4 vias, so keep the clock where it is until you've checked signal quality on a real board. It builds, but it hasn't run on hardware.`)
-	]
-};
-
-const dashboard: DemoThread = {
-	id: 'dashboard',
-	title: 'Web Serial battery dashboard',
-	model: 'deepseek-v4.1-flash-1017',
-	effort: 'high',
-	minutesAgo: 30,
-	steps: [
-		prompt(
-			"Make a web page that connects to the board over USB and charts the battery voltage live. Change the firmware's log to whatever the page needs."
-		),
-		work(
-			think(
-				'Choosing the transport',
-				"pico-sdk's USB stdio shows up as a CDC serial port, so the page can read it with Web Serial and needs no driver or server. Check which browsers ship it."
-			),
-			tool('web_search', 'Web Serial API browser support Firefox Safari (10 results)'),
-			tool('scrape_url', 'https://developer.mozilla.org/en-US/docs/Web/API/Web_Serial_API'),
-			think(
-				'Picking a line format',
-				"Web Serial is in Chrome, Edge and Opera on desktop. Firefox and Safari don't have it. Print one JSON object per line from the firmware, so the page splits on newlines and parses each sample."
-			),
-			tool('apply_patch', 'firmware/src/main.c'),
-			tool('exec_cmd', FIRMWARE_BUILD),
-			tool('apply_patch', 'dashboard/index.html\ndashboard/serial.js\ndashboard/mock-port.js'),
-			tool('read_skill', '$agent-browser'),
-			tool('exec_cmd', 'python3 -m http.server 8761 --directory dashboard'),
-			tool(
-				'exec_cmd',
-				'agent-browser open "http://localhost:8761/?mock" && agent-browser click "#connect"'
-			),
-			tool('exec_cmd', 'agent-browser wait 20000 && agent-browser screenshot /tmp/dashboard.png'),
-			tool('exec_cmd', 'agent-browser errors')
-		),
-		say(`\`dashboard/index.html\` connects to the board over Web Serial and charts the last 10 minutes of battery voltage. Open it in Chrome or Edge on a desktop, since Firefox and Safari don't support Web Serial.
-
-![The dashboard reading the mock port](${new URL(dashboardScreenshot, document.baseURI).href})
-
-No board is built yet, so I tested it against \`dashboard/mock-port.js\`. It plays 5 minutes on the cell and then USB plugged in, at 30× speed. Add \`?mock\` to the URL to try it. The browser logged no errors.
-
-The firmware now prints one JSON object per line:
-
-\`\`\`diff
--		printf("VBAT %lu mV, USB %s%s\\n", millivolts, usb ? "on" : "off",
--		       battery_low(millivolts) ? ", low" : "");
-+		printf("{\\"ms\\":%lu,\\"vbat_mv\\":%lu,\\"usb\\":%s}\\n",
-+		       (unsigned long)to_ms_since_boot(get_absolute_time()), (unsigned long)millivolts,
-+		       usb ? "true" : "false");
-\`\`\`
-
-The port picker only lists devices with Raspberry Pi's USB vendor ID, 0x2E8A, so other serial ports stay hidden.`)
-	]
-};
-
 const usbPort: DemoThread = {
 	id: 'usb-port',
 	title: 'Check the USB-C port',
@@ -460,16 +356,13 @@ The battery divider on GPIO28 draws about 4.5 µA all the time, about 3 mAh a mo
 	]
 };
 
-export const DEFAULT_THREAD_ID = orderPack.id;
+export const DEFAULT_THREAD_ID = boardBuild.id;
 
 export const threads: DemoThread[] = [
-	orderPack,
-	viaCost,
-	dashboard,
+	boardBuild,
 	firmware,
 	firmwareBoard,
 	firmwareBattery,
-	psram,
 	usbPort,
 	batteryPick
 ];

@@ -1,7 +1,4 @@
 import { demoProject } from '../demo-project';
-import dashboardHtml from './dashboard/index.html?raw';
-import mockPortJs from './dashboard/mock-port.js?raw';
-import serialJs from './dashboard/serial.js?raw';
 import boardModels from './kicad/rp2350-devboard.glb.gzip?url';
 import boardScene from './kicad/rp2350-devboard.spks.gzip?url';
 import { threads } from './threads';
@@ -140,9 +137,6 @@ const kicadFiles = {
 };
 
 const textFiles = {
-	'dashboard/index.html': dashboardHtml,
-	'dashboard/serial.js': serialJs,
-	'dashboard/mock-port.js': mockPortJs,
 	'README.md': `# rp2350-devboard
 
 A 28 × 78.54 mm, 4-layer RP2350A board with Wi-Fi and Bluetooth, a LiPo charger and microSD, laid out for PCBWay turnkey assembly. Every fitted part is on the top side.
@@ -157,7 +151,6 @@ A 28 × 78.54 mm, 4-layer RP2350A board with Wi-Fi and Bluetooth, a LiPo charger
 
 - \`hardware/\`: KiCad project (5 sheets) and BOM
 - \`firmware/\`: pico-sdk bring-up firmware
-- \`dashboard/\`: Web Serial page that charts the battery voltage
 - \`docs/\`: assembly and bring-up notes
 
 One assembled board costs $282.37 from PCBWay, or $73.36 each for five.
@@ -255,10 +248,8 @@ int main(void) {
 		const uint32_t millivolts = battery_millivolts();
 		const bool usb = cyw43_arch_gpio_get(CYW43_WL_GPIO_VBUS_PIN);
 
-		// One JSON object per line, read by dashboard/index.html.
-		printf("{\\"ms\\":%lu,\\"vbat_mv\\":%lu,\\"usb\\":%s}\\n",
-		       (unsigned long)to_ms_since_boot(get_absolute_time()), (unsigned long)millivolts,
-		       usb ? "true" : "false");
+		printf("VBAT %lu mV, USB %s%s\\n", (unsigned long)millivolts, usb ? "on" : "off",
+		       battery_low(millivolts) ? ", low" : "");
 		led = !led;
 		pio_sm_put_blocking(pio0, 0, led ? GREEN : 0);
 		sleep_ms(1000);
@@ -346,10 +337,8 @@ export const rp2350Devboard = demoProject({
 	),
 	boards: { 'hardware/rp2350-devboard.kicad_pcb': { scene: boardScene, models: boardModels } },
 	gitStatus: [
-		{ path: 'dashboard/index.html', status: 'untracked' },
-		{ path: 'dashboard/serial.js', status: 'untracked' },
-		{ path: 'dashboard/mock-port.js', status: 'untracked' },
-		{ path: 'firmware/src/main.c', status: 'modified' }
+		{ path: 'hardware/rp2350-devboard.kicad_pcb', status: 'modified' },
+		{ path: 'hardware/bom.md', status: 'modified' }
 	],
 	artifacts: [
 		{ key: 'bom', title: 'rp2350-devboard-bom.md', path: 'hardware/bom.md' },

@@ -10,15 +10,13 @@ const wire: DemoThread = {
 	title: 'Wire the vent controller',
 	model: 'fable-5.2',
 	effort: 'high',
-	minutesAgo: 20,
+	minutesAgo: 4,
 	steps: [
-		prompt(
-			'I want the roof vent to open when the greenhouse gets hot and log soil moisture to Home Assistant. Pick SparkFun parts that need no soldering where possible, and draw the wiring.'
-		),
+		prompt('Open my greenhouse vent when it gets hot and log soil moisture. Show me the wiring.'),
 		work(
 			think(
 				'Planning the parts',
-				'Home Assistant speaks Matter and MQTT, so any Wi-Fi board works. A Thing Plus has a Qwiic port and a LiPo charger, so the air sensor plugs in without soldering. The soil probe is analog, so it needs an ADC pin, and a hobby servo can push a small vent arm.'
+				'Logging over Wi-Fi needs no extra parts, so start from a Wi-Fi board. SparkFun has docs for every part, and a Thing Plus has a Qwiic port, so the air sensor plugs in without soldering. The soil probe is analog, so it needs an ADC pin, and a hobby servo can push a small vent arm.'
 			),
 			tool('read_skill', '$designing-wiring-diagram'),
 			tool('read_skill', '$selecting-hardware-parts'),
@@ -73,7 +71,7 @@ const order: DemoThread = {
 	title: 'Order the SparkFun parts',
 	model: 'opus-5.5',
 	effort: 'medium',
-	minutesAgo: 2,
+	minutesAgo: 6,
 	working: true,
 	steps: [
 		prompt(
