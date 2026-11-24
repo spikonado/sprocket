@@ -145,8 +145,6 @@ By default, every script that changes copper, including the fan-out, diff-pair, 
 - Puts vias in same-net SMD pads.
 - Picks its layers without reading their types, except `kicad-route`, which keeps tracks off `power` layers.
 
-On every run of these scripts, pass the flags from its `--help` that keep the project's sizes and rules.
-
 Before the first route, put rule-area keepouts that block tracks on every layer over switch nodes, under each mounting hole's screw head or standoff, and over other areas that traces must avoid.
 DRC checks only a mounting hole's own clearance, not its screw head or standoff.
 Allow copper pours in the keepouts, so GND still fills under the switch node.
