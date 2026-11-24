@@ -55,7 +55,7 @@ Follow a recommendation, in the schematic or the layout, when you can explain wh
   For each distributor the part may be ordered from, add a hidden `<Distributor> Part #` field with its SKU.
 - Move fields and symbols until no text overlaps another symbol, field, or label in the rendered schematic.
 
-ERC passes on designs that would damage parts. Before calling the schematic done, review each block from the exported netlist, with one read-only subagent per block, and check:
+ERC passes on designs that would damage parts. Before calling the schematic done, check from the exported netlist:
 
 - Every pin against its absolute maximum ratings while unpowered, partly powered, and powered, including back-powering through connectors, sense pins, and I/O.
 - Every adjustable or fixed-output regulator's feedback and ADJ wiring against the datasheet's output equation.
@@ -93,7 +93,6 @@ Write its stackup into the board, as in [Known traps](#known-traps), before any 
   Join the island to PGND at one point, usually the exposed pad, through a net tie, and give the island no other connection to the plane.
 - Split ground only for galvanic isolation, like mains or patient connections, and cross the gap only with isolators, optocouplers, or transformers.
 - Give every high-speed trace a continuous reference plane along its whole length.
-  On 4-layer boards, `B.Cu` traces return through the inner power plane, so keep it as solid as the ground plane.
 
 ## Placing parts
 
@@ -147,7 +146,6 @@ By default, every script that changes copper, including the fan-out, diff-pair, 
 - Picks its layers without reading their types, except `kicad-route`, which keeps tracks off `power` layers.
 
 On every run of these scripts, pass the flags from its `--help` that keep the project's sizes and rules.
-When nets stay open, fix the placement, the fan-out, or the board size. Never open a plane to tracks to finish a route.
 
 Before the first route, put rule-area keepouts that block tracks on every layer over switch nodes, under each mounting hole's screw head or standoff, and over other areas that traces must avoid.
 DRC checks only a mounting hole's own clearance, not its screw head or standoff.
@@ -160,14 +158,13 @@ Right after placement, the pours, and the keepouts, and before the schematic is 
    Use `--quick 2` for every experiment, because a full run takes minutes longer.
 2. Fix one problem it names at a time by moving the parts around it, and repeat until the open and costly nets are few.
    When you move parts in several places at once, you can't tell which move helped, and the batch often opens other nets than it closes.
-3. Where crossing nets connect to interchangeable pins, like MCU GPIOs, propose pin swaps to the user.
-   Once they agree, `kicad-route --swappable-nets` swaps the pins, and `--schematic-dir` writes the swaps to the schematic.
+3. Where crossing nets connect to interchangeable pins, like MCU GPIOs, swap the pins with `kicad-route --swappable-nets`, and write the swaps to the schematic with `--schematic-dir`.
    Finish this step before the first full route.
 
 Then route in this order:
 
 1. Draw the critical copper yourself: switch nodes and crystal nets.
-   Fan out each IC whose inner pins the router can't reach, like a BGA, taking each pin to a via outside the pad ring, never in a pad. `check_fanout.py` names the pins the placement cages.
+   Fan out each BGA with `bga_fanout.py`, because the router can't reach its inner balls. `check_fanout.py` names the pins the placement cages.
    For ICs with pads only on their edges, like QFNs and QFPs, compare trial routes with and without a fan-out, and keep it only when it routes better. `qfn_fanout.py` helps, but check its result in `kicad-view`, and leave plane nets out of it, because their stubs dangle once the pour connects the pad.
 2. Route differential pairs with `route_diff.py --impedance <ohms>`, then single-ended impedance nets, like RF feeds, with `kicad-route --impedance <ohms>`. Check both with `check_impedance.py`.
    A trace on a layer that gets a GND pour is coplanar, and the pour pulls its impedance down. Declare the pour's gap to the router and `check_impedance.py`, or the trace comes out too wide.
@@ -255,16 +252,10 @@ DRC passes on boards whose copper overheats or whose signals radiate. Before cal
 - Planes cut or slit by other tracks.
 - Hot-loop and input capacitors at their pins, as in [Placing parts](#placing-parts).
 
-Then run `signal_review.py` and `route_review.py` on the board and fix what breaks these rules:
+Then run `signal_review.py` on the USB, QSPI, SD, and clock nets and `route_review.py` on the board, and fix what they flag and what breaks these rules:
 
 - No track of another net on a plane layer.
-- USB, QSPI, SD, and clock nets at most about 1.5 times their straight-line length, with at most 2 vias each.
-- Each differential pair coupled along its length and at its target impedance.
 - A GND via next to each signal via of a high-speed net, so its return current can change planes with it. `check_return_vias.py` reports the ones that lack it.
-- Switch nodes at their net class width, with no vias.
-- No vias in SMD pads, unless the user chose the manufacturer's filled and capped vias.
-
-Fix every failure in the layout, or tell the user which ones remain and why.
 
 ## Show the result to the user
 
