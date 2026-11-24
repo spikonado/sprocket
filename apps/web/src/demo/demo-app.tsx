@@ -39,14 +39,19 @@ import { useStore } from '$lib/store';
 import { applyTheme, type SprocketTheme } from '$lib/theme';
 import { cn } from '$lib/utils';
 import { isWorking, type DemoState } from './demo-state';
-import { artifactContents, artifacts, project, workspace } from './fixtures/project';
+import { projects } from './fixtures/projects';
 import { workspaceApi } from './workspace-api';
 import './demo.css';
 
 type Thread = Doc<'threadRecords'>;
 
-const filesApi = workspaceApi(workspace);
+const workspaces = projects.map((demo) => ({ ...demo, filesApi: workspaceApi(demo.workspace) }));
+const projectList = projects.map((demo) => demo.project);
 const NARROW = '(max-width: 767px)';
+
+function workspaceFor(repositoryKey: string) {
+	return workspaces.find((demo) => demo.project.repositoryKey === repositoryKey) ?? workspaces[0];
+}
 
 function treeSummaryReader(state: DemoState): ThreadTreeSummaryRead {
 	return function useDemoTreeSummary({ threadId }) {
@@ -147,11 +152,16 @@ export default function DemoApp({
 	const [sidebarOpen, setSidebarOpen] = useState(!narrow);
 	const [prompt, setPrompt] = useState('');
 	const [selectedQuestionOptionId, setSelectedQuestionOptionId] = useState<string | null>(null);
+	const [selectedProjects, setSelectedProjects] = useState<string[]>([]);
+	const [newThreadProject, setNewThreadProject] = useState(projectList[0].repositoryKey);
 
 	const [artifactFullscreenRequest, setArtifactFullscreenRequest] =
 		useState<Promise<boolean> | null>(null);
 
 	const record = currentThreadId ? state.record(currentThreadId) : undefined;
+	const repositoryKey = record?.repositoryKey ?? newThreadProject;
+	const { project, artifacts, artifactContents, filesApi } = workspaceFor(repositoryKey);
+
 	const run = currentThreadId ? state.run(currentThreadId) : null;
 	const working = run !== null && isWorking(run);
 	const pendingQuestion = run?.status === 'waiting' ? run.question : null;
@@ -201,10 +211,11 @@ export default function DemoApp({
 			},
 			currentThreadId
 		);
-	}, [artifactPanel, state, currentThreadId]);
+	}, [artifactPanel, state, currentThreadId, project]);
 
 	const markdownFileLinks = useMemo<MarkdownFileLinks>(() => {
-		const roots = [project.workspacePath];
+		const workspace = workspaceFor(repositoryKey);
+		const roots = [workspace.project.workspacePath];
 
 		return {
 			roots,
@@ -212,13 +223,13 @@ export default function DemoApp({
 				artifactPanel.setFullscreenKey(null);
 				void openMarkdownLink(target, {
 					roots,
-					entryKind: (entry) => filesApi.workspaceEntryKind(entry),
+					entryKind: (entry) => workspace.filesApi.workspaceEntryKind(entry),
 					openFile: (file) => artifactPanel.openFile(file),
 					openDirectory: (directory) => artifactPanel.openDirectory(directory)
 				});
 			}
 		};
-	}, [artifactPanel]);
+	}, [artifactPanel, repositoryKey]);
 
 	function selectThread(threadId: Id<'threadRecords'> | null) {
 		setCurrentThreadId(threadId);
@@ -239,7 +250,13 @@ export default function DemoApp({
 			state.answer(currentThreadId, selectedQuestionOptionId, prompt);
 		} else if (prompt.trim() && selection.model && selection.effort) {
 			setCurrentThreadId(
-				state.submitPrompt(currentThreadId, prompt.trim(), selection.model, selection.effort)
+				state.submitPrompt(
+					currentThreadId,
+					project.repositoryKey,
+					prompt.trim(),
+					selection.model,
+					selection.effort
+				)
 			);
 		} else {
 			return;
@@ -268,12 +285,12 @@ export default function DemoApp({
 						state={state}
 						signedInUserId={state.userId}
 						localApi={null}
-						sections={state.sections(search)}
+						sections={state.sections(search, selectedProjects)}
 						search={search}
 						onSearchChange={setSearch}
-						projects={[project]}
+						projects={projectList}
 						models={modelCatalog?.models ?? []}
-						selectedProjects={[]}
+						selectedProjects={selectedProjects}
 						currentThreadId={currentThreadId}
 						settledOpen={settledOpen}
 						onSettledOpenChange={setSettledOpen}
@@ -281,9 +298,12 @@ export default function DemoApp({
 						theme={theme}
 						onThemeChange={changeTheme}
 						onClose={() => setSidebarOpen(false)}
-						onFilter={() => {}}
+						onFilter={setSelectedProjects}
 						onSelect={(thread) => selectThread(thread._id)}
-						onNew={() => selectThread(null)}
+						onNew={() => {
+							setNewThreadProject(project.repositoryKey);
+							selectThread(null);
+						}}
 						onAddProject={() => {}}
 						onSettings={() => {}}
 						onChange={async (thread, inboxState) => {
@@ -353,9 +373,14 @@ export default function DemoApp({
 									<div className={!currentThreadId ? 'create-thread-screen' : 'shrink-0'}>
 										{!currentThreadId && (
 											<CreateThreadHeading
-												projects={[project]}
+												projects={projectList}
 												workspacePath={project.workspacePath}
-												onProject={() => {}}
+												onProject={(workspacePath) =>
+													setNewThreadProject(
+														projectList.find((item) => item.workspacePath === workspacePath)
+															?.repositoryKey ?? newThreadProject
+													)
+												}
 												onAddProject={() => {}}
 											/>
 										)}

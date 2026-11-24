@@ -1,0 +1,74 @@
+{
+	"title": "Greenhouse vent controller",
+	"parts": [
+		{
+			"id": "board",
+			"name": "SparkFun Thing Plus ESP32-C6",
+			"logic": 3.3,
+			"pins": {
+				"right": ["GND.1", "3V3", "SDA", "SCL", "IO2", "IO0", "GND.2", "VUSB_5V", "IO5"]
+			},
+			"photo": "https://www.sparkfun.com/media/catalog/product/D/E/DEV-22924-Thing-Plus-ESP32-C6-Feature.jpg",
+			"link": "https://www.sparkfun.com/sparkfun-thing-plus-esp32-c6.html"
+		},
+		{
+			"id": "bme",
+			"name": "SparkFun BME280 (Qwiic)",
+			"logic": 3.3,
+			"pins": { "left": ["GND", "3V3", "SDA", "SCL"] },
+			"photo": "https://www.sparkfun.com/media/catalog/product/1/5/15440-SparkFun_Atmospheric_Sensor_Breakout_-_BME280__Qwiic_-04a.jpg",
+			"link": "https://www.sparkfun.com/sparkfun-atmospheric-sensor-breakout-bme280-qwiic.html"
+		},
+		{
+			"id": "soil",
+			"name": "SparkFun Soil Moisture Sensor",
+			"logic": 3.3,
+			"pins": { "left": ["VCC", "GND", "SIG"] },
+			"photo": "https://www.sparkfun.com/media/catalog/product/1/3/13322-01.jpg",
+			"link": "https://www.sparkfun.com/sparkfun-soil-moisture-sensor.html"
+		},
+		{
+			"id": "servo",
+			"name": "Vent servo, generic sub-micro",
+			"pins": { "left": ["SIGNAL", "V+", "GND"] },
+			"photo": "https://www.sparkfun.com/media/catalog/product/0/9/09065-01a.jpg",
+			"link": "https://www.sparkfun.com/servo-generic-sub-micro-size.html"
+		}
+	],
+	"rails": [
+		{ "id": "VUSB", "volts": 5 },
+		{ "id": "GND", "volts": 0 }
+	],
+	"steps": [
+		{
+			"title": "Air sensor on Qwiic",
+			"note": "One 100 mm Qwiic cable. The Qwiic port is the C6's low-power I2C bus on IO6 and IO7. The BME280's 4.7 kΩ pull-ups in parallel with the board's 2.2 kΩ make 1.5 kΩ, inside the 3 mA I2C limit, so leave both I2C jumpers closed.",
+			"wires": [
+				{ "from": "board.GND.1", "to": "bme.GND", "why": "Qwiic pin 1" },
+				{ "from": "board.3V3", "to": "bme.3V3", "why": "Qwiic pin 2" },
+				{ "from": "board.SDA", "to": "bme.SDA", "why": "IO6, LP I2C" },
+				{ "from": "board.SCL", "to": "bme.SCL", "why": "IO7, LP I2C" }
+			]
+		},
+		{
+			"title": "Soil probe",
+			"note": "The probe's pads corrode if they carry current all day, so IO2 powers it only for the 10 ms around each reading. It draws under 5 mA, well inside a GPIO's 40 mA.",
+			"wires": [
+				{ "from": "board.IO2", "to": "soil.VCC", "why": "Switched probe power" },
+				{ "from": "board.GND.2", "to": "soil.GND" },
+				{ "from": "board.IO0", "to": "soil.SIG", "why": "ADC1 channel 0" }
+			]
+		},
+		{
+			"title": "Vent servo",
+			"note": "The servo pulls a few hundred mA while it moves, more than the 500 mA 3.3 V regulator can spare next to Wi-Fi, so it runs from VUSB. VUSB only has 5 V from USB-C, so power the controller from a USB-C supply. The servo reads the 3.3 V pulse fine.",
+			"wires": [
+				{ "from": "board.VUSB_5V", "to": "VUSB", "why": "5 V from USB-C" },
+				{ "from": "board.GND.2", "to": "GND" },
+				{ "from": "servo.V+", "to": "VUSB" },
+				{ "from": "servo.GND", "to": "GND" },
+				{ "from": "board.IO5", "to": "servo.SIGNAL", "why": "LEDC PWM at 50 Hz" }
+			]
+		}
+	]
+}

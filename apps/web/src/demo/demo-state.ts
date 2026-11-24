@@ -17,6 +17,7 @@ import type { InboxSectionData } from '$lib/project/inbox';
 import type { ThreadTreeSummary } from '$lib/project/useThreadTree';
 import type { Store } from '$lib/store';
 import { DOWNLOAD_URL, previewReply } from './fixtures/preview-reply';
+import type { DemoProject } from './fixtures/demo-project';
 import { joinRuns, prompt, recordRun, type Step } from './fixtures/rows';
 import type { DemoQuestion, DemoThread, TranscriptFixture } from './fixtures/types';
 import { runUsage } from './fixtures/usage';
@@ -87,7 +88,6 @@ function initialRun(thread: DemoThread): RunState {
 export class DemoState implements Store<number> {
 	readonly userId = USER_ID;
 	readonly transcripts: DemoTranscripts;
-	readonly repositoryKey: string;
 	#threads = new Map<string, ThreadState>();
 	#runs = new Map<string, RunRecord>();
 	#catalog: CatalogState = { status: 'loading' };
@@ -96,14 +96,18 @@ export class DemoState implements Store<number> {
 	#version = 0;
 	#created = 0;
 
-	constructor(repositoryKey: string, threads: DemoThread[]) {
+	constructor(projects: DemoProject[]) {
 		const now = Date.now();
-		this.repositoryKey = repositoryKey;
-		this.transcripts = new DemoTranscripts(
-			Object.fromEntries(threads.map((thread) => [thread.id, joinRuns(...thread.runs)]))
+
+		const threads = projects.flatMap(({ project, threads }) =>
+			threads.map((thread) => ({ thread, repositoryKey: project.repositoryKey }))
 		);
 
-		for (const thread of threads) {
+		this.transcripts = new DemoTranscripts(
+			Object.fromEntries(threads.map(({ thread }) => [thread.id, joinRuns(...thread.runs)]))
+		);
+
+		for (const { thread, repositoryKey } of threads) {
 			const lastMessageAt = now - thread.minutesAgo * 60_000;
 			const run = initialRun(thread);
 			const runIds: string[] = [];
@@ -154,16 +158,19 @@ export class DemoState implements Store<number> {
 		return this.#threads.get(threadId)?.run ?? { status: 'idle' };
 	}
 
-	sections(search: string): InboxSectionData[] {
+	sections(search: string, repositoryKeys: string[]): InboxSectionData[] {
 		const query = search.trim().toLowerCase();
 
-		return this.#cached(`sections:${query}`, () => {
+		return this.#cached(`sections:${repositoryKeys.join(' ')}:${query}`, () => {
+			const inProjects = (thread: Thread) =>
+				repositoryKeys.length === 0 || repositoryKeys.includes(thread.repositoryKey);
+
 			const matches = (thread: Thread) =>
 				(thread.title ?? '').toLowerCase().includes(query) ||
 				this.children(thread._id).some(matches);
 
 			const roots = this.#records().filter(
-				(thread) => thread.parentThreadId === undefined && matches(thread)
+				(thread) => thread.parentThreadId === undefined && inProjects(thread) && matches(thread)
 			);
 
 			return [
@@ -262,11 +269,12 @@ export class DemoState implements Store<number> {
 
 	submitPrompt(
 		threadId: Id<'threadRecords'> | null,
+		repositoryKey: string,
 		text: string,
 		model: string,
 		effort: string
 	): Id<'threadRecords'> {
-		const id = threadId ?? this.#createThread(text, model, effort);
+		const id = threadId ?? this.#createThread(repositoryKey, text, model, effort);
 		this.#patch(id, { selectedModel: model, reasoningEffort: reasoningEffort(effort) });
 		void this.#play(id, previewReply(text));
 
@@ -354,7 +362,12 @@ export class DemoState implements Store<number> {
 		this.#set(threadId, { run: { status: 'paying', runId, abort, purchase } });
 	}
 
-	#createThread(text: string, model: string, effort: string): Id<'threadRecords'> {
+	#createThread(
+		repositoryKey: string,
+		text: string,
+		model: string,
+		effort: string
+	): Id<'threadRecords'> {
 		const now = Date.now();
 		const id = fixtureId<'threadRecords'>(`new-thread-${++this.#created}`);
 		const title = text.trim().split('\n', 1)[0].slice(0, TITLE_CHARS) || 'New thread';
@@ -367,7 +380,7 @@ export class DemoState implements Store<number> {
 				_creationTime: now,
 				userId: USER_ID,
 				status: 'queued',
-				repositoryKey: this.repositoryKey,
+				repositoryKey,
 				title,
 				selectedModel: model,
 				reasoningEffort: reasoningEffort(effort),

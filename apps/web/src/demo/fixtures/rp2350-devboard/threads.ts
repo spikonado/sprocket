@@ -1,7 +1,7 @@
 import type { AgentQuestionAnswer } from '@convex/lib/agentQuestions';
+import { prompt, recordRun, say, think, tool, work, type Step } from '../rows';
+import type { DemoThread } from '../types';
 import dashboardScreenshot from './dashboard-screenshot.webp?url';
-import { prompt, recordRun, say, think, tool, work, type Step } from './rows';
-import type { DemoThread } from './types';
 
 const SCHEMATIC = 'hardware/rp2350-devboard.kicad_sch';
 const BOARD = 'hardware/rp2350-devboard.kicad_pcb';
@@ -369,99 +369,6 @@ PSRAM_CS runs 39.1 mm with 4 vias, so keep the clock where it is until you've ch
 	]
 };
 
-const testRig: DemoThread = {
-	id: 'test-rig',
-	title: 'Wire up a bench test rig',
-	model: 'fable-5.2',
-	effort: 'high',
-	minutesAgo: 20,
-	runs: [
-		recordRun('run-test-rig-1', [
-			prompt(
-				'When the boards arrive I want a bench rig to exercise them: a temperature and humidity sensor and a small display on Qwiic, and a servo to check PWM. Pick parts from SparkFun and draw the wiring.'
-			),
-			work(
-				think(
-					'Planning the rig',
-					'J4 is the Qwiic port on I2C0 (GPIO4 and GPIO5). The header holes give VBUS on J6 pin 2 and GP16 on J5 pin 6 for the servo. Pick Qwiic boards with two ports so the sensor and display daisy-chain.'
-				),
-				tool('read_skill', '$designing-wiring-diagram'),
-				tool('web_search', 'SparkFun Qwiic temperature humidity sensor breakout (10 results)'),
-				tool(
-					'scrape_url',
-					'https://www.sparkfun.com/sparkfun-atmospheric-sensor-breakout-bme280-qwiic.html'
-				),
-				tool(
-					'scrape_url',
-					'https://learn.sparkfun.com/tutorials/qwiic-atmospheric-sensor-bme280-hookup-guide/all'
-				),
-				think(
-					'Checking the I2C bus',
-					"The BME280 breakout has 4.7 kΩ pull-ups behind a cuttable jumper. In parallel with R30 and R31 (2.2 kΩ) that's 1.5 kΩ, which sinks 2.2 mA at 3.3 V, under the 3 mA I2C limit. The BME280 answers on 0x77 and the OLED on 0x3D, so the addresses don't clash."
-				),
-				tool('scrape_url', 'https://www.sparkfun.com/sparkfun-qwiic-oled-1-3in-128x64.html'),
-				tool('scrape_url', 'https://www.sparkfun.com/servo-generic-sub-micro-size.html'),
-				tool('apply_patch', 'docs/test-rig.wiring.json'),
-				tool('bind_artifact', 'docs/test-rig.wiring.json')
-			),
-			say(`The rig is three SparkFun boards and two Qwiic cables. The wiring check passes, and no jumpers need cutting.
-
-artifact:test-rig
-
-| Part | SKU | Price |
-| --- | --- | --- |
-| BME280 breakout (Qwiic) | SEN-15440 | $16.95 |
-| Qwiic OLED, 1.3 in, 128 × 64 | LCD-23453 | $19.95 |
-| Generic sub-micro servo | ROB-09065 | $12.95 |
-| Qwiic cable, 100 mm, ×2 | PRT-14427 | $3.00 |
-| Jumper wires, M/M, 10 pack | PRT-08431 | $5.25 |
-| **Total** | | **$58.10** |
-
-- J5 and J6 are holes only, so solder 1 × 14 headers in first.
-- The servo runs from VBUS, so it only moves with USB plugged in.
-- GP16 is PWM slice 0 channel A. Drive it at 50 Hz with 1–2 ms pulses.`)
-		])
-	]
-};
-
-const rigOrder: DemoThread = {
-	id: 'rig-order',
-	title: 'Order the rig parts from SparkFun',
-	model: 'opus-5.5',
-	effort: 'medium',
-	minutesAgo: 2,
-	runs: [],
-	liveRun: [
-		prompt(
-			'Order the bench rig parts from SparkFun to my saved address, cheapest shipping. Go ahead if the total is under $75.'
-		),
-		work(
-			think(
-				'Planning the order',
-				"Five lines from the rig list: SEN-15440, LCD-23453, ROB-09065, 2 × PRT-14427 and PRT-08431. Check out in the signed-in browser so the saved address carries over. You've already set the limit, so I can pay once the total is under $75."
-			),
-			tool('read_skill', '$paying-at-checkout'),
-			tool('read_skill', '$using-the-signed-in-browser'),
-			tool('exec_cmd', 'agent-browser open https://www.sparkfun.com/checkout/cart/'),
-			tool('exec_cmd', 'agent-browser snapshot -i'),
-			think(
-				'Reading the checkout',
-				'The cart has all five lines for $58.10, and the saved address filled in. USPS Ground Advantage is the cheapest option at $7.33, so the total is $65.43. Type the placeholder card and pay.'
-			),
-			tool(
-				'exec_cmd',
-				'agent-browser fill @e41 "4242 4242 4242 4242" && agent-browser fill @e42 "12/34" && agent-browser fill @e43 "123"'
-			),
-			tool('card_checkout', '$65.43 USD at SparkFun: awaiting_approval')
-		),
-		say(
-			'The order comes to **$65.43** with USPS Ground Advantage, under your $75 limit. Approve the charge below with your passkey, and I will place the order and send you the tracking link.'
-		),
-		work(tool('poll_checkout', 'Waiting for your approval', { status: 'running' }))
-	],
-	purchase: { merchant: 'SparkFun', amountCents: 6543, currency: 'usd' }
-};
-
 const dashboard: DemoThread = {
 	id: 'dashboard',
 	title: 'Battery dashboard over Web Serial',
@@ -577,9 +484,7 @@ export const DEFAULT_THREAD_ID = orderPack.id;
 export const threads: DemoThread[] = [
 	orderPack,
 	viaCost,
-	rigOrder,
 	dashboard,
-	testRig,
 	firmware,
 	firmwareBoard,
 	firmwareBattery,

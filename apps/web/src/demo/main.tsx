@@ -7,8 +7,7 @@ import type { UpdateState } from '$lib/updates';
 import DemoApp from './demo-app';
 import { DemoState } from './demo-state';
 import { DOWNLOAD_URL } from './fixtures/preview-reply';
-import { project } from './fixtures/project';
-import { DEFAULT_THREAD_ID, threads } from './fixtures/threads';
+import { DEFAULT_THREAD_ID, projects } from './fixtures/projects';
 import '../app.css';
 
 const container = document.getElementById('root');
@@ -18,7 +17,7 @@ if (!container) throw new Error('Missing application root.');
 const params = new URLSearchParams(window.location.search);
 const themeParam = params.get('theme');
 const theme = isSprocketTheme(themeParam) ? themeParam : DEFAULT_THEME;
-const state = new DemoState(project.repositoryKey, threads);
+const state = new DemoState(projects);
 
 void state.loadCatalog();
 
