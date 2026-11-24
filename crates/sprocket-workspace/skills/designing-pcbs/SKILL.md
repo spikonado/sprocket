@@ -82,8 +82,6 @@ Ask the user which manufacturer and service tier they will order from, and read 
 Set its minimums as the board's design rules, and keep net class widths and clearances above them.
 Write its stackup into the board, as in [Known traps](#known-traps), before any impedance-controlled routing, because the routers compute widths from it.
 
-Ask the user about the enclosure's height limits, keep-out areas, fixed mounting holes, and which edge each connector exits, because the board file doesn't record them.
-
 ## Grounding
 
 - Use one unbroken ground plane under the whole board, with no other pours or traces on its layer.
@@ -147,7 +145,7 @@ By default, every script that changes copper, including the fan-out, diff-pair, 
 - Puts vias in same-net SMD pads.
 - Picks its layers without reading their types, except `kicad-route`, which keeps tracks off `power` layers.
 
-On every run of these scripts, pass the flags from its `--help` that keep the project's sizes and rules, keep vias out of pads unless the user chose filled and capped vias, and forbid every `power` layer.
+On every run of these scripts, pass the flags from its `--help` that keep the project's sizes and rules.
 When nets stay open, fix the placement, the fan-out, or the board size. Never open a plane to tracks to finish a route.
 
 Before the first route, put rule-area keepouts that block tracks on every layer over switch nodes, under each mounting hole's screw head or standoff, and over other areas that traces must avoid.
