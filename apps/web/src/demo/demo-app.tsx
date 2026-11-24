@@ -39,15 +39,19 @@ import { useStore } from '$lib/store';
 import { applyTheme, type SprocketTheme } from '$lib/theme';
 import { cn } from '$lib/utils';
 import { isWorking, type DemoState } from './demo-state';
-import { modelCatalog } from './fixtures/models';
-import { artifactContents, artifacts, project, workspaceFiles } from './fixtures/project';
+import { projects } from './fixtures/projects';
 import { workspaceApi } from './workspace-api';
 import './demo.css';
 
 type Thread = Doc<'threadRecords'>;
 
-const filesApi = workspaceApi(workspaceFiles);
+const workspaces = projects.map((demo) => ({ ...demo, filesApi: workspaceApi(demo.workspace) }));
+const projectList = projects.map((demo) => demo.project);
 const NARROW = '(max-width: 767px)';
+
+function workspaceFor(repositoryKey: string) {
+	return workspaces.find((demo) => demo.project.repositoryKey === repositoryKey) ?? workspaces[0];
+}
 
 function treeSummaryReader(state: DemoState): ThreadTreeSummaryRead {
 	return function useDemoTreeSummary({ threadId }) {
@@ -116,11 +120,11 @@ function DemoSidebar({
 	);
 }
 
-function modelSelection(record: Thread | undefined) {
-	return {
-		model: record?.selectedModel ?? modelCatalog.defaultModelId,
-		effort: record?.reasoningEffort ?? modelCatalog.defaultReasoningEffort
-	};
+type ModelSelection = { model?: string; effort?: string };
+
+/** A new thread's model is left unset, so the composer picks the catalog's default once it loads. */
+function modelSelection(record: Thread | undefined): ModelSelection {
+	return { model: record?.selectedModel, effort: record?.reasoningEffort };
 }
 
 export default function DemoApp({
@@ -148,14 +152,21 @@ export default function DemoApp({
 	const [sidebarOpen, setSidebarOpen] = useState(!narrow);
 	const [prompt, setPrompt] = useState('');
 	const [selectedQuestionOptionId, setSelectedQuestionOptionId] = useState<string | null>(null);
+	const [selectedProjects, setSelectedProjects] = useState<string[]>([]);
+	const [newThreadProject, setNewThreadProject] = useState(projectList[0].repositoryKey);
 
 	const [artifactFullscreenRequest, setArtifactFullscreenRequest] =
 		useState<Promise<boolean> | null>(null);
 
 	const record = currentThreadId ? state.record(currentThreadId) : undefined;
+	const repositoryKey = record?.repositoryKey ?? newThreadProject;
+	const { project, artifacts, artifactContents, filesApi } = workspaceFor(repositoryKey);
+
 	const run = currentThreadId ? state.run(currentThreadId) : null;
 	const working = run !== null && isWorking(run);
 	const pendingQuestion = run?.status === 'waiting' ? run.question : null;
+	const catalog = state.catalog;
+	const modelCatalog = catalog.status === 'ready' ? catalog.catalog : undefined;
 
 	const [selection, setSelection] = useState(() => ({
 		threadId: currentThreadId,
@@ -200,10 +211,11 @@ export default function DemoApp({
 			},
 			currentThreadId
 		);
-	}, [artifactPanel, state, currentThreadId]);
+	}, [artifactPanel, state, currentThreadId, project]);
 
 	const markdownFileLinks = useMemo<MarkdownFileLinks>(() => {
-		const roots = [project.workspacePath];
+		const workspace = workspaceFor(repositoryKey);
+		const roots = [workspace.project.workspacePath];
 
 		return {
 			roots,
@@ -211,13 +223,13 @@ export default function DemoApp({
 				artifactPanel.setFullscreenKey(null);
 				void openMarkdownLink(target, {
 					roots,
-					entryKind: (entry) => filesApi.workspaceEntryKind(entry),
+					entryKind: (entry) => workspace.filesApi.workspaceEntryKind(entry),
 					openFile: (file) => artifactPanel.openFile(file),
 					openDirectory: (directory) => artifactPanel.openDirectory(directory)
 				});
 			}
 		};
-	}, [artifactPanel]);
+	}, [artifactPanel, repositoryKey]);
 
 	function selectThread(threadId: Id<'threadRecords'> | null) {
 		setCurrentThreadId(threadId);
@@ -236,9 +248,15 @@ export default function DemoApp({
 		if (pendingQuestion && currentThreadId) {
 			if (!selectedQuestionOptionId && !prompt.trim()) return;
 			state.answer(currentThreadId, selectedQuestionOptionId, prompt);
-		} else if (prompt.trim()) {
+		} else if (prompt.trim() && selection.model && selection.effort) {
 			setCurrentThreadId(
-				state.submitPrompt(currentThreadId, prompt.trim(), selection.model, selection.effort)
+				state.submitPrompt(
+					currentThreadId,
+					project.repositoryKey,
+					prompt.trim(),
+					selection.model,
+					selection.effort
+				)
 			);
 		} else {
 			return;
@@ -267,12 +285,12 @@ export default function DemoApp({
 						state={state}
 						signedInUserId={state.userId}
 						localApi={null}
-						sections={state.sections(search)}
+						sections={state.sections(search, selectedProjects)}
 						search={search}
 						onSearchChange={setSearch}
-						projects={[project]}
-						models={modelCatalog.models}
-						selectedProjects={[]}
+						projects={projectList}
+						models={modelCatalog?.models ?? []}
+						selectedProjects={selectedProjects}
 						currentThreadId={currentThreadId}
 						settledOpen={settledOpen}
 						onSettledOpenChange={setSettledOpen}
@@ -280,9 +298,12 @@ export default function DemoApp({
 						theme={theme}
 						onThemeChange={changeTheme}
 						onClose={() => setSidebarOpen(false)}
-						onFilter={() => {}}
+						onFilter={setSelectedProjects}
 						onSelect={(thread) => selectThread(thread._id)}
-						onNew={() => selectThread(null)}
+						onNew={() => {
+							setNewThreadProject(project.repositoryKey);
+							selectThread(null);
+						}}
 						onAddProject={() => {}}
 						onSettings={() => {}}
 						onChange={async (thread, inboxState) => {
@@ -333,7 +354,9 @@ export default function DemoApp({
 										<ThreadTranscript
 											key={currentThreadId}
 											store={transcript}
-											activeRunId={run?.status === 'running' ? run.runId : null}
+											activeRunId={
+												run?.status === 'running' || run?.status === 'paying' ? run.runId : null
+											}
 											project={project}
 											artifacts={artifacts}
 											onOpenArtifact={(artifactId) => artifactPanel.openArtifact(artifactId)}
@@ -350,27 +373,40 @@ export default function DemoApp({
 									<div className={!currentThreadId ? 'create-thread-screen' : 'shrink-0'}>
 										{!currentThreadId && (
 											<CreateThreadHeading
-												projects={[project]}
+												projects={projectList}
 												workspacePath={project.workspacePath}
-												onProject={() => {}}
+												onProject={(workspacePath) =>
+													setNewThreadProject(
+														projectList.find((item) => item.workspacePath === workspacePath)
+															?.repositoryKey ?? newThreadProject
+													)
+												}
 												onAddProject={() => {}}
 											/>
 										)}
+
+										{catalog.status === 'loading' ? (
+											<div className="text-muted-foreground mb-3 text-sm">Loading models…</div>
+										) : null}
 
 										<div className={!currentThreadId ? 'create-thread-composer' : ''}>
 											<PromptComposer
 												notices={
 													<>
-														<PurchaseApprovals purchases={[]} />
+														<PurchaseApprovals
+															purchases={
+																currentThreadId ? state.pendingPurchases(currentThreadId) : []
+															}
+														/>
 														<ConversationNotices
 															key={currentThreadId}
 															error={null}
 															runError={null}
 															reconnecting={false}
 															syncing={false}
-															catalogError={false}
-															catalogLoading={false}
-															onRetryCatalog={() => {}}
+															catalogError={catalog.status === 'failed'}
+															catalogLoading={catalog.status === 'loading'}
+															onRetryCatalog={() => void state.loadCatalog()}
 														/>
 													</>
 												}

@@ -18,12 +18,6 @@ export class DemoTranscripts implements TranscriptStoreApi {
 	#threads = new Map<string, TranscriptFixture>();
 	#listeners = new Map<string, Set<Listener>>();
 
-	constructor(fixtures: Record<string, TranscriptFixture>) {
-		for (const [threadId, fixture] of Object.entries(fixtures)) {
-			this.#threads.set(threadId, structuredClone(fixture));
-		}
-	}
-
 	fetchTranscriptRows: TranscriptStoreApi['fetchTranscriptRows'] = async () => snapshot([]);
 
 	fetchTranscriptRow: TranscriptStoreApi['fetchTranscriptRow'] = async ({ threadId, rowId }) => {

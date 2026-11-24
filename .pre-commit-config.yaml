@@ -2,7 +2,7 @@ repos:
   - repo: builtin
     hooks:
       - id: check-added-large-files
-        exclude: ^apps/web/src/demo/fixtures/kicad/
+        exclude: ^apps/web/src/demo/fixtures/rp2350-devboard/kicad/
       - id: check-case-conflict
       - id: check-json
       - id: check-merge-conflict
@@ -10,7 +10,7 @@ repos:
       - id: check-yaml
       - id: check-xml
       - id: end-of-file-fixer
-        exclude: ^apps/web/src/demo/fixtures/kicad/
+        exclude: ^apps/web/src/demo/fixtures/rp2350-devboard/kicad/
       - id: fix-byte-order-marker
       - id: mixed-line-ending
       - id: trailing-whitespace
@@ -19,7 +19,7 @@ repos:
     rev: v2.4.3
     hooks:
       - id: codespell
-        exclude: (^(bun\.lock|Cargo\.lock|crates/sprocket-kicad/src/text/newstroke\.txt)$|/_generated/|^apps/web/static/kicanvas/|^apps/web/src/demo/fixtures/kicad/)
+        exclude: (^(bun\.lock|Cargo\.lock|crates/sprocket-kicad/src/text/newstroke\.txt)$|/_generated/|^apps/web/static/kicanvas/|^apps/web/src/demo/fixtures/rp2350-devboard/kicad/)
         exclude_types: [svg]
 
   - repo: https://github.com/python-jsonschema/check-jsonschema

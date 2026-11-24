@@ -116,18 +116,12 @@ export function recordRun(runId: string, steps: Step[]): TranscriptFixture {
 				return row;
 			});
 
-			fixture.rows.push({ id: workId, runId, kind: 'work', toolCounts, running: false });
+			const running = items.some((item) => item.kind === 'tool' && item.status === 'running');
+
+			fixture.rows.push({ id: workId, runId, kind: 'work', toolCounts, running });
 			fixture.work[workId] = items;
 		}
 	}
 
 	return fixture;
-}
-
-export function joinRuns(...runs: TranscriptFixture[]): TranscriptFixture {
-	return {
-		rows: runs.flatMap((run) => run.rows),
-		work: Object.assign({}, ...runs.map((run) => run.work)),
-		items: Object.assign({}, ...runs.map((run) => run.items))
-	};
 }

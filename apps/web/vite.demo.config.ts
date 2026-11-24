@@ -6,6 +6,8 @@ import { defineConfig } from 'vite';
 export default defineConfig({
 	base: '/demo/',
 	publicDir: 'static',
+	envDir: '../..',
+	envPrefix: 'PUBLIC_MODEL_GATEWAY_URL',
 	worker: { format: 'es' },
 	build: {
 		outDir: path.resolve('../site/public/demo'),

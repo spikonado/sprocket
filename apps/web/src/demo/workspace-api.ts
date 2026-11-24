@@ -1,11 +1,22 @@
 import type { FileEditorApi } from '$lib/components/home/file-editor';
 import type { FilesApi } from '$lib/components/home/files-view';
 import type { KicanvasViewerApi } from '$lib/components/home/kicanvas-viewer';
-import type { LocalApi, WorkspaceFileTarget } from '$lib/types/sprocket';
+import type { LocalApi, WorkspaceFilesResult, WorkspaceFileTarget } from '$lib/types/sprocket';
 
 export type WorkspaceFiles = Record<string, () => Promise<string>>;
 
+export type DemoWorkspace = {
+	files: WorkspaceFiles;
+	/**
+	 * Gzipped URLs of each board's precomputed scene and KiCad's GLB of its component models.
+	 * They end in `.gzip` because static servers send `.gz` files with `Content-Encoding: gzip`.
+	 */
+	boards: Record<string, { scene: string; models: string }>;
+	gitStatus: WorkspaceFilesResult['gitStatus'];
+};
+
 const READ_ONLY = 'This preview is read-only.';
+const VERSION = '1';
 
 const readOnly = async () => {
 	throw new Error(READ_ONLY);
@@ -24,10 +35,23 @@ function parentDirectories(path: string) {
 	return parts.map((_, index) => parts.slice(0, index + 1).join('/'));
 }
 
+async function gunzip(url: string, signal?: AbortSignal) {
+	const response = await fetch(url, { signal });
+
+	if (!response.ok || !response.body) throw new Error('Could not load the board.');
+
+	return response.body.pipeThrough(new DecompressionStream('gzip'));
+}
+
 /** A read-only project folder served from memory with the local server's file API shape. */
-export function workspaceApi(
-	files: WorkspaceFiles
-): FilesApi & FileEditorApi & KicanvasViewerApi & Pick<LocalApi, 'workspaceEntryKind'> {
+export function workspaceApi({
+	files,
+	boards,
+	gitStatus
+}: DemoWorkspace): FilesApi &
+	FileEditorApi &
+	KicanvasViewerApi &
+	Pick<LocalApi, 'workspaceEntryKind'> {
 	const paths = Object.keys(files).sort();
 	const directories = [...new Set(paths.flatMap(parentDirectories))].sort();
 	const contents = new Map<string, Promise<string>>();
@@ -44,7 +68,7 @@ export function workspaceApi(
 			contents.set(path, content);
 		}
 
-		return content.then((text) => ({ content: text, version: '1' }));
+		return content.then((text) => ({ content: text, version: VERSION }));
 	};
 
 	return {
@@ -53,7 +77,7 @@ export function workspaceApi(
 				kind: 'snapshot',
 				directories,
 				files: paths,
-				gitStatus: [],
+				gitStatus,
 				scanning: false,
 				truncated: false
 			});
@@ -81,7 +105,17 @@ export function workspaceApi(
 		createWorkspaceFile: readOnly,
 		renameWorkspaceFile: readOnly,
 		deleteWorkspaceFile: readOnly,
-		kicadScene: readOnly,
-		kicadModels: readOnly
+		kicadScene: async ({ path }, signal) => {
+			const board = boards[path];
+
+			if (!board) throw new Error(`${path} has no board scene.`);
+
+			return { scene: await gunzip(board.scene, signal), version: VERSION };
+		},
+		kicadModels: async ({ path }, signal) => {
+			const board = boards[path];
+
+			return board ? gunzip(board.models, signal) : null;
+		}
 	};
 }

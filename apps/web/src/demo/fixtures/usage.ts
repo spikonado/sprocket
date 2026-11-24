@@ -1,10 +1,14 @@
 import { emptyCounts } from '@convex/lib/tokenUsage';
+import type { ModelCatalog } from '@convex/lib/uiModelCatalog';
 import type { TokenUsageTotals } from '@convex/lib/validators';
-import { modelCatalog } from './models';
 import type { TranscriptFixture } from './types';
 
 /** Plausible, deterministic token counts for a recorded run: one model call per tool plus the reply. */
-export function runUsage(modelId: string, run: TranscriptFixture): TokenUsageTotals {
+export function runUsage(
+	modelId: string,
+	run: TranscriptFixture,
+	catalog: ModelCatalog | undefined
+): TokenUsageTotals {
 	const calls =
 		1 +
 		Object.values(run.work)
@@ -18,7 +22,7 @@ export function runUsage(modelId: string, run: TranscriptFixture): TokenUsageTot
 
 	const inputTokens = calls * (16_000 + 1_200 * calls);
 	const outputTokens = Math.round(replyChars / 4) + 260 * calls;
-	const pricing = modelCatalog.models.find((model) => model.id === modelId)?.directApiPricing;
+	const pricing = catalog?.models.find((model) => model.id === modelId)?.directApiPricing;
 
 	return {
 		provider: 'spikonado',
@@ -28,8 +32,8 @@ export function runUsage(modelId: string, run: TranscriptFixture): TokenUsageTot
 		calls,
 		standard: {
 			inputTokens,
-			cacheReadTokens: Math.round(inputTokens * 0.86),
-			cacheWriteTokens: Math.round(inputTokens * 0.06),
+			cacheReadTokens: Math.round(inputTokens * 0.97),
+			cacheWriteTokens: Math.round(inputTokens * 0.02),
 			outputTokens,
 			reasoningTokens: Math.round(outputTokens * 0.4)
 		},
