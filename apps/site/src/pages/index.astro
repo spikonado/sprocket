@@ -20,44 +20,13 @@ const release = await fetchLatestSprocketRelease();
 const capabilities = [
 	{
 		icon: 'chip',
-		name: 'PCB design',
-		body: 'Schematics and routed multi-layer boards, checked with ERC and DRC'
-	},
-	{
-		icon: 'board',
-		name: 'KiCad',
-		body: 'Edits your KiCad projects on your computer and renders the boards in 3D'
+		name: 'PCB design in KiCad',
+		body: 'Schematics and routed multi-layer boards in your KiCad projects, checked with ERC and DRC and shown in 3D'
 	},
 	{
 		icon: 'list',
-		name: 'BOMs and fab files',
-		body: 'Parts lists with distributor numbers, Gerbers, and pick-and-place files'
-	},
-	{
-		icon: 'wrench',
-		name: 'Assembly guides',
-		body: 'Step-by-step instructions for building the device'
-	},
-	{
-		icon: 'code',
-		name: 'Firmware and apps',
-		body: 'Writes and tests code across your whole system'
-	},
-	{ icon: 'globe', name: 'Web context', body: 'Searches the web and reads full pages and docs' },
-	{
-		icon: 'window',
-		name: 'Browser',
-		body: 'Clicks through sites, fills forms, and takes screenshots'
-	},
-	{
-		icon: 'pointer',
-		name: 'Desktop apps',
-		body: 'Clicks, types, and reads native apps on your computer'
-	},
-	{
-		icon: 'file',
-		name: 'Files',
-		body: 'Browse and edit the project, and read PDFs, spreadsheets, and images'
+		name: 'Parts and fab files',
+		body: 'BOMs from live JLCPCB and LCSC stock and prices, plus Gerbers and pick-and-place files'
 	},
 	{
 		icon: 'card',
@@ -65,14 +34,66 @@ const capabilities = [
 		body: 'Buys anything your project needs after you approve each purchase'
 	},
 	{
-		icon: 'question',
-		name: 'Questions',
-		body: 'Asks multiple-choice questions when a task is unclear'
+		icon: 'wrench',
+		name: 'Wiring and assembly',
+		body: 'Step-by-step build guides with drawings of the real boards and modules'
+	},
+	{
+		icon: 'code',
+		name: 'Firmware and apps',
+		body: 'Writes and tests code across your whole system'
+	},
+	{
+		icon: 'terminal-box',
+		name: 'Terminal',
+		body: 'Runs builds, tests, and flashing tools for you'
+	},
+	{
+		icon: 'window',
+		name: 'Browser',
+		body: 'Clicks through sites signed in as you, fills forms, and takes screenshots'
+	},
+	{ icon: 'globe', name: 'Web context', body: 'Searches the web and reads full pages and docs' },
+	{
+		icon: 'pointer',
+		name: 'Desktop apps',
+		body: 'Clicks, types, and reads native apps on your computer'
+	},
+	{
+		icon: 'branch',
+		name: 'Git and pull requests',
+		body: 'Works in branches and worktrees, opens pull requests, and fixes what CI and reviewers find'
+	},
+	{
+		icon: 'plug',
+		name: 'Connectors',
+		body: 'Gives agents the tools and accounts you already use, set up once in Settings'
 	},
 	{
 		icon: 'layers',
 		name: 'Subagents',
 		body: 'Runs background agents for research, building, and review'
+	},
+	{
+		icon: 'panel',
+		name: 'Artifacts',
+		body: 'Docs, schematics, previews, and interactive KiCad projects in a side panel'
+	},
+	{ icon: 'image', name: 'Visuals', body: 'Charts, diagrams, and mockups in replies' },
+	{
+		icon: 'question',
+		name: 'Questions',
+		body: 'Asks multiple-choice questions when a task is unclear'
+	},
+	{
+		icon: 'file',
+		name: 'Files',
+		body: 'Browse and edit the project, and read PDFs, spreadsheets, and images'
+	},
+	{
+		icon: 'history',
+		name: 'Past threads',
+		body: 'Searches and reads your earlier threads to pick up past work'
 	},
 	{
 		icon: 'zap',
@@ -81,32 +102,16 @@ const capabilities = [
 	},
 	{ icon: 'file-text', name: 'AGENTS.md', body: 'Project rules that apply per directory' },
 	{
-		icon: 'panel',
-		name: 'Artifacts',
-		body: 'Docs, schematics, previews, and interactive KiCad projects in a side panel'
+		icon: 'key',
+		name: 'Your own keys',
+		body: 'Bring API keys and subscriptions from AI providers'
 	},
-	{ icon: 'image', name: 'Visuals', body: 'Charts, diagrams, and mockups in replies' },
-	{
-		icon: 'branch',
-		name: 'Git',
-		body: 'Branches, worktrees, commits, and linked GitHub pull requests'
-	},
-	{
-		icon: 'terminal-box',
-		name: 'Terminal',
-		body: 'Runs builds, tests, and flashing tools for you'
-	},
-	{ icon: 'terminal', name: 'CLI', body: 'Run tasks from your terminal with sprocket run' },
 	{
 		icon: 'monitor',
 		name: 'Desktop, browser, or phone',
 		body: "Use the desktop app, a browser, or add it to your phone's home screen"
 	},
-	{
-		icon: 'key',
-		name: 'Your own keys',
-		body: 'Bring API keys and subscriptions from AI providers'
-	},
+	{ icon: 'terminal', name: 'CLI', body: 'Run tasks from your terminal with sprocket run' },
 	{
 		icon: 'chart',
 		name: 'AI usage',
