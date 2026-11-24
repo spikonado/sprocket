@@ -3,66 +3,28 @@ import { demoProject } from '../demo-project';
 import { prompt, say, type Step, think, tool, work } from '../rows';
 import type { DemoThread } from '../types';
 
-type DayPlan = { commit: string; timeZone: string; reply: string };
+const COMMENT_ON_RED_PRS = work(
+	tool(
+		'exec_cmd',
+		'for pr in 37 39 40; do gh pr comment $pr --body "This failure is the flaky tide test, fixed in #42. It passes after a rebase once #42 merges."; done'
+	)
+);
 
-const STATION_DAY: DayPlan = {
-	commit: "group tides by the station's day",
-	timeZone: 'timeZone',
-	reply: "Each tide now counts toward the station's local day, wherever the page is read from."
-};
+function answerRedPrs(answer: AgentQuestionAnswer): Step[] {
+	if (answer.optionId === 'comment' || answer.optionId === AGENT_DECIDE_OPTION_ID)
+		return [
+			COMMENT_ON_RED_PRS,
+			say(
+				'I commented on #37, #39 and #40 with a link to #42, so their authors know a rebase fixes the red check.'
+			)
+		];
 
-const VISITOR_DAY: DayPlan = {
-	commit: "group tides by the visitor's day",
-	timeZone: 'timeZone: viewerTimeZone',
-	reply:
-		"Each tide now counts toward the visitor's local day. The page sends `Intl.DateTimeFormat().resolvedOptions().timeZone` as `viewerTimeZone`."
-};
+	const opener =
+		answer.optionId === 'leave'
+			? 'Okay, I left them alone.'
+			: "I couldn't tell from your answer whether to post, so I left them alone.";
 
-function dayPlan(answer: AgentQuestionAnswer): DayPlan {
-	if (answer.optionId === 'visitor') return VISITOR_DAY;
-
-	if (answer.optionId === 'station') return STATION_DAY;
-
-	const reason =
-		answer.optionId === AGENT_DECIDE_OPTION_ID
-			? ''
-			: " Your answer didn't pick one of the two, so I kept the one that matches the README.";
-
-	return {
-		...STATION_DAY,
-		reply: `I went with the station's local day. A tide table describes a place, so an 18:42 tide belongs to that evening wherever you read it from.${reason}`
-	};
-}
-
-function fixTideDay(answer: AgentQuestionAnswer): Step[] {
-	const plan = dayPlan(answer);
-
-	return [
-		work(
-			tool('apply_patch', 'src/lib/tides.ts\nsrc/lib/tides.test.ts'),
-			tool('exec_cmd', 'bun test src/lib/tides.test.ts'),
-			tool('exec_cmd', 'TZ=Pacific/Kiritimati bun test && TZ=Pacific/Pago_Pago bun test'),
-			tool(
-				'exec_cmd',
-				`git switch -c fix/tide-day-timezone && git commit -am "fix: ${plan.commit}"`
-			),
-			tool('exec_cmd', 'git push -u origin fix/tide-day-timezone && gh pr create --fill'),
-			tool('link_prs', 'github.com/maker/tidepool#42')
-		),
-		say(`${plan.reply}
-
-\`\`\`diff
--	const day = (time: Date) => time.toISOString().slice(0, 10);
-+	const day = new Intl.DateTimeFormat('en-CA', { ${plan.timeZone}, dateStyle: 'short' });
- 	for (const prediction of predictions) {
--		const key = day(prediction.time);
-+		const key = day.format(prediction.time);
-\`\`\`
-
-The test now uses a fixed 18:42 PST tide instead of \`new Date()\`, so it fails every time the bug is back. It passes with the clock set to UTC+14 and UTC−11.
-
-I opened [maker/tidepool#42](https://github.com/maker/tidepool/pull/42).`)
-	];
+	return [say(`${opener} They pass once they're rebased after #42 merges.`)];
 }
 
 const flakyTest: DemoThread = {
@@ -88,20 +50,40 @@ const flakyTest: DemoThread = {
 				'Reading the grouping',
 				'`tidesByDay` keys each prediction with `toISOString().slice(0, 10)`, which is the UTC date. The test builds an evening tide from `new Date()`, so after 16:00 Pacific it lands on the next day. Visitors see the same bug: evening tides show up under tomorrow.'
 			),
-			tool('ask_question', 'Which calendar day should a tide belong to?')
+			tool('apply_patch', 'src/lib/tides.ts\nsrc/lib/tides.test.ts'),
+			tool('exec_cmd', 'bun test src/lib/tides.test.ts'),
+			tool('exec_cmd', 'TZ=Pacific/Kiritimati bun test && TZ=Pacific/Pago_Pago bun test'),
+			tool(
+				'exec_cmd',
+				'git switch -c fix/tide-day-timezone && git commit -am "fix: group tides by the station\'s day"'
+			),
+			tool('exec_cmd', 'git push -u origin fix/tide-day-timezone && gh pr create --fill'),
+			tool('link_prs', 'github.com/maker/tidepool#42'),
+			tool('exec_cmd', 'gh pr list --state open --json number,author,statusCheckRollup'),
+			tool('ask_question', 'Comment on the 3 open PRs this flake turned red?')
 		),
-		say(
-			'Found it. `tidesByDay` groups tides by their UTC date, so from 16:00 Pacific on, evening tides land under tomorrow, on the site too. CI only fails in that window. Before I fix it: which day should a tide count toward?'
-		)
+		say(`The test was right to fail. \`tidesByDay\` grouped tides by their UTC date, so from 16:00 Pacific on, evening tides moved to the next day, on the site too. CI only failed when it ran in that window.
+
+\`\`\`diff
+-	const day = (time: Date) => time.toISOString().slice(0, 10);
++	const day = new Intl.DateTimeFormat('en-CA', { timeZone, dateStyle: 'short' });
+ 	for (const prediction of predictions) {
+-		const key = day(prediction.time);
++		const key = day.format(prediction.time);
+\`\`\`
+
+The test now uses a fixed 18:42 PST tide instead of \`new Date()\`, so it fails every time the bug is back. It passes with the clock set to UTC+14 and UTC−11.
+
+I opened [maker/tidepool#42](https://github.com/maker/tidepool/pull/42). Three open PRs by other people, #37, #39 and #40, are red from this same flake. Should I comment on them so their authors don't go hunting for a bug they didn't write?`)
 	],
 	question: {
-		questionId: 'tide-day-question',
-		question: 'Which calendar day should a tide belong to?',
+		questionId: 'red-prs-question',
+		question: 'Comment on the 3 open PRs this flake turned red?',
 		options: [
-			{ id: 'station', label: "The station's local day" },
-			{ id: 'visitor', label: "The visitor's local day" }
+			{ id: 'comment', label: 'Comment on #37, #39 and #40' },
+			{ id: 'leave', label: 'Leave them alone' }
 		],
-		continueWith: fixTideDay
+		continueWith: answerRedPrs
 	}
 };
 
