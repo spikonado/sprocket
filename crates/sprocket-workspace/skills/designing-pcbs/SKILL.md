@@ -116,7 +116,8 @@ Write its stackup into the board, as in [Known traps](#known-traps), before any 
 
 Type each inner plane layer `power` and every other copper layer `signal`, as in [Known traps](#known-traps), so `kicad-route` keeps tracks off the planes.
 On 2-layer boards, keep `B.Cu` typed `signal`, because its short jumpers need it.
-Before routing, give every copper layer a GND zone over the whole board at priority 0.
+Before routing, give the ground plane layer a GND zone over the whole board at priority 0.
+Give the other copper layers the same GND zone after routing, as in [Finishing the copper](#finishing-the-copper), because a pour placed first breaks into islands and slivers as tracks cut through it.
 Put pours of other nets, like power planes and the AGND island, above it at higher priorities, so GND fills the copper they leave.
 Keep switch node copper as small as its current allows, because its area radiates.
 
@@ -165,10 +166,11 @@ Right after placement, the pours, and the keepouts, and before the schematic is 
 
 Then route in this order:
 
-1. Draw the critical copper yourself: switch nodes, crystal nets, and a fan-out that takes each fine-pitch IC pin to a via outside the pad ring, never in a pad.
-   `check_fanout.py --component U1` names the pins the placement cages. `qfn_fanout.py` helps, but check its result in `kicad-view`.
+1. Draw the critical copper yourself: switch nodes and crystal nets.
+   Fan out each IC whose inner pins the router can't reach, like a BGA, taking each pin to a via outside the pad ring, never in a pad. `check_fanout.py` names the pins the placement cages.
+   For ICs with pads only on their edges, like QFNs and QFPs, compare trial routes with and without a fan-out, and keep it only when it routes better. `qfn_fanout.py` helps, but check its result in `kicad-view`, and leave plane nets out of it, because their stubs dangle once the pour connects the pad.
 2. Route differential pairs with `route_diff.py --impedance <ohms>`, then single-ended impedance nets, like RF feeds, with `kicad-route --impedance <ohms>`. Check both with `check_impedance.py`.
-   A trace on a layer with a GND pour is coplanar, and the pour pulls its impedance down. Declare the pour's gap to the router and `check_impedance.py`, or the trace comes out too wide.
+   A trace on a layer that gets a GND pour is coplanar, and the pour pulls its impedance down. Declare the pour's gap to the router and `check_impedance.py`, or the trace comes out too wide.
    When the stackup can't reach a target impedance at the IC's pin pitch, tell the user instead of forcing it.
    KiCad's DRC pairs nets only when the last character that isn't a digit or `_` is `P`/`N` or `+`/`-`, like `USB_D+`/`USB_D-` or `ETH_TXP`/`ETH_TXN`. Rename nets like `USB_DM` and `USB_DP_MCU` in the schematic first. `route_diff.py` warns about names that won't pair.
 3. Lock the tracks, arcs, and vias from the steps above, so the router never rips them.
@@ -210,9 +212,10 @@ Once DRC shows 0 unconnected items, finish the copper in this order and run DRC 
 1. Run `kicad-route board.kicad_pcb clean.kicad_pcb --nets '*' '!GND'`, excluding every zone net with `'!NET'`.
    With nothing left to route, it removes dead ends and redundant or duplicate segments. With nets still open, it routes them again.
    Then run `check_weird.py` on the result and fix what it reports.
-2. Stitch the GND pours together with `route_planes.py`, using vias on a grid and a fence along the board edge.
+2. Add the GND zones on the layers other than the ground plane, as in [Copper pours](#copper-pours), and refill.
+3. Stitch the GND pours together with `route_planes.py`, using vias on a grid and a fence along the board edge.
    Pass `--skip-existing-zones`, or it will replace your GND zones with its own.
-3. Enable teardrops on every pad and via, then refill the zones.
+4. Enable teardrops on every pad and via, then refill the zones.
    Edit pads through `footprint.definition.pads` and send the footprints to `update_items`. Sending pads from `get_pads()` changes nothing.
    Teardrops go stale when copper moves, so add them as the last copper change.
 
