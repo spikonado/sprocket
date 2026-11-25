@@ -74,10 +74,7 @@ struct Envelope {
 enum KeyState {
     Unresolved,
     Unavailable,
-    Ready {
-        id: String,
-        key: Box<LessSafeKey>,
-    },
+    Ready { id: String, key: Box<LessSafeKey> },
 }
 
 /// A private file encrypted with a key held in the operating system keyring. Without a usable
