@@ -1,11 +1,6 @@
 import { ConvexError, v } from 'convex/values';
 import { internal } from '@convex/_generated/api';
-import {
-	internalAction,
-	internalMutation,
-	internalQuery,
-	mutation
-} from '@convex/_generated/server';
+import { internalAction, internalMutation, mutation } from '@convex/_generated/server';
 import { getExecutionRunRecord, getUserId } from '@convex/lib/auth';
 import { addStorageBytes, deleteFile, firstFileWithBlob, storageUsage } from '@convex/lib/files';
 import { deleteObject, fileKey, presignDownload, presignUpload } from '@convex/lib/r2';
@@ -68,9 +63,12 @@ export const createUpload = mutation({
 			size: sameBlob?.size ?? args.size
 		};
 
+		const blobId = sameBlob?.blobId ?? crypto.randomUUID();
+
 		const fileId = await ctx.db.insert('files', {
 			userId,
 			sha256: args.sha256,
+			blobId,
 			...metadata
 		});
 
@@ -79,7 +77,7 @@ export const createUpload = mutation({
 			// Sent files finished uploading; drafts may still be uploading.
 			upload: sameBlob?.threadId
 				? null
-				: await presignUpload(fileKey(userId, args.sha256), {
+				: await presignUpload(fileKey(userId, blobId), {
 						sha256: args.sha256,
 						size: metadata.size
 					})
@@ -114,7 +112,7 @@ export const downloadUrl = mutation({
 			name: file.name,
 			mediaType: file.mediaType,
 			size: file.size,
-			url: await presignDownload(fileKey(userId, file.sha256))
+			url: await presignDownload(fileKey(userId, file.blobId))
 		};
 	}
 });
@@ -128,7 +126,7 @@ export const urlForRun = mutation({
 
 		if (!file || file.userId !== run.userId) throw new Error('File attachment was not found.');
 
-		return await presignDownload(fileKey(file.userId, file.sha256));
+		return await presignDownload(fileKey(file.userId, file.blobId));
 	}
 });
 
@@ -153,19 +151,11 @@ export const cleanupDrafts = internalMutation({
 	}
 });
 
-export const hasBlobReferences = internalQuery({
-	args: { userId: v.string(), sha256: v.string() },
-	returns: v.boolean(),
-	handler: async (ctx, args) => (await firstFileWithBlob(ctx, args.userId, args.sha256)) !== null
-});
-
 export const deleteBlob = internalAction({
-	args: { userId: v.string(), sha256: v.string() },
+	args: { userId: v.string(), blobId: v.string() },
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		// A new upload of the same bytes may have started since the last reference went away.
-		if (await ctx.runQuery(internal.files.hasBlobReferences, args)) return null;
-		await deleteObject(fileKey(args.userId, args.sha256));
+		await deleteObject(fileKey(args.userId, args.blobId));
 
 		return null;
 	}

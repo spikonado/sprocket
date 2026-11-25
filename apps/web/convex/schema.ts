@@ -354,6 +354,9 @@ export default defineSchema({
 		// Unset while the file is a composer draft.
 		threadId: v.optional(v.id('threadRecords')),
 		sha256: v.string(),
+		// Shared by files with the same bytes. A re-upload after the last one is deleted gets a
+		// new ID, so a delayed delete of the old object can't remove it.
+		blobId: v.string(),
 		name: v.string(),
 		mediaType: v.string(),
 		size: v.number()

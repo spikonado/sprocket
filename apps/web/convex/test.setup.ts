@@ -73,6 +73,7 @@ export function insertDraftFile(ctx: MutationCtx, userId: string) {
 	return ctx.db.insert('files', {
 		userId,
 		sha256: 'a'.repeat(64),
+		blobId: 'blob',
 		name: 'robot.png',
 		mediaType: 'image/png',
 		size: 5

@@ -1,6 +1,7 @@
 import { internal } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
+import { UPLOAD_URL_TTL_SECONDS } from '@convex/lib/r2';
 
 /** Prefers a sent file, since drafts have no `threadId` and sort first. */
 export async function firstFileWithBlob(
@@ -41,15 +42,18 @@ export async function addStorageBytes(
 	}
 }
 
-/** Deletes the blob too once no file of its user references it. */
+/**
+ * Deletes the blob too once no file of its user references it. The delete waits until upload
+ * URLs for the blob expire, so a late PUT can't leave an untracked object behind.
+ */
 export async function deleteFile(ctx: MutationCtx, file: Doc<'files'>): Promise<void> {
 	await ctx.db.delete('files', file._id);
 
 	if (await firstFileWithBlob(ctx, file.userId, file.sha256)) return;
 	await addStorageBytes(ctx, file.userId, -file.size);
-	await ctx.scheduler.runAfter(0, internal.files.deleteBlob, {
+	await ctx.scheduler.runAfter(UPLOAD_URL_TTL_SECONDS * 1_000, internal.files.deleteBlob, {
 		userId: file.userId,
-		sha256: file.sha256
+		blobId: file.blobId
 	});
 }
 

@@ -70,6 +70,12 @@ function createUpload(owned: Awaited<ReturnType<typeof seed>>) {
 	return owned.asUser.mutation(api.files.createUpload, upload);
 }
 
+async function blobPath(t: ConvexTestInstance, fileId: Id<'files'>) {
+	const file = await t.run((ctx) => ctx.db.get('files', fileId));
+
+	return `/bucket/happy-otter-123/files/${file!.userId}/${file!.blobId}`;
+}
+
 describe('files', () => {
 	it('returns the same normalized metadata that the transcript will use', async () => {
 		const t = initConvexTest();
@@ -89,11 +95,11 @@ describe('files', () => {
 	it('presigns a PUT that R2 checks against the declared length and hash', async () => {
 		const t = initConvexTest();
 		const owned = await seed(t);
-		const { upload: put } = await createUpload(owned);
+		const { file, upload: put } = await createUpload(owned);
 
 		const url = new URL(put!.url);
 		expect(url.origin).toBe('https://account.r2.cloudflarestorage.com');
-		expect(url.pathname).toBe(`/bucket/happy-otter-123/files/${owned.subject}/${sha256}`);
+		expect(url.pathname).toBe(await blobPath(t, file.fileId));
 		expect(url.searchParams.get('X-Amz-Expires')).toBe('3600');
 		expect(url.searchParams.get('X-Amz-SignedHeaders')).toBe(
 			'content-length;host;x-amz-checksum-sha256'
@@ -134,24 +140,25 @@ describe('files', () => {
 		).rejects.toThrow('File storage limit reached.');
 	});
 
-	it('deletes the blob once its last file is discarded', async () => {
+	it('deletes the blob after its upload URLs expire once its last file is discarded', async () => {
 		const t = initConvexTest();
 		const owned = await seed(t);
 		const { file: first } = await createUpload(owned);
 		const { file: second } = await createUpload(owned);
+		const path = await blobPath(t, second.fileId);
 
 		expect(await owned.asUser.mutation(api.files.discard, { fileId: first.fileId })).toBe(true);
-		await finishDueScheduledFunctions(t);
-		expect(fetchMock).not.toHaveBeenCalled();
-
 		await owned.asUser.mutation(api.files.discard, { fileId: second.fileId });
-		await finishDueScheduledFunctions(t);
-		const [request] = fetchMock.mock.calls[0]!;
-		expect(request.method).toBe('DELETE');
-		expect(new URL(request.url).pathname).toBe(
-			`/bucket/happy-otter-123/files/${owned.subject}/${sha256}`
-		);
 		expect(await storedBytes(t, owned.subject)).toBe(0);
+
+		const { file: reupload } = await createUpload(owned);
+		expect(await blobPath(t, reupload.fileId)).not.toBe(path);
+
+		vi.advanceTimersByTime(60 * 60 * 1_000);
+		await finishDueScheduledFunctions(t);
+		expect(
+			fetchMock.mock.calls.map(([request]) => [request.method, new URL(request.url).pathname])
+		).toEqual([['DELETE', path]]);
 	});
 
 	it('sweeps drafts older than a day and keeps sent files', async () => {

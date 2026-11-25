@@ -2,7 +2,7 @@ import { AwsClient } from 'aws4fetch';
 import { ConvexError } from 'convex/values';
 import { env } from '@convex/_generated/server';
 
-const UPLOAD_URL_TTL_SECONDS = 60 * 60;
+export const UPLOAD_URL_TTL_SECONDS = 60 * 60;
 
 const DOWNLOAD_URL_TTL_SECONDS = 15 * 60;
 
@@ -22,10 +22,10 @@ function bucket() {
 	};
 }
 
-export function fileKey(userId: string, sha256: string): string {
+export function fileKey(userId: string, blobId: string): string {
 	const deployment = new URL(env.CONVEX_CLOUD_URL).hostname.split('.')[0];
 
-	return [deployment, 'files', userId, sha256].map(encodeURIComponent).join('/');
+	return [deployment, 'files', userId, blobId].map(encodeURIComponent).join('/');
 }
 
 async function presign(
