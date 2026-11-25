@@ -164,6 +164,7 @@ impl<'a> ToolDisplayInput<'a> {
                     path: path.to_owned(),
                 }),
             "scrape_url" | "screenshot_url" => string(self.input, "url")
+                .map(str::trim)
                 .filter(|url| url.starts_with("https://") || url.starts_with("http://"))
                 .map(|url| ToolDisplayAction::OpenUrl {
                     url: url.to_owned(),

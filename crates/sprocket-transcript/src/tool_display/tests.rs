@@ -516,7 +516,7 @@ fn saved_tool_actions_are_display_only() {
     );
 
     assert_eq!(
-        display("scrape_url", json!({"url": "https://react.dev"}), None).action,
+        display("scrape_url", json!({"url": " https://react.dev"}), None).action,
         Some(ToolDisplayAction::OpenUrl {
             url: "https://react.dev".into()
         })

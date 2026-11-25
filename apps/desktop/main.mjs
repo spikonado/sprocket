@@ -431,7 +431,7 @@ function createMainWindow() {
 		}
 	});
 	mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-		void openExternalHttpsUrl(url).catch((error) => {
+		void openExternalUrl(url, ['https:', 'http:']).catch((error) => {
 			console.error('Failed to open external URL', error);
 		});
 
@@ -613,7 +613,7 @@ function openWithXdgOpen(url) {
 	});
 }
 
-function parseExternalHttpsUrl(url) {
+function parseExternalUrl(url, protocols) {
 	const raw = parseNonEmptyString(url);
 
 	if (raw === null) {
@@ -628,15 +628,15 @@ function parseExternalHttpsUrl(url) {
 		throw new Error('Invalid URL.');
 	}
 
-	if (parsed.protocol !== 'https:') {
-		throw new Error('Only https URLs can be opened externally.');
+	if (!protocols.includes(parsed.protocol)) {
+		throw new Error(`Only ${protocols.join(' or ')} URLs can be opened externally.`);
 	}
 
 	return parsed.toString();
 }
 
-async function openExternalHttpsUrl(url) {
-	const parsedUrl = parseExternalHttpsUrl(url);
+async function openExternalUrl(url, protocols = ['https:']) {
+	const parsedUrl = parseExternalUrl(url, protocols);
 	await openInSystemBrowser(parsedUrl);
 }
 
@@ -652,7 +652,7 @@ async function openInSystemBrowser(url) {
 
 ipcMain.handle('sprocket:open-external', async (event, url) => {
 	requireTrustedRenderer(event);
-	await openExternalHttpsUrl(url);
+	await openExternalUrl(url);
 });
 
 ipcMain.handle('sprocket:focus-window', (event) => {
