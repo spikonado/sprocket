@@ -23,8 +23,8 @@ fn redacts_known_formats_and_random_tokens() {
             "postgres://app:[redacted:password]@db:5432/app",
         ),
         (
-            "key Zx7Qp2Lm9Vb4Nc8Rt1Ws6Yh3Kd5Jf0",
-            "key [redacted:high-entropy]",
+            "CUSTOM_API_KEY=Zx7Qp2Lm9Vb4Nc8Rt1Ws6Yh3Kd5Jf0",
+            "CUSTOM_API_KEY=[redacted:high-entropy]",
         ),
         (
             "-----BEGIN RSA PRIVATE KEY-----\nMIIE\n-----END RSA PRIVATE KEY-----",

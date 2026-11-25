@@ -50,8 +50,9 @@ static RULES: LazyLock<Rules> = LazyLock::new(|| Rules {
     url_password: Regex::new(r"(?i)(\b[a-z][a-z0-9+.-]{0,30}://[^\s/:@]{1,256}:)[^\s/@]{1,256}@")
         .expect("URL password pattern is valid"),
     // Lockfile and Nix integrity hashes are long and random but not secret, so they are
-    // matched whole and kept.
-    candidate: Regex::new(r"(sha(?:1|256|384|512)-[A-Za-z0-9+/]+=*)|[A-Za-z0-9_+=]+")
+    // matched whole and kept. `=` only ends a candidate, as base64 padding, so the value of
+    // `NAME=value` starts its own.
+    candidate: Regex::new(r"(sha(?:1|256|384|512)-[A-Za-z0-9+/]+=*)|[A-Za-z0-9_+]+=*")
         .expect("candidate pattern is valid"),
 });
 
