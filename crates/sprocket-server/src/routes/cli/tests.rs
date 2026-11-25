@@ -44,14 +44,14 @@ async fn output_waits_for_local_execution_and_never_needs_a_backend_connection()
         after_part: -1,
         after_revision: None,
     };
-    let first = call(&state, &token, "output", &request, "127.0.0.1:1000").await;
+    let first = call(&state, &token, "output", &request).await;
     assert_eq!(first.0, StatusCode::OK);
     assert_eq!(first.1["status"], serde_json::Value::Null);
     assert_eq!(first.1["executionFinished"], false);
     let mut request = request;
     request.after_revision = first.1["revision"].as_u64();
     let terminal = {
-        let waiting = call(&state, &token, "output", &request, "127.0.0.1:1000");
+        let waiting = call(&state, &token, "output", &request);
         tokio::pin!(waiting);
         assert!(
             tokio::time::timeout(Duration::from_millis(20), &mut waiting)
@@ -77,9 +77,7 @@ async fn output_waits_for_local_execution_and_never_needs_a_backend_connection()
         .await
         .unwrap();
     assert_eq!(
-        call(&state, &token, "output", &request, "127.0.0.1:1000")
-            .await
-            .0,
+        call(&state, &token, "output", &request).await.0,
         StatusCode::UNAUTHORIZED
     );
 }
@@ -95,7 +93,6 @@ async fn signed_bootstrap_and_cli_sessions_cannot_be_replayed_after_server_resta
         &crate::PairingProofRequest {
             challenge: challenge.into(),
         },
-        "127.0.0.1:1000",
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -126,7 +123,7 @@ async fn signed_bootstrap_and_cli_sessions_cannot_be_replayed_after_server_resta
             &request,
         ))
         .unwrap();
-    let (status, accepted) = call(&state, "", "bootstrap", &request, "127.0.0.1:1000").await;
+    let (status, accepted) = call(&state, "", "bootstrap", &request).await;
     assert_eq!(status, StatusCode::OK);
     let accepted: CliBootstrapResponse = serde_json::from_value(accepted).unwrap();
     assert!(crate::verify_pairing_proof(
@@ -158,9 +155,7 @@ async fn signed_bootstrap_and_cli_sessions_cannot_be_replayed_after_server_resta
     let original_client_id = request.client.client_id.clone();
     request.client.client_id = run.client_id;
     assert_eq!(
-        call(&state, "", "bootstrap", &request, "127.0.0.1:1000")
-            .await
-            .0,
+        call(&state, "", "bootstrap", &request).await.0,
         StatusCode::UNAUTHORIZED
     );
     request.client.client_id = original_client_id;
@@ -174,9 +169,7 @@ async fn signed_bootstrap_and_cli_sessions_cannot_be_replayed_after_server_resta
             .authenticated
     );
     assert_eq!(
-        call(&state, "", "bootstrap", &request, "127.0.0.1:1000")
-            .await
-            .0,
+        call(&state, "", "bootstrap", &request).await.0,
         StatusCode::UNAUTHORIZED
     );
 }
@@ -201,7 +194,7 @@ async fn authenticated_cli_compatibility_errors_explain_how_to_reconnect() {
             session_token: uuid::Uuid::new_v4().to_string(),
             proof: Vec::new(),
         };
-        let (status, _) = call(&state, "", "bootstrap", &request, "127.0.0.1:1000").await;
+        let (status, _) = call(&state, "", "bootstrap", &request).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
         request.proof = state
             .auth
@@ -211,7 +204,7 @@ async fn authenticated_cli_compatibility_errors_explain_how_to_reconnect() {
                 &request,
             ))
             .unwrap();
-        let bootstrap = call(&state, "", "bootstrap", &request, "127.0.0.1:1000").await;
+        let bootstrap = call(&state, "", "bootstrap", &request).await;
         assert_eq!(bootstrap.0, StatusCode::CONFLICT);
         let error = bootstrap.1["error"].as_str().unwrap();
         assert!(error.contains(guidance), "{error}");
@@ -277,16 +270,14 @@ async fn call(
     token: &str,
     operation: &str,
     body: &impl serde::Serialize,
-    peer: &str,
 ) -> (StatusCode, serde_json::Value) {
-    let response = crate::build_router(state.clone(), None)
+    let response = crate::test_support::test_router(state.clone())
         .oneshot(
             Request::builder()
                 .method("POST")
                 .uri(format!("/api/cli/{operation}"))
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
-                .extension(ConnectInfo(peer.parse::<SocketAddr>().unwrap()))
                 .body(Body::from(serde_json::to_vec(body).unwrap()))
                 .unwrap(),
         )
@@ -308,8 +299,8 @@ async fn concurrent_retries_recover_the_same_submission_and_reject_argument_chan
         .unwrap();
     *client.submission.lock().await = started_submission(&request);
     let (first, second) = tokio::join!(
-        call(&state, &token, "run", &request, "127.0.0.1:1000"),
-        call(&state, &token, "run", &request, "127.0.0.1:1001"),
+        call(&state, &token, "run", &request),
+        call(&state, &token, "run", &request),
     );
     assert_eq!(first, second);
     assert_eq!(first.0, StatusCode::OK);
@@ -317,9 +308,7 @@ async fn concurrent_retries_recover_the_same_submission_and_reject_argument_chan
     let mut changed = request;
     changed.prompt = "different task".into();
     assert_eq!(
-        call(&state, &token, "run", &changed, "127.0.0.1:1000")
-            .await
-            .0,
+        call(&state, &token, "run", &changed).await.0,
         StatusCode::BAD_REQUEST
     );
 }
@@ -331,65 +320,35 @@ async fn cancellation_before_submission_is_cached_and_release_invalidates_pairin
         client_id: request.client_id.clone(),
     };
     assert_eq!(
-        call(&state, &token, "cancel", &client_request, "127.0.0.1:1000")
-            .await
-            .0,
+        call(&state, &token, "cancel", &client_request).await.0,
         StatusCode::OK
     );
-    let first = call(&state, &token, "run", &request, "127.0.0.1:1000").await;
-    let second = call(&state, &token, "run", &request, "127.0.0.1:1000").await;
+    let first = call(&state, &token, "run", &request).await;
+    let second = call(&state, &token, "run", &request).await;
     assert_eq!(first, second);
     assert_eq!(first.0, StatusCode::BAD_REQUEST);
     assert!(first.1["error"].as_str().unwrap().contains("cancelled"));
     assert_eq!(
-        call(&state, &token, "release", &client_request, "127.0.0.1:1000")
-            .await
-            .0,
+        call(&state, &token, "release", &client_request).await.0,
         StatusCode::OK
     );
     assert_eq!(
-        call(
-            &state,
-            &token,
-            "heartbeat",
-            &client_request,
-            "127.0.0.1:1000"
-        )
-        .await
-        .0,
+        call(&state, &token, "heartbeat", &client_request).await.0,
         StatusCode::UNAUTHORIZED
     );
 }
 
 #[tokio::test]
-async fn cli_control_requires_the_owning_local_session() {
-    let (_directory, state, token, request) = fixture().await;
+async fn cli_control_requires_the_owning_session() {
+    let (_directory, state, _, request) = fixture().await;
     let client_request = CliClientRequest {
         client_id: request.client_id.clone(),
     };
-    assert_eq!(
-        call(
-            &state,
-            &token,
-            "cancel",
-            &client_request,
-            "192.168.1.10:1000"
-        )
-        .await
-        .0,
-        StatusCode::FORBIDDEN
-    );
     let (_, other_token) = state.auth.bootstrap_browser_session(true).await.unwrap();
     assert_eq!(
-        call(
-            &state,
-            &other_token,
-            "cancel",
-            &client_request,
-            "127.0.0.1:1000"
-        )
-        .await
-        .0,
+        call(&state, &other_token, "cancel", &client_request)
+            .await
+            .0,
         StatusCode::CONFLICT
     );
 }

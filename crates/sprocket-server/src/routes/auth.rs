@@ -1,8 +1,6 @@
-use std::net::SocketAddr;
-
 use axum::Json;
 use axum::body::Bytes;
-use axum::extract::{ConnectInfo, Query, State};
+use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
@@ -12,7 +10,7 @@ use serde::Deserialize;
 use crate::auth::{
     AuthSessionResponse, AuthState, BootstrapResponse, BrowserConnection,
     DesktopLoginStartResponse, browser_connection, extract_session_token,
-    peer_may_complete_desktop_login_callback, require_bootstrap_session,
+    require_bootstrap_session,
 };
 use crate::routes::api_error::{ApiError, no_store};
 use crate::routes::events::Authorized;
@@ -124,7 +122,6 @@ async fn session(
 
 async fn bootstrap(
     State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     jar: CookieJar,
     body: Bytes,
@@ -134,7 +131,7 @@ async fn bootstrap(
             "browser bootstrap does not accept a request body"
         )));
     }
-    let Some(connection) = browser_connection(&headers, peer) else {
+    let Some(connection) = browser_connection(&headers) else {
         return Err(ApiError::with_status(
             StatusCode::FORBIDDEN,
             anyhow::anyhow!("browser access requires loopback HTTP or same-origin HTTPS"),
@@ -206,12 +203,11 @@ async fn desktop_bootstrap(
 
 async fn desktop_login_start(
     State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     jar: CookieJar,
     Json(payload): Json<DesktopLoginStartRequest>,
 ) -> Result<Json<NativeLoginStart>, ApiError> {
-    let (session_token, connection) = require_browser_session(&state, &headers, &jar, peer).await?;
+    let (session_token, connection) = require_browser_session(&state, &headers, &jar).await?;
 
     let login = match connection {
         BrowserConnection::Loopback => {
@@ -242,17 +238,8 @@ async fn desktop_login_start(
 
 async fn desktop_login_callback(
     State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Query(query): Query<DesktopLoginCallbackQuery>,
 ) -> Response {
-    if !peer_may_complete_desktop_login_callback(peer) {
-        return desktop_login_html_response(
-            StatusCode::FORBIDDEN,
-            "Sign-in failed",
-            "Desktop login callback is only available from this machine.",
-        );
-    }
-
     let callback_state = query
         .state
         .as_deref()
@@ -328,12 +315,11 @@ async fn desktop_login_callback(
 
 async fn desktop_login_result(
     State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     jar: CookieJar,
     Json(payload): Json<DesktopLoginRequest>,
 ) -> Result<Json<NativeLoginStatus>, ApiError> {
-    let (session_token, connection) = require_browser_session(&state, &headers, &jar, peer).await?;
+    let (session_token, connection) = require_browser_session(&state, &headers, &jar).await?;
     let login_id = payload.login_id.as_str();
     let status = match connection {
         BrowserConnection::Loopback => {
@@ -361,12 +347,11 @@ async fn desktop_login_result(
 
 async fn desktop_login_cancel(
     State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     jar: CookieJar,
     Json(payload): Json<DesktopLoginRequest>,
 ) -> Result<Json<DesktopLoginStartResponse>, ApiError> {
-    let (session_token, connection) = require_browser_session(&state, &headers, &jar, peer).await?;
+    let (session_token, connection) = require_browser_session(&state, &headers, &jar).await?;
     let login_id = payload.login_id.as_str();
     match connection {
         BrowserConnection::Loopback => {
@@ -389,11 +374,10 @@ async fn desktop_login_cancel(
 
 async fn native_sign_out(
     State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     jar: CookieJar,
 ) -> Result<Json<DesktopLoginStartResponse>, ApiError> {
-    let (_, connection) = require_browser_session(&state, &headers, &jar, peer).await?;
+    let (_, connection) = require_browser_session(&state, &headers, &jar).await?;
     if connection != BrowserConnection::Loopback {
         return Err(ApiError::with_status(
             StatusCode::FORBIDDEN,
@@ -410,11 +394,10 @@ async fn native_sign_out(
 
 async fn browser_session_sign_out(
     State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     jar: CookieJar,
 ) -> Result<(CookieJar, Json<DesktopLoginStartResponse>), ApiError> {
-    let (session_token, connection) = require_browser_session(&state, &headers, &jar, peer).await?;
+    let (session_token, connection) = require_browser_session(&state, &headers, &jar).await?;
     state
         .host
         .native_auth
@@ -438,7 +421,6 @@ async fn browser_session_sign_out(
 
 async fn native_session_token(
     State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     jar: CookieJar,
     Json(payload): Json<NativeSessionTokenRequest>,
@@ -447,18 +429,17 @@ async fn native_session_token(
         Ok(guard) => guard,
         Err(error) => return ApiError::bad_request(error).into_response(),
     };
-    let result = native_session_token_response(&state, peer, &headers, &jar, payload).await;
+    let result = native_session_token_response(&state, &headers, &jar, payload).await;
     no_store(result)
 }
 
 async fn native_session_token_response(
     state: &AppState,
-    peer: SocketAddr,
     headers: &HeaderMap,
     jar: &CookieJar,
     payload: NativeSessionTokenRequest,
 ) -> Result<Json<Option<sprocket_host::native_auth::NativeBrowserSession>>, ApiError> {
-    let (session_token, connection) = require_browser_session(state, headers, jar, peer).await?;
+    let (session_token, connection) = require_browser_session(state, headers, jar).await?;
     if !state.auth.session_has_user(&session_token).await {
         return Ok(Json(None));
     }
@@ -490,10 +471,9 @@ async fn native_session_token_response(
 async fn session_browser_connection(
     state: &AppState,
     headers: &HeaderMap,
-    peer: SocketAddr,
     session_token: &str,
 ) -> Result<BrowserConnection, ApiError> {
-    let connection = browser_connection(headers, peer).ok_or_else(|| {
+    let connection = browser_connection(headers).ok_or_else(|| {
         ApiError::with_status(
             StatusCode::FORBIDDEN,
             anyhow::anyhow!("browser access requires loopback HTTP or same-origin HTTPS"),
@@ -510,12 +490,11 @@ async fn require_browser_session(
     state: &AppState,
     headers: &HeaderMap,
     jar: &CookieJar,
-    peer: SocketAddr,
 ) -> Result<(String, BrowserConnection), ApiError> {
     let session_token = require_bootstrap_session(&state.auth, headers, jar)
         .await
         .map_err(|_| ApiError::authentication_required())?;
-    let connection = session_browser_connection(state, headers, peer, &session_token).await?;
+    let connection = session_browser_connection(state, headers, &session_token).await?;
     Ok((session_token, connection))
 }
 

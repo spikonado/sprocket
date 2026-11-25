@@ -21,8 +21,10 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use axum::Json;
 use axum::Router;
+use axum::extract::{ConnectInfo, Request};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::IntoResponse;
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
 use axum_extra::extract::CookieJar;
 use sprocket_host::profile::ProfileLock;
 use sprocket_host::{Host, HostConfig};
@@ -125,7 +127,24 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         Some(dir) => static_files::static_router(dir, api),
         None => Router::new().nest("/api", api),
     };
-    router.layer(CompressionLayer::new().quality(CompressionLevel::Fastest))
+    router
+        .layer(CompressionLayer::new().quality(CompressionLevel::Fastest))
+        .layer(axum::middleware::from_fn(require_loopback_peer))
+}
+
+async fn require_loopback_peer(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if peer.ip().to_canonical().is_loopback() {
+        return next.run(request).await;
+    }
+    (
+        StatusCode::FORBIDDEN,
+        "Sprocket only accepts connections from this machine. For remote access, use a loopback reverse proxy such as tailscale serve.",
+    )
+        .into_response()
 }
 
 pub enum ServerExit {

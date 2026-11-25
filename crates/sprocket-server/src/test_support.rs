@@ -1,5 +1,11 @@
 use super::*;
 
+pub(crate) fn test_router(state: AppState) -> Router {
+    build_router(state, None).layer(axum::extract::connect_info::MockConnectInfo(
+        SocketAddr::from(([127, 0, 0, 1], 54321)),
+    ))
+}
+
 impl AppState {
     pub(crate) fn for_test(
         auth: Arc<auth::AuthState>,

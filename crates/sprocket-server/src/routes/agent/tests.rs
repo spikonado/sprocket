@@ -44,7 +44,7 @@ async fn command_endpoints_authenticate_and_keep_other_scopes_isolated() {
         .await
         .unwrap();
     let session_id = started.session_id.unwrap();
-    let router = crate::build_router(state.clone(), None);
+    let router = crate::test_support::test_router(state.clone());
     let make_request = |path: &str, user: &str, thread: &str, authenticated: bool| {
         let mut body = serde_json::json!({ "userId": user, "threadId": thread });
         if path.ends_with("terminate") {

@@ -8,7 +8,7 @@ description: Environment variables, the ~/.sprocket data directory, ports, and c
 | Variable                      | Effect                                                                                           | Default                          |
 | ----------------------------- | ------------------------------------------------------------------------------------------------ | -------------------------------- |
 | `SPROCKET_PORT`               | Port for the local server. The desktop app reads it too.                                         | `17731`                          |
-| `SPROCKET_HOST`               | Address the server listens on.                                                                   | `127.0.0.1`                      |
+| `SPROCKET_HOST`               | Address the server listens on. It accepts connections only from this machine.                    | `127.0.0.1`                      |
 | `SPROCKET_DATA_DIR`           | Data directory. The desktop app reads it too.                                                    | `~/.sprocket`                    |
 | `SPROCKET_DESKTOP_EXECUTABLE` | Path to the desktop app that `sprocket` opens.                                                   | The path in `desktop-executable` |
 | `RUST_LOG`                    | Log filter, such as `info` or `sprocket_host=debug`. `sprocket_server` logs stay at errors only. | Errors only                      |

@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Write};
-use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -59,10 +58,6 @@ pub fn desktop_login_callback_url(port: u16) -> String {
 
 pub fn host_supports_loopback_desktop_login(host: &str) -> bool {
     matches!(host.trim(), "127.0.0.1" | "0.0.0.0")
-}
-
-pub fn peer_may_complete_desktop_login_callback(peer: std::net::SocketAddr) -> bool {
-    peer.ip().is_loopback()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -518,20 +513,15 @@ pub(crate) enum BrowserConnection {
     Https,
 }
 
-pub(crate) fn browser_connection(
-    headers: &HeaderMap,
-    peer: SocketAddr,
-) -> Option<BrowserConnection> {
+pub(crate) fn browser_connection(headers: &HeaderMap) -> Option<BrowserConnection> {
     if !origin_matches_host(headers) {
         return None;
     }
     let origin = headers.get(header::ORIGIN)?.to_str().ok()?;
     let url = url::Url::parse(origin).ok()?;
     match url.scheme() {
-        "https" if peer.ip().is_loopback() => Some(BrowserConnection::Https),
-        "http" if peer.ip().is_loopback() && origin_host_is_loopback(headers) => {
-            Some(BrowserConnection::Loopback)
-        }
+        "https" => Some(BrowserConnection::Https),
+        "http" if origin_host_is_loopback(headers) => Some(BrowserConnection::Loopback),
         _ => None,
     }
 }

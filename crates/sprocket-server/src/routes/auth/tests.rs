@@ -1,4 +1,4 @@
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -36,7 +36,7 @@ async fn test_state(loopback_supported: bool) -> (AppState, String, String) {
 }
 
 fn router(state: AppState) -> axum::Router {
-    crate::build_router(state, None).layer(axum::middleware::from_fn(
+    crate::test_support::test_router(state).layer(axum::middleware::from_fn(
         |mut request: Request<Body>, next: axum::middleware::Next| async move {
             if !request.headers().contains_key(header::HOST) {
                 request
@@ -47,15 +47,6 @@ fn router(state: AppState) -> axum::Router {
                 request
                     .headers_mut()
                     .insert(header::ORIGIN, "http://127.0.0.1:7731".parse().unwrap());
-            }
-            if request
-                .extensions()
-                .get::<ConnectInfo<SocketAddr>>()
-                .is_none()
-            {
-                request
-                    .extensions_mut()
-                    .insert(ConnectInfo(loopback_peer()));
             }
             next.run(request).await
         },
@@ -122,16 +113,10 @@ async fn start_login(app: &axum::Router, session_token: &str) -> (String, serde_
     (login_id, payload)
 }
 
-fn loopback_peer() -> SocketAddr {
-    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 54321)
-}
-
-fn lan_peer() -> SocketAddr {
-    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50)), 54321)
-}
-
-fn with_peer(mut request: Request<Body>, peer: SocketAddr) -> Request<Body> {
-    request.extensions_mut().insert(ConnectInfo(peer));
+fn with_peer(mut request: Request<Body>, peer: &str) -> Request<Body> {
+    request
+        .extensions_mut()
+        .insert(ConnectInfo(peer.parse::<SocketAddr>().unwrap()));
     request
 }
 
@@ -167,10 +152,7 @@ async fn bootstrap_accepts_loopback_http_and_same_origin_https_only() {
 
     let accepted = app
         .clone()
-        .oneshot(with_peer(
-            bootstrap_request("127.0.0.1:7731", "http://127.0.0.1:7731"),
-            loopback_peer(),
-        ))
+        .oneshot(bootstrap_request("127.0.0.1:7731", "http://127.0.0.1:7731"))
         .await
         .unwrap();
     assert_eq!(accepted.status(), StatusCode::OK);
@@ -179,9 +161,9 @@ async fn bootstrap_accepts_loopback_http_and_same_origin_https_only() {
 
     let https = app
         .clone()
-        .oneshot(with_peer(
-            bootstrap_request("machine.tailnet.ts.net", "https://machine.tailnet.ts.net"),
-            loopback_peer(),
+        .oneshot(bootstrap_request(
+            "machine.tailnet.ts.net",
+            "https://machine.tailnet.ts.net",
         ))
         .await
         .unwrap();
@@ -195,35 +177,18 @@ async fn bootstrap_accepts_loopback_http_and_same_origin_https_only() {
 
     let localhost = app
         .clone()
-        .oneshot(with_peer(
-            bootstrap_request("localhost:7731", "http://localhost:7731"),
-            loopback_peer(),
-        ))
+        .oneshot(bootstrap_request("localhost:7731", "http://localhost:7731"))
         .await
         .unwrap();
     assert_eq!(localhost.status(), StatusCode::OK);
 
-    for (host, origin, peer) in [
-        (
-            "127.0.0.1:7731",
-            "https://attacker.example",
-            loopback_peer(),
-        ),
-        (
-            "machine.local:7731",
-            "http://machine.local:7731",
-            loopback_peer(),
-        ),
-        ("127.0.0.1:7731", "http://127.0.0.1:7731", lan_peer()),
-        (
-            "machine.tailnet.ts.net",
-            "https://machine.tailnet.ts.net",
-            lan_peer(),
-        ),
+    for (host, origin) in [
+        ("127.0.0.1:7731", "https://attacker.example"),
+        ("machine.local:7731", "http://machine.local:7731"),
     ] {
         let response = app
             .clone()
-            .oneshot(with_peer(bootstrap_request(host, origin), peer))
+            .oneshot(bootstrap_request(host, origin))
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::FORBIDDEN, "{host} {origin}");
@@ -237,9 +202,9 @@ async fn unbound_remote_session_cannot_access_machine_routes() {
     let app = router(state);
     let bootstrap = app
         .clone()
-        .oneshot(with_peer(
-            bootstrap_request("machine.tailnet.ts.net", "https://machine.tailnet.ts.net"),
-            loopback_peer(),
+        .oneshot(bootstrap_request(
+            "machine.tailnet.ts.net",
+            "https://machine.tailnet.ts.net",
         ))
         .await
         .unwrap();
@@ -326,7 +291,7 @@ async fn remote_browser_can_revoke_itself_but_cannot_sign_out_the_host() {
 
     let host_sign_out = app
         .clone()
-        .oneshot(with_peer(
+        .oneshot(
             Request::builder()
                 .method("DELETE")
                 .uri("/api/auth/native-session")
@@ -335,8 +300,7 @@ async fn remote_browser_can_revoke_itself_but_cannot_sign_out_the_host() {
                 .header(header::COOKIE, session_cookie(&remote_session))
                 .body(Body::empty())
                 .unwrap(),
-            loopback_peer(),
-        ))
+        )
         .await
         .unwrap();
     assert_eq!(host_sign_out.status(), StatusCode::FORBIDDEN);
@@ -352,7 +316,7 @@ async fn remote_browser_can_revoke_itself_but_cannot_sign_out_the_host() {
     );
 
     let browser_sign_out = app
-        .oneshot(with_peer(
+        .oneshot(
             Request::builder()
                 .method("DELETE")
                 .uri("/api/auth/session")
@@ -361,8 +325,7 @@ async fn remote_browser_can_revoke_itself_but_cannot_sign_out_the_host() {
                 .header(header::COOKIE, session_cookie(&remote_session))
                 .body(Body::empty())
                 .unwrap(),
-            loopback_peer(),
-        ))
+        )
         .await
         .unwrap();
     assert_eq!(browser_sign_out.status(), StatusCode::OK);
@@ -436,19 +399,16 @@ async fn native_token_requires_a_browser_session_and_does_not_cache_signed_out_r
     let app = router(state);
     let unauthenticated = app
         .clone()
-        .oneshot(with_peer(
-            native_token_request(None, "http://127.0.0.1:7731"),
-            loopback_peer(),
-        ))
+        .oneshot(native_token_request(None, "http://127.0.0.1:7731"))
         .await
         .unwrap();
     assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
     assert_eq!(unauthenticated.headers()[header::CACHE_CONTROL], "no-store");
 
     let signed_out = app
-        .oneshot(with_peer(
-            native_token_request(Some(&session_token), "http://127.0.0.1:7731"),
-            loopback_peer(),
+        .oneshot(native_token_request(
+            Some(&session_token),
+            "http://127.0.0.1:7731",
         ))
         .await
         .unwrap();
@@ -458,7 +418,7 @@ async fn native_token_requires_a_browser_session_and_does_not_cache_signed_out_r
 }
 
 #[tokio::test]
-async fn native_token_rejects_cross_origin_and_plain_remote_http() {
+async fn native_token_rejects_cross_origin() {
     let (state, session_token, _) = test_state(true).await;
     let app = router(state);
     for origin in [
@@ -469,21 +429,36 @@ async fn native_token_rejects_cross_origin_and_plain_remote_http() {
     ] {
         let response = app
             .clone()
-            .oneshot(with_peer(
-                native_token_request(Some(&session_token), origin),
-                loopback_peer(),
-            ))
+            .oneshot(native_token_request(Some(&session_token), origin))
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{origin}");
     }
+}
 
+#[tokio::test]
+async fn only_loopback_peers_reach_authenticated_routes() {
+    let (state, session_token, _) = test_state(true).await;
+    let app = router(state);
     let mut request = native_token_request(Some(&session_token), "http://127.0.0.1:7731");
     request
         .headers_mut()
         .insert("x-forwarded-for", "127.0.0.1".parse().unwrap());
-    let response = app.oneshot(with_peer(request, lan_peer())).await.unwrap();
+    let response = app
+        .clone()
+        .oneshot(with_peer(request, "192.168.1.50:54321"))
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    let mapped_loopback = app
+        .oneshot(with_peer(
+            native_token_request(Some(&session_token), "http://127.0.0.1:7731"),
+            "[::ffff:127.0.0.1]:54321",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(mapped_loopback.status(), StatusCode::OK);
 }
 
 #[tokio::test]
@@ -495,9 +470,9 @@ async fn native_token_requires_a_sign_in_on_the_session_and_rejects_another_acco
     let app = router(state);
     let unbound = app
         .clone()
-        .oneshot(with_peer(
-            native_token_request(Some(&session_token), "http://127.0.0.1:7731"),
-            loopback_peer(),
+        .oneshot(native_token_request(
+            Some(&session_token),
+            "http://127.0.0.1:7731",
         ))
         .await
         .unwrap();
@@ -510,9 +485,9 @@ async fn native_token_requires_a_sign_in_on_the_session_and_rejects_another_acco
         .unwrap();
     let response = app
         .clone()
-        .oneshot(with_peer(
-            native_token_request(Some(&session_token), "http://127.0.0.1:7731"),
-            loopback_peer(),
+        .oneshot(native_token_request(
+            Some(&session_token),
+            "http://127.0.0.1:7731",
         ))
         .await
         .unwrap();
@@ -525,9 +500,9 @@ async fn native_token_requires_a_sign_in_on_the_session_and_rejects_another_acco
 
     native_auth.authenticate_for_test("user-b").await;
     let response = app
-        .oneshot(with_peer(
-            native_token_request(Some(&session_token), "http://127.0.0.1:7731"),
-            loopback_peer(),
+        .oneshot(native_token_request(
+            Some(&session_token),
+            "http://127.0.0.1:7731",
         ))
         .await
         .unwrap();
@@ -566,22 +541,14 @@ async fn remote_native_token_is_empty_until_bound_to_the_matching_owner() {
             .unwrap()
     };
 
-    let unbound = app
-        .clone()
-        .oneshot(with_peer(request(&remote_session), loopback_peer()))
-        .await
-        .unwrap();
+    let unbound = app.clone().oneshot(request(&remote_session)).await.unwrap();
     assert_eq!(unbound.status(), StatusCode::OK);
     assert_eq!(read_json(unbound).await, serde_json::Value::Null);
 
     auth.bind_session_user(&remote_session, "user-a")
         .await
         .unwrap();
-    let accepted = app
-        .clone()
-        .oneshot(with_peer(request(&remote_session), loopback_peer()))
-        .await
-        .unwrap();
+    let accepted = app.clone().oneshot(request(&remote_session)).await.unwrap();
     assert_eq!(accepted.status(), StatusCode::OK);
     assert_eq!(
         read_json(accepted).await["accessToken"],
@@ -591,28 +558,25 @@ async fn remote_native_token_is_empty_until_bound_to_the_matching_owner() {
     auth.bind_session_user(&foreign_session, "user-b")
         .await
         .unwrap();
-    let mismatched = app
-        .oneshot(with_peer(request(&foreign_session), loopback_peer()))
-        .await
-        .unwrap();
+    let mismatched = app.oneshot(request(&foreign_session)).await.unwrap();
     assert_eq!(mismatched.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[test]
-fn browser_connection_rejects_missing_headers_and_plain_remote_http() {
+fn browser_connection_rejects_missing_headers_and_foreign_http_origins() {
     let mut headers = HeaderMap::new();
-    assert_eq!(browser_connection(&headers, loopback_peer()), None);
+    assert_eq!(browser_connection(&headers), None);
     headers.insert(header::HOST, "localhost:5173".parse().unwrap());
-    assert_eq!(browser_connection(&headers, loopback_peer()), None);
+    assert_eq!(browser_connection(&headers), None);
     headers.insert(header::ORIGIN, "http://localhost:5173".parse().unwrap());
     assert_eq!(
-        browser_connection(&headers, loopback_peer()),
+        browser_connection(&headers),
         Some(BrowserConnection::Loopback)
     );
     headers.insert(header::HOST, "[::1]:17731".parse().unwrap());
     headers.insert(header::ORIGIN, "http://[::1]:17731".parse().unwrap());
     assert_eq!(
-        browser_connection(&headers, loopback_peer()),
+        browser_connection(&headers),
         Some(BrowserConnection::Loopback)
     );
     headers.insert(header::HOST, "attacker.example:7731".parse().unwrap());
@@ -620,16 +584,12 @@ fn browser_connection_rejects_missing_headers_and_plain_remote_http() {
         header::ORIGIN,
         "http://attacker.example:7731".parse().unwrap(),
     );
-    assert_eq!(browser_connection(&headers, loopback_peer()), None);
+    assert_eq!(browser_connection(&headers), None);
     headers.insert(
         header::ORIGIN,
         "https://attacker.example:7731".parse().unwrap(),
     );
-    assert_eq!(browser_connection(&headers, lan_peer()), None);
-    assert_eq!(
-        browser_connection(&headers, loopback_peer()),
-        Some(BrowserConnection::Https)
-    );
+    assert_eq!(browser_connection(&headers), Some(BrowserConnection::Https));
 }
 
 #[tokio::test]
@@ -671,13 +631,10 @@ async fn provider_error_terminates_pending_attempt() {
 
     let callback = app
         .clone()
-        .oneshot(with_peer(
-            Request::builder()
+        .oneshot(Request::builder()
                 .uri(format!("/api/auth/desktop-login/callback?error=access_denied&error_description=User%20cancelled&state={login_id}"))
                 .body(Body::empty())
-                .unwrap(),
-            loopback_peer(),
-        ))
+                .unwrap())
         .await
         .unwrap();
     assert_eq!(callback.status(), StatusCode::BAD_REQUEST);
@@ -741,15 +698,14 @@ async fn cancel_clears_pending_attempt() {
     assert_eq!(cancel.status(), StatusCode::OK);
 
     let callback = app
-        .oneshot(with_peer(
+        .oneshot(
             Request::builder()
                 .uri(format!(
                     "/api/auth/desktop-login/callback?code=auth-code&state={login_id}"
                 ))
                 .body(Body::empty())
                 .unwrap(),
-            loopback_peer(),
-        ))
+        )
         .await
         .unwrap();
     assert_eq!(callback.status(), StatusCode::BAD_REQUEST);
@@ -786,15 +742,14 @@ async fn attempts_in_one_session_are_independent() {
 
     let callback = app
         .clone()
-        .oneshot(with_peer(
+        .oneshot(
             Request::builder()
                 .uri(format!(
                     "/api/auth/desktop-login/callback?error=access_denied&state={new_login_id}"
                 ))
                 .body(Body::empty())
                 .unwrap(),
-            loopback_peer(),
-        ))
+        )
         .await
         .unwrap();
     assert_eq!(callback.status(), StatusCode::BAD_REQUEST);
@@ -842,50 +797,20 @@ async fn expired_attempt_cannot_complete() {
 
     let callback = app
         .clone()
-        .oneshot(with_peer(
+        .oneshot(
             Request::builder()
                 .uri(format!(
                     "/api/auth/desktop-login/callback?code=auth-code&state={login_id}"
                 ))
                 .body(Body::empty())
                 .unwrap(),
-            loopback_peer(),
-        ))
+        )
         .await
         .unwrap();
     assert_eq!(callback.status(), StatusCode::BAD_REQUEST);
 
     let payload = login_result(&app, &session_token, &login_id).await;
     assert_eq!(payload["status"], "signedOut");
-}
-
-#[tokio::test]
-async fn non_loopback_peer_cannot_complete_callback() {
-    let (state, session_token, _) = test_state(true).await;
-    let app = router(state);
-    let (login_id, _) = start_login(&app, &session_token).await;
-
-    let callback = app
-        .clone()
-        .oneshot(with_peer(
-            Request::builder()
-                .uri(format!(
-                    "/api/auth/desktop-login/callback?code=attacker-code&state={login_id}"
-                ))
-                .header("x-forwarded-for", "127.0.0.1")
-                .header(header::HOST, "127.0.0.1:7731")
-                .body(Body::empty())
-                .unwrap(),
-            lan_peer(),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(callback.status(), StatusCode::FORBIDDEN);
-    let html = read_text(callback).await;
-    assert!(html.contains("only available from this machine"));
-
-    let payload = login_result(&app, &session_token, &login_id).await;
-    assert_eq!(payload["status"], "pending");
 }
 
 #[tokio::test]

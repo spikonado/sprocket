@@ -31,7 +31,7 @@ async fn test_state(package_updates: Arc<PackageUpdateManager>) -> (AppState, St
 }
 
 fn router(state: AppState) -> axum::Router {
-    crate::build_router(state, None)
+    crate::test_support::test_router(state)
 }
 
 fn session_cookie(session_token: &str) -> String {

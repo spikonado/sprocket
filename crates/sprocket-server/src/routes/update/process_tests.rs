@@ -1,12 +1,10 @@
 use std::fs;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::Body;
-use axum::extract::ConnectInfo;
 use axum::http::{Request, header};
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -70,7 +68,7 @@ async fn test_state(package_updates: Arc<PackageUpdateManager>) -> (AppState, St
 }
 
 fn router(state: AppState) -> axum::Router {
-    crate::build_router(state, None)
+    crate::test_support::test_router(state)
 }
 
 async fn read_json(response: axum::http::Response<Body>) -> serde_json::Value {
@@ -82,15 +80,6 @@ async fn read_json(response: axum::http::Response<Body>) -> serde_json::Value {
 
 fn session_cookie(session_token: &str) -> String {
     format!("{}={session_token}", crate::SESSION_COOKIE_NAME)
-}
-
-fn loopback_peer() -> SocketAddr {
-    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 54321)
-}
-
-fn with_peer(mut request: Request<Body>, peer: SocketAddr) -> Request<Body> {
-    request.extensions_mut().insert(ConnectInfo(peer));
-    request
 }
 
 fn install_request(
@@ -142,7 +131,7 @@ async fn installed_update_manager(helper_dir: &TempDir) -> (Arc<PackageUpdateMan
 fn restart_request(session_token: &str) -> Request<Body> {
     let mut request = install_request(Some(session_token), Some("http://127.0.0.1:7731"), "{}");
     *request.uri_mut() = "/api/update/restart".parse().unwrap();
-    with_peer(request, loopback_peer())
+    request
 }
 
 #[tokio::test]
@@ -180,27 +169,14 @@ async fn restart_rejected_during_shutdown_leaves_no_restart_file() {
 }
 
 #[tokio::test]
-async fn authenticated_remote_clients_install_package_updates() {
-    for (peer, host, origin, bearer) in [
+async fn authenticated_proxied_clients_install_package_updates() {
+    for (host, origin, bearer) in [
         (
-            "192.168.1.50:54321",
-            "192.168.1.10:7731",
-            Some("http://192.168.1.10:7731"),
-            false,
-        ),
-        (
-            "100.64.0.50:54321",
-            "100.64.0.10:7731",
-            Some("http://100.64.0.10:7731"),
-            false,
-        ),
-        (
-            "127.0.0.1:54321",
             "sprocket.tailnet.ts.net",
             Some("https://sprocket.tailnet.ts.net"),
             false,
         ),
-        ("100.64.0.50:54321", "100.64.0.10:7731", None, true),
+        ("sprocket.tailnet.ts.net", None, true),
     ] {
         let helper_dir = TempDir::new();
         let manager = write_helper(&helper_dir.0, GATED_INSTALL_HELPER);
@@ -217,10 +193,7 @@ async fn authenticated_remote_clients_install_package_updates() {
                 format!("Bearer {session_token}").parse().unwrap(),
             );
         }
-        let response = app
-            .oneshot(with_peer(request, peer.parse().unwrap()))
-            .await
-            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK, "{host}");
         assert_eq!(read_json(response).await["status"], "installing");
         finish_install(&manager, &helper_dir.0).await;
@@ -243,13 +216,10 @@ async fn install_starts_without_using_request_body_and_returns_installing() {
     let app = router(state);
 
     let ok = app
-        .oneshot(with_peer(
-            install_request(
-                Some(&session_token),
-                Some("http://127.0.0.1:7731"),
-                r#"{"command":"rm -rf /","args":["--force"]}"#,
-            ),
-            loopback_peer(),
+        .oneshot(install_request(
+            Some(&session_token),
+            Some("http://127.0.0.1:7731"),
+            r#"{"command":"rm -rf /","args":["--force"]}"#,
         ))
         .await
         .unwrap();
@@ -279,13 +249,15 @@ exit 1"#,
     );
     let (state, session_token, _dir) = test_state(Arc::clone(&manager)).await;
     let app = router(state);
-    let first = app.clone().oneshot(with_peer(
-        install_request(Some(&session_token), Some("http://127.0.0.1:7731"), "{}"),
-        loopback_peer(),
+    let first = app.clone().oneshot(install_request(
+        Some(&session_token),
+        Some("http://127.0.0.1:7731"),
+        "{}",
     ));
-    let second = app.oneshot(with_peer(
-        install_request(Some(&session_token), Some("http://127.0.0.1:7731"), "{}"),
-        loopback_peer(),
+    let second = app.oneshot(install_request(
+        Some(&session_token),
+        Some("http://127.0.0.1:7731"),
+        "{}",
     ));
     let (first, second) = tokio::join!(first, second);
     let first = first.unwrap();

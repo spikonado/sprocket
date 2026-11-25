@@ -85,6 +85,8 @@ Starts only the local server, without opening the app.
 | `--data-dir <DIR>` | `SPROCKET_DATA_DIR`  | `~/.sprocket` |
 | `--quiet`          | `SPROCKET_QUIET`     | Off           |
 
+The server only accepts connections from this machine, whatever `--host` is. For remote access, put a loopback reverse proxy such as `tailscale serve` in front of it.
+
 `run`, `login`, and `logout` start a temporary server when none is running. It stops after the command ends and logs to `cli-server.log` in the data directory.
 
 ## sprocket update

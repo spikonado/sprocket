@@ -51,7 +51,7 @@ fn request(path: &str, token: Option<&str>, origin: Option<&str>, method: Method
 #[tokio::test]
 async fn browser_endpoints_require_authentication_and_mutations_require_same_origin() {
     let (state, token, _directory) = state().await;
-    let app = crate::build_router(state, None);
+    let app = crate::test_support::test_router(state);
     for path in [
         "/api/browser/dashboard/",
         "/api/browser/dashboard/api/sessions",
@@ -111,7 +111,7 @@ async fn forwards_only_dashboard_traffic_and_rewrites_assets_without_forwarding_
     let task = tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
     state.host.browsers.use_test_dashboard(port);
     let browsers = Arc::clone(&state.host.browsers);
-    let response = crate::build_router(state, None)
+    let response = crate::test_support::test_router(state)
         .oneshot(request(
             "/api/browser/dashboard/",
             Some(&token),
@@ -240,7 +240,7 @@ async fn translates_session_creation_and_preserves_upstream_result() {
         .headers_mut()
         .insert(header::CONTENT_TYPE, "application/json".parse().unwrap());
     *request.body_mut() = Body::from(r#"{"session":"created-session"}"#);
-    let response = crate::build_router(state, None)
+    let response = crate::test_support::test_router(state)
         .oneshot(request)
         .await
         .unwrap();
