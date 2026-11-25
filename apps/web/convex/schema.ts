@@ -367,6 +367,13 @@ export default defineSchema({
 		userId: v.string(),
 		bytes: v.number()
 	}).index('by_userId', ['userId']),
+	// No row means unlimited retention. `previousDays` is unset when the earlier limit was unlimited.
+	threadRetention: defineTable({
+		userId: v.string(),
+		days: v.number(),
+		previousDays: v.optional(v.number()),
+		changedAt: v.number()
+	}).index('by_userId', ['userId']),
 	hostedParseRequests: defineTable(v.any()),
 	webRequests: defineTable(v.any()),
 	executorJobs: defineTable({
