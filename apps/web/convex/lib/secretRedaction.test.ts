@@ -35,9 +35,10 @@ describe('redactSecrets', () => {
 	});
 });
 
-it('stores transcript parts with secrets redacted', async () => {
+it('stores transcript parts with secrets redacted and accepts retries of raw stored parts', async () => {
 	const t = initConvexTest();
 	const { asUser, threadId } = await seedOwnedThread(t);
+	const rawOutput = { stdout: 'OPENAI_API_KEY=sk-proj-Q3v9xYb2LmN8pR4tW6zA1cD5' };
 
 	await t.run(async (ctx) => {
 		const run = await ctx.db
@@ -45,19 +46,31 @@ it('stores transcript parts with secrets redacted', async () => {
 			.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
 			.first();
 
-		await appendTranscriptPart(ctx, {
+		const args = {
 			threadId,
 			sourceKey: 'tool:secret:finished',
-			kind: 'tool',
+			kind: 'tool' as const,
 			runId: run!._id,
 			tool: {
 				toolInvocationId: 'secret',
 				name: 'exec_command',
-				output: { stdout: 'OPENAI_API_KEY=sk-proj-Q3v9xYb2LmN8pR4tW6zA1cD5' },
-				status: 'completed'
+				output: rawOutput,
+				status: 'completed' as const
 			},
 			work: { ranges: [], sectionKey: 'test-tool:secret' }
+		};
+
+		const { part } = await appendTranscriptPart(ctx, args);
+
+		const legacy = await ctx.db.insert('threadTranscriptParts', {
+			...args,
+			sourceKey: 'tool:legacy:finished',
+			number: part.number + 1
 		});
+
+		const retry = await appendTranscriptPart(ctx, { ...args, sourceKey: 'tool:legacy:finished' });
+
+		expect(retry).toMatchObject({ inserted: false, part: { _id: legacy } });
 	});
 
 	const { parts } = await readTranscriptRange(asUser, threadId, 0, 1);

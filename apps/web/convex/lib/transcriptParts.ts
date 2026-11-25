@@ -221,12 +221,15 @@ export async function appendTranscriptPart(
 			work: args.work
 		};
 
+		// Parts stored before redaction shipped hold raw text, so retries compare redacted forms.
 		const persisted = {
 			kind: existing.kind,
 			runId: existing.runId,
-			prompt: existing.prompt,
-			completion: existing.completion && normalizeCompletion(existing.completion, existing.work),
-			tool: existing.tool,
+			prompt: existing.prompt && redactPrompt(existing.prompt),
+			completion:
+				existing.completion &&
+				normalizeCompletion(redactCompletion(existing.completion), existing.work),
+			tool: existing.tool && redactTool(existing.tool),
 			work: existing.work
 		};
 
