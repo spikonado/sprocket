@@ -1,6 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
-import { createQueuedRun, initConvexTest, seedOwnedThread, seedThreadRecord } from './test.setup';
+import {
+	createQueuedRun,
+	finishDueScheduledFunctions,
+	initConvexTest,
+	insertDraftFile,
+	readThread,
+	seedOwnedThread,
+	seedThreadRecord
+} from './test.setup';
 
 describe('thread mutations', () => {
 	it('lists unsettled, then settled root threads of the run project for agents', async () => {
@@ -74,15 +82,11 @@ describe('thread mutations', () => {
 		await expect(
 			asUser.mutation(api.threads.rename, { threadId, title: 'Renamed directly' })
 		).resolves.toBeNull();
-		expect((await asUser.query(api.threads.getByThreadId, { threadId })).title).toBe(
-			'Renamed directly'
-		);
+		expect((await readThread(asUser, threadId)).title).toBe('Renamed directly');
 		await expect(asUser.mutation(api.threads.settle, { threadId })).resolves.toBeNull();
-		expect((await asUser.query(api.threads.getByThreadId, { threadId })).archivedAt).toBeDefined();
+		expect((await readThread(asUser, threadId)).archivedAt).toBeDefined();
 		await expect(asUser.mutation(api.threads.unsettle, { threadId })).resolves.toBeNull();
-		expect(
-			(await asUser.query(api.threads.getByThreadId, { threadId })).archivedAt
-		).toBeUndefined();
+		expect((await readThread(asUser, threadId)).archivedAt).toBeUndefined();
 	});
 
 	it('moves a thread tree to another project and resets its cwd', async () => {
@@ -121,5 +125,99 @@ describe('thread mutations', () => {
 			expect(moved?.repositoryKey).toBe('beta');
 			expect(moved?.cwd).toBeUndefined();
 		}
+	});
+});
+
+describe('thread deletion', () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it('deletes the whole tree with its run data and files in batches', async () => {
+		vi.useFakeTimers();
+		const t = initConvexTest();
+		const { asUser, subject, threadId } = await seedOwnedThread(t);
+		const other = await seedThreadRecord(t, subject, 'alpha');
+
+		const children = await Promise.all(
+			Array.from({ length: 17 }, () => seedThreadRecord(t, subject, 'alpha'))
+		);
+
+		const grandchild = await seedThreadRecord(t, subject, 'alpha');
+		await t.run(async (ctx) => {
+			for (const child of children) {
+				await ctx.db.patch('threadRecords', child, { parentThreadId: threadId });
+			}
+
+			await ctx.db.patch('threadRecords', grandchild, { parentThreadId: children[0] });
+
+			const run = await ctx.db
+				.query('runs')
+				.withIndex('by_threadId', (q) => q.eq('threadId', grandchild))
+				.unique();
+
+			const tokens = {
+				inputTokens: 1,
+				cacheReadTokens: 0,
+				cacheWriteTokens: 0,
+				outputTokens: 1,
+				reasoningTokens: 0
+			};
+
+			for (let index = 0; index < 300; index++) {
+				await ctx.db.insert('modelCallUsage', {
+					userId: subject,
+					runId: run!._id,
+					eventId: `call-${index}`,
+					provider: 'spikonado',
+					model: 'gpt-5.6-sol',
+					serviceTier: 'standard',
+					cacheWriteTtl: null,
+					longContext: false,
+					...tokens
+				});
+			}
+
+			await ctx.db.patch('files', await insertDraftFile(ctx, subject), { threadId: grandchild });
+			await ctx.db.insert('storageUsage', { userId: subject, bytes: 5 });
+		});
+
+		await asUser.mutation(api.threads.remove, { threadId });
+
+		expect(await asUser.query(api.threads.getByThreadId, { threadId })).toBeNull();
+		await expect(createQueuedRun(t, asUser, children[1]!, 'orphan', 'orphan')).rejects.toThrow(
+			'Thread not found.'
+		);
+
+		await finishDueScheduledFunctions(t);
+
+		const remaining = await t.run(async (ctx) => ({
+			threads: (await ctx.db.query('threadRecords').collect()).map((thread) => thread._id),
+			runs: (await ctx.db.query('runs').collect()).map((run) => run.threadId),
+			runStates: (await ctx.db.query('runExecutionStates').collect()).length,
+			modelCalls: (await ctx.db.query('modelCallUsage').collect()).length,
+			files: (await ctx.db.query('files').collect()).length,
+			storageUsage: (await ctx.db.query('storageUsage').unique())?.bytes
+		}));
+
+		expect(remaining).toEqual({
+			threads: [other],
+			runs: [other],
+			runStates: 1,
+			modelCalls: 0,
+			files: 0,
+			storageUsage: 0
+		});
+	});
+
+	it('refuses to delete a thread with active work', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		await createQueuedRun(t, asUser, threadId, 'active', 'active');
+
+		await expect(asUser.mutation(api.threads.remove, { threadId })).rejects.toThrow(
+			'Stop the thread before deleting it.'
+		);
+		expect(await asUser.query(api.threads.getByThreadId, { threadId })).not.toBeNull();
 	});
 });

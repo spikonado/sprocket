@@ -11,6 +11,7 @@ import {
 	initConvexTest,
 	insertQueuedRun,
 	readTranscriptRange,
+	readTranscriptState,
 	seedOwnedThread,
 	seedThreadRecord,
 	type ConvexTestInstance
@@ -478,7 +479,7 @@ describe('agentRuntime context accounting', () => {
 			]
 		);
 
-		const state = await asUser.query(api.transcript.getState, { threadId });
+		const state = await readTranscriptState(asUser, threadId);
 		expect(state.historyFromNumber).toBe(3);
 		expect(state.contextSummary).toBe('First step is done.');
 		const parts = await readTranscriptRange(asUser, threadId, 0, 3);

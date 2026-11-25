@@ -11,6 +11,7 @@ import {
 	initConvexTest,
 	insertDraftFile,
 	insertQueuedRun,
+	readThread,
 	seedOwnedThread
 } from './test.setup';
 
@@ -59,7 +60,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 	it('updates the thread model and provider when the next run is submitted', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		const initialThread = await asUser.query(api.threads.getByThreadId, { threadId });
+		const initialThread = await readThread(asUser, threadId);
 		expect(initialThread.selectedModel).toBe('gpt-5.6-sol');
 		expect(initialThread.completionProvider).toBeUndefined();
 
@@ -106,7 +107,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 				executionSecret: 'empty-prompt-secret'
 			})
 		).rejects.toThrow('Message cannot be empty.');
-		const unchangedThread = await asUser.query(api.threads.getByThreadId, { threadId });
+		const unchangedThread = await readThread(asUser, threadId);
 		expect(unchangedThread.selectedModel).toBe('gpt-5.6-sol');
 		expect(unchangedThread.completionProvider).toBeUndefined();
 	});

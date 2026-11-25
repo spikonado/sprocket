@@ -1,7 +1,7 @@
 import { query, type MutationCtx, type QueryCtx } from '@convex/_generated/server';
 import { v, type Infer } from 'convex/values';
 import type { Doc, Id } from '@convex/_generated/dataModel';
-import { getOwnedThreadRecord, getOwnedThreadRecordByString } from '@convex/lib/access';
+import { findOwnedThreadRecord, getOwnedThreadRecordByString } from '@convex/lib/access';
 import { getExecutionRunRecord, getUserId } from '@convex/lib/auth';
 import { toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { vTranscriptPartsResult, vTranscriptStateResult } from '@convex/lib/docs';
@@ -29,11 +29,11 @@ export const getState = query({
 	args: {
 		threadId: v.id('threadRecords')
 	},
-	returns: vTranscriptStateResult,
+	returns: v.union(vTranscriptStateResult, v.null()),
 	handler: async (ctx, args) => {
-		const thread = await getOwnedThreadRecord(ctx.db, await getUserId(ctx), args.threadId);
+		const thread = await findOwnedThreadRecord(ctx.db, await getUserId(ctx), args.threadId);
 
-		return await transcriptStateResult(ctx, args.threadId, thread);
+		return thread && (await transcriptStateResult(ctx, args.threadId, thread));
 	}
 });
 
@@ -44,9 +44,9 @@ export const getPartsPage = query({
 		end: v.number(),
 		order: v.optional(v.union(v.literal('asc'), v.literal('desc')))
 	},
-	returns: vTranscriptPartsResult,
+	returns: v.union(vTranscriptPartsResult, v.null()),
 	handler: async (ctx, args) => {
-		await getOwnedThreadRecord(ctx.db, await getUserId(ctx), args.threadId);
+		if (!(await findOwnedThreadRecord(ctx.db, await getUserId(ctx), args.threadId))) return null;
 
 		const parts = await loadTranscriptPartsPage(
 			ctx,

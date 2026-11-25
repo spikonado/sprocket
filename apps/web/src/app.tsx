@@ -329,6 +329,7 @@ export default function App({
 	const settleThreadRecord = useMutation(api.threads.settle);
 	const unsettleThreadRecord = useMutation(api.threads.unsettle);
 	const moveThreadRecord = useMutation(api.threads.moveToProject);
+	const deleteThreadRecord = useMutation(api.threads.remove);
 	const answerAgentQuestion = useMutation(api.agentQuestions.answer);
 	const skipAgentQuestion = useMutation(api.agentQuestions.skip);
 	const setThemePreference = useMutation(api.uiPreferences.setTheme);
@@ -666,6 +667,7 @@ export default function App({
 	});
 
 	const currentActiveThread = dataForThread(activeThreadQuery.data, currentThreadId);
+	const currentThreadDeleted = activeThreadQuery.data === null;
 
 	const threads = useMemo<ThreadSummary[]>(() => {
 		const summaries =
@@ -1404,6 +1406,8 @@ export default function App({
 	async function openPurchaseThread(threadId: Id<'threadRecords'>) {
 		const thread = await convexClient.query(api.threads.getByThreadId, { threadId });
 
+		if (!thread) throw new Error('This thread was deleted.');
+
 		if (!findProjectByRepositoryKey(projects, thread.repositoryKey)) {
 			throw new Error('Add this thread’s project to Sprocket to open it.');
 		}
@@ -1454,12 +1458,22 @@ export default function App({
 			state === 'settled' &&
 			currentThreadIdRef.current === thread._id
 		) {
-			setCurrentThreadId(null);
-			setDraftWorkspacePath(currentWorkspacePathRef.current);
-			bumpProjectSelectionGeneration();
-			setCurrentError(null);
+			leaveCurrentThread();
 		}
 	}
+
+	function leaveCurrentThread() {
+		setCurrentThreadId(null);
+		setDraftWorkspacePath(currentWorkspacePathRef.current);
+		bumpProjectSelectionGeneration();
+		setCurrentError(null);
+	}
+
+	const leaveCurrentThreadRef = useLatest(leaveCurrentThread);
+
+	useEffect(() => {
+		if (currentThreadDeleted) leaveCurrentThreadRef.current();
+	}, [currentThreadDeleted, leaveCurrentThreadRef]);
 
 	async function settleAgentQuestion(action: 'answer' | 'skip') {
 		const question = pendingAgentQuestion;
@@ -2498,6 +2512,9 @@ export default function App({
 									threadId: thread._id,
 									repositoryKey: project.repositoryKey
 								});
+							}}
+							onDelete={async (thread) => {
+								await deleteThreadRecord({ threadId: thread._id });
 							}}
 						/>
 					)}

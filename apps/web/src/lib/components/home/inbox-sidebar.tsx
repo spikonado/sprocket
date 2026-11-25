@@ -11,6 +11,7 @@ import {
 	Search,
 	Settings,
 	SquarePen,
+	Trash2,
 	X
 } from 'lucide-react';
 import type {
@@ -29,11 +30,13 @@ import { isRootThread, subagentSummaryLabel } from '$lib/project/subagents';
 import type { UseExpandedThreads, ThreadTreeSummaryRead } from '$lib/project/useThreadTree';
 import { useThreadTreeSummary } from '$lib/project/useThreadTree';
 import { cn } from '$lib/utils';
+import { convexClientErrorMessage } from '$lib/convex-error';
 import { readStorage, writeStorage } from '$lib/storage';
 import { useLatest } from '$lib/use-latest';
 import BrandMark from '$lib/components/brand-mark';
 import ProviderLogo from '$lib/components/provider-logo';
 import AppUpdate, { type ConnectorUpdatesApi } from './app-update';
+import ConfirmDialog from './confirm-dialog';
 import InboxLoadMore from './inbox-load-more';
 import LinkedPullRequests from './linked-pull-requests';
 import SidebarTopActions from './sidebar-top-actions';
@@ -108,6 +111,7 @@ type InboxSidebarProps = {
 	onRename: (thread: Thread, title: string) => Promise<void>;
 	onRegenerateTitle: (thread: Thread) => Promise<void>;
 	onMove: (thread: Thread, project: Project) => Promise<void>;
+	onDelete: (thread: Thread) => Promise<void>;
 	expansion: UseExpandedThreads;
 	resolveChildren: SidebarChildrenResolver;
 	readTreeSummary?: ThreadTreeSummaryRead;
@@ -139,6 +143,7 @@ export default function InboxSidebar({
 	onRename,
 	onRegenerateTitle,
 	onMove,
+	onDelete,
 	expansion,
 	resolveChildren,
 	readTreeSummary = useThreadTreeSummary
@@ -149,6 +154,7 @@ export default function InboxSidebar({
 	const mutating = useRef(false);
 	const [renameThread, setRenameThread] = useState<Thread | null>(null);
 	const [renameTitle, setRenameTitle] = useState('');
+	const [deleteThread, setDeleteThread] = useState<Thread | null>(null);
 	const menuTriggerRef = useRef<HTMLElement | null>(null);
 	const renameInputRef = useRef<HTMLInputElement | null>(null);
 	const projectMenuRef = useRef<HTMLDetailsElement | null>(null);
@@ -259,7 +265,7 @@ export default function InboxSidebar({
 		try {
 			await action();
 		} catch (error) {
-			setNotice(error instanceof Error ? error.message : failureMessage);
+			setNotice((error instanceof Error && convexClientErrorMessage(error)) || failureMessage);
 		} finally {
 			mutating.current = false;
 			setBusy(false);
@@ -302,6 +308,12 @@ export default function InboxSidebar({
 
 			if (project.repositoryKey !== thread.repositoryKey) return onMove(thread, project);
 		});
+	}
+
+	function confirmDelete(thread: Thread) {
+		setDeleteThread(null);
+
+		return mutate('Could not delete thread.', () => onDelete(thread));
 	}
 
 	function canChange(thread: Thread, state: InboxState, subtreeActive: boolean) {
@@ -690,10 +702,40 @@ export default function InboxSidebar({
 									<Copy size={14} />
 									Copy thread ID
 								</button>
+								{isRootThread(menuThread) && (
+									<button
+										type="button"
+										role="menuitem"
+										data-ph-capture-attribute-action="delete_thread"
+										disabled={
+											!mutationsEnabled ||
+											busy ||
+											!canSettleThread(menuThread, menuSummary?.anyActive === true)
+										}
+										onClick={() => {
+											closeMenu();
+											setDeleteThread(menuThread);
+										}}
+									>
+										<Trash2 size={14} />
+										Delete
+									</button>
+								)}
 							</>
 						)}
 					</div>
 				</>
+			)}
+
+			{deleteThread && (
+				<ConfirmDialog
+					title={`Delete ${deleteThread.title ?? 'thread'}?`}
+					description="This deletes the thread, its subagents, and their attachments. You can’t undo this."
+					confirmLabel="Delete"
+					destructive
+					onCancel={() => setDeleteThread(null)}
+					onConfirm={() => void confirmDelete(deleteThread)}
+				/>
 			)}
 		</aside>
 	);

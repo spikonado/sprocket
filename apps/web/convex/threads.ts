@@ -1,12 +1,24 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
-import { mutation, query, type MutationCtx, type QueryCtx } from '@convex/_generated/server';
+import { internal } from '@convex/_generated/api';
+import {
+	internalMutation,
+	mutation,
+	query,
+	type MutationCtx,
+	type QueryCtx
+} from '@convex/_generated/server';
 import { paginationOptsValidator, paginationResultValidator } from 'convex/server';
-import { v } from 'convex/values';
-import { getOwnedThreadRecord, getOwnedThreadRecordByString } from '@convex/lib/access';
+import { ConvexError, v } from 'convex/values';
+import {
+	findOwnedThreadRecord,
+	getOwnedThreadRecord,
+	getOwnedThreadRecordByString
+} from '@convex/lib/access';
 import { getExecutionRunRecord, getUserId } from '@convex/lib/auth';
 import { toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { INBOX_STATES, type InboxState } from '@convex/lib/inboxState';
 import schema from '@convex/schema';
+import { deleteThread, deleteThreadDataBatch } from '@convex/lib/threadDeletion';
 import {
 	listDirectChildrenPage,
 	settleRoot,
@@ -48,12 +60,9 @@ export const getByThreadId = query({
 	args: {
 		threadId: v.id('threadRecords')
 	},
-	returns: schema.doc('threadRecords'),
-	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-
-		return await getOwnedThreadRecord(ctx.db, userId, args.threadId);
-	}
+	returns: v.union(schema.doc('threadRecords'), v.null()),
+	handler: async (ctx, args) =>
+		await findOwnedThreadRecord(ctx.db, await getUserId(ctx), args.threadId)
 });
 
 export const rename = mutation({
@@ -149,6 +158,43 @@ export const moveToProject = mutation({
 				);
 
 			for await (const child of children) pending.push(child._id);
+		}
+
+		return null;
+	}
+});
+
+export const remove = mutation({
+	args: {
+		threadId: v.id('threadRecords')
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const record = await getOwnedThreadRecord(ctx.db, await getUserId(ctx), args.threadId);
+
+		if (record.parentThreadId !== undefined) {
+			throw new Error('Only root threads can be deleted.');
+		}
+
+		if ((await subtreeSummary(ctx.db, record)).anyActive) {
+			throw new ConvexError('Stop the thread before deleting it.');
+		}
+
+		await deleteThread(ctx, record);
+
+		return null;
+	}
+});
+
+export const deleteThreadData = internalMutation({
+	args: {
+		threadId: v.id('threadRecords'),
+		userId: v.string()
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		if (!(await deleteThreadDataBatch(ctx, args))) {
+			await ctx.scheduler.runAfter(0, internal.threads.deleteThreadData, args);
 		}
 
 		return null;

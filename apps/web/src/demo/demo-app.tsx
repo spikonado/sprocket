@@ -314,6 +314,7 @@ export default function DemoApp({
 						onRename={async (thread, title) => state.rename(thread._id, title)}
 						onRegenerateTitle={async () => {}}
 						onMove={async () => {}}
+						onDelete={async () => {}}
 					/>
 				</div>
 

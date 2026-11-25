@@ -112,6 +112,7 @@ function props(records: Thread[]) {
 		onRename: vi.fn().mockResolvedValue(undefined),
 		onRegenerateTitle: vi.fn().mockResolvedValue(undefined),
 		onMove: vi.fn().mockResolvedValue(undefined),
+		onDelete: vi.fn().mockResolvedValue(undefined),
 		expansion: expansionStub(),
 		resolveChildren: childrenResolverStub(),
 		readTreeSummary
@@ -530,7 +531,8 @@ it('shows an icon for every thread menu action without selection controls', asyn
 		'Rename',
 		'Regenerate thread title',
 		'Move to project',
-		'Copy thread ID'
+		'Copy thread ID',
+		'Delete'
 	]);
 	expect(actions.every((action) => action.querySelector('svg'))).toBe(true);
 	expect(document.body.textContent).not.toContain('Select thread');
@@ -575,6 +577,30 @@ it('moves the right-clicked thread to the project chosen in the menu', async () 
 		expect.objectContaining({ repositoryKey: 'other' })
 	);
 	expect(document.querySelector('.inbox-context-menu')).toBeNull();
+});
+
+it('deletes the right-clicked thread after confirmation', async () => {
+	const record = thread();
+	const input = await render([record]);
+
+	fireEvent.contextMenu(document.querySelector('.inbox-row')!);
+	fireEvent.click(
+		[...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+			(button) => button.textContent?.trim() === 'Delete'
+		)!
+	);
+
+	expect(input.onDelete).not.toHaveBeenCalled();
+
+	fireEvent.click(
+		[...document.querySelectorAll<HTMLButtonElement>('dialog button')].find(
+			(button) => button.textContent === 'Delete'
+		)!
+	);
+	await flush();
+
+	expect(input.onDelete).toHaveBeenCalledExactlyOnceWith(record);
+	expect(document.querySelector('dialog')).toBeNull();
 });
 
 it('disables title regeneration when mutations are unavailable', async () => {

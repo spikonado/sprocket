@@ -1,12 +1,15 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+use anyhow::Context;
 use convex::Value;
 use serde::Deserialize;
 use sprocket_convex::{
     AuthTokenFetcher, Client as ConvexClient, Subscription, decode_labeled_function_result,
 };
 use tokio::time::sleep;
+
+pub const THREAD_NOT_FOUND: &str = "Thread not found.";
 
 #[derive(Clone)]
 pub struct UserConvexClient {
@@ -32,17 +35,16 @@ impl UserConvexClient {
         args.insert("start".into(), Value::Float64(f64::from(start)));
         args.insert("end".into(), Value::Float64(f64::from(end)));
         args.insert("order".into(), "desc".to_owned().into());
-        sprocket_transcript::parse_remote_page(
-            self.query_json("transcript:getPartsPage", args).await?,
-            thread_id,
-        )
+        let page: Option<serde_json::Value> =
+            self.query_json("transcript:getPartsPage", args).await?;
+        sprocket_transcript::parse_remote_page(page.context(THREAD_NOT_FOUND)?, thread_id)
     }
 
     pub async fn transcript_total_parts(&self, thread_id: &str) -> anyhow::Result<u32> {
-        let state: sprocket_transcript::RemoteTranscriptState = self
+        let state: Option<sprocket_transcript::RemoteTranscriptState> = self
             .query("transcript:getState", thread_id_args(thread_id))
             .await?;
-        Ok(state.total_parts)
+        Ok(state.context(THREAD_NOT_FOUND)?.total_parts)
     }
 
     pub(crate) async fn connect_with_fetcher(

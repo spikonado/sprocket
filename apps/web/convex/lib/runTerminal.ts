@@ -12,7 +12,7 @@ const READ_RESERVE_BYTES = 6 * 1024 * 1024;
 
 const WRITE_RESERVE_BYTES = 4 * 1024 * 1024;
 
-async function hasCleanupHeadroom(ctx: MutationCtx): Promise<boolean> {
+export async function hasCleanupHeadroom(ctx: MutationCtx): Promise<boolean> {
 	const metrics = await ctx.meta.getTransactionMetrics();
 
 	return (

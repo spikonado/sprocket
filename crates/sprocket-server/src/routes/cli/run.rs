@@ -19,7 +19,7 @@ use crate::routes::api_error::ApiError;
 use crate::routes::run_settings::{self, convex_client, gateway_url};
 use sprocket_host::agent_launch::{AgentLaunchRequest, WorkspaceAccess};
 use sprocket_host::project_attachments::repository_key_matches;
-use sprocket_host::transcript_client::UserConvexClient;
+use sprocket_host::transcript_client::{THREAD_NOT_FOUND, UserConvexClient};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -133,7 +133,9 @@ async fn thread_settings(
     thread_id: &str,
 ) -> anyhow::Result<ThreadSettings> {
     let args = BTreeMap::from([("threadId".into(), Value::String(thread_id.to_owned()))]);
-    rpc.query("threads:getByThreadId", args).await
+    rpc.query::<Option<ThreadSettings>>("threads:getByThreadId", args)
+        .await?
+        .context(THREAD_NOT_FOUND)
 }
 
 async fn prepare_run(
