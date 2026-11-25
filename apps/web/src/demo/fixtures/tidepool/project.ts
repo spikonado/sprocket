@@ -1,6 +1,31 @@
+import { AGENT_DECIDE_OPTION_ID, type AgentQuestionAnswer } from '@convex/lib/agentQuestions';
 import { demoProject } from '../demo-project';
-import { prompt, say, think, tool, work } from '../rows';
+import { prompt, say, type Step, think, tool, work } from '../rows';
 import type { DemoThread } from '../types';
+
+const COMMENT_ON_RED_PRS = work(
+	tool(
+		'exec_cmd',
+		'for pr in 37 39 40; do gh pr comment $pr --body "This failure is the flaky tide test, fixed in #42. It passes after a rebase once #42 merges."; done'
+	)
+);
+
+function answerRedPrs(answer: AgentQuestionAnswer): Step[] {
+	if (answer.optionId === 'comment' || answer.optionId === AGENT_DECIDE_OPTION_ID)
+		return [
+			COMMENT_ON_RED_PRS,
+			say(
+				'I commented on #37, #39 and #40 with a link to #42, so their authors know a rebase fixes the red check.'
+			)
+		];
+
+	const opener =
+		answer.optionId === 'leave'
+			? 'Okay, I left them alone.'
+			: "I couldn't tell from your answer whether to post, so I left them alone.";
+
+	return [say(`${opener} They pass once they're rebased after #42 merges.`)];
+}
 
 const flakyTest: DemoThread = {
 	id: 'tidepool-flaky',
@@ -33,7 +58,9 @@ const flakyTest: DemoThread = {
 				'git switch -c fix/tide-day-timezone && git commit -am "fix: group tides by the station\'s day"'
 			),
 			tool('exec_cmd', 'git push -u origin fix/tide-day-timezone && gh pr create --fill'),
-			tool('link_prs', 'github.com/maker/tidepool#42')
+			tool('link_prs', 'github.com/maker/tidepool#42'),
+			tool('exec_cmd', 'gh pr list --state open --json number,author,statusCheckRollup'),
+			tool('ask_question', 'Comment on the 3 open PRs this flake turned red?')
 		),
 		say(`The test was right to fail. \`tidesByDay\` grouped tides by their UTC date, so from 16:00 Pacific on, evening tides moved to the next day, on the site too. CI only failed when it ran in that window.
 
@@ -47,8 +74,17 @@ const flakyTest: DemoThread = {
 
 The test now uses a fixed 18:42 PST tide instead of \`new Date()\`, so it fails every time the bug is back. It passes with the clock set to UTC+14 and UTC−11.
 
-I opened [maker/tidepool#42](https://github.com/maker/tidepool/pull/42).`)
-	]
+I opened [maker/tidepool#42](https://github.com/maker/tidepool/pull/42). Three open PRs by other people, #37, #39 and #40, are red from this same flake. Should I comment on them so their authors don't go hunting for a bug they didn't write?`)
+	],
+	question: {
+		questionId: 'red-prs-question',
+		question: 'Comment on the 3 open PRs this flake turned red?',
+		options: [
+			{ id: 'comment', label: 'Comment on #37, #39 and #40' },
+			{ id: 'leave', label: 'Leave them alone' }
+		],
+		continueWith: answerRedPrs
+	}
 };
 
 const cache: DemoThread = {

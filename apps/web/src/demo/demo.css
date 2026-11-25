@@ -1,7 +1,5 @@
 /* The preview has no backend, so controls that need one are hidden. */
 [data-ph-capture-attribute-action='open_settings'],
-[data-ph-capture-attribute-action='attach_files'],
-[data-ph-capture-attribute-action='attach_files'] + div,
 li:has(> [data-ph-capture-attribute-side_panel_view='browser']),
 .inbox-add-project-button,
 .inbox-project-footer {
