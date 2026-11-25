@@ -519,7 +519,8 @@ async function recordContextHandoff(
 	}
 
 	if (context.contextSummaryHandoffKey === handoffKey) {
-		if (context.contextSummary !== summary) {
+		// Handoffs saved before redaction shipped hold raw text.
+		if (redactSecrets(context.contextSummary ?? '') !== summary) {
 			throw new Error('Conflicting context handoff retry.');
 		}
 

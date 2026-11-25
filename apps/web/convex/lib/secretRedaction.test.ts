@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { initConvexTest, readTranscriptRange, seedOwnedThread } from '../test.setup';
-import { redactSecrets } from './secretRedaction';
+import { redactCompletion, redactSecrets, redactTool } from './secretRedaction';
 import { appendTranscriptPart } from './transcriptParts';
 
 describe('redactSecrets', () => {
@@ -33,6 +33,44 @@ describe('redactSecrets', () => {
 
 		expect(redactSecrets(text)).toBe(text);
 	});
+
+	it.each(['eyJ-', 'sk-ant-', 'xoxb-', 'a+'])('stays linear on repeated %s', (unit) => {
+		const started = performance.now();
+
+		redactSecrets(unit.repeat(250_000));
+		expect(performance.now() - started).toBeLessThan(1000);
+	});
+});
+
+it('redacts secrets held under secret-like field names', () => {
+	const tool = redactTool({
+		toolInvocationId: 'call',
+		name: 'exec_command',
+		input: { env: { password: 'abc123def456ghi', mode: 'abc123def456ghi' } },
+		status: 'completed'
+	});
+
+	expect(tool.input).toEqual({ env: { password: '[redacted:secret]', mode: 'abc123def456ghi' } });
+});
+
+it('drops the signature of Claude thinking that redaction changes', () => {
+	const signed = { rigNative: { type: 'thinking', signature: 'sig' } };
+
+	const thinking = (text: string) => ({
+		type: 'reasoning' as const,
+		id: 'r',
+		text,
+		providerMetadata: signed
+	});
+
+	const { items } = redactCompletion({
+		items: [thinking('use sk-proj-Q3v9xYb2LmN8pR4tW6zA1cD5'), thinking('plan')]
+	});
+
+	expect(items).toEqual([
+		{ type: 'reasoning', id: 'r', text: 'use [redacted:openai-key]' },
+		thinking('plan')
+	]);
 });
 
 it('stores transcript parts with secrets redacted and accepts retries of raw stored parts', async () => {
