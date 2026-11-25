@@ -24,7 +24,7 @@ async fn caches_returned_prompts_completions_and_tool_results_idempotently() {
             {"number": 2, "sourceKey": "prompt:run", "kind": "prompt", "runId": "run",
              "prompt": {"text": "hello", "imageUploads": [{
                  "name": "photo.png", "mediaType": "image/png", "size": 12,
-                 "storageId": "storage"
+                 "fileId": "file", "storageId": "file"
              }]}}
         ]
     });
@@ -75,7 +75,9 @@ async fn caches_returned_prompts_completions_and_tool_results_idempotently() {
     assert_eq!(cached.len(), 6);
     assert_eq!(cached[0].prompt.as_ref().unwrap().text, "instructions");
     assert_eq!(cached[1].prompt.as_ref().unwrap().text, "environment");
-    assert_eq!(cached[2].prompt.as_ref().unwrap().image_uploads[0].size, 12);
+    let attachment = &cached[2].prompt.as_ref().unwrap().image_uploads[0];
+    assert_eq!(attachment.size, 12);
+    assert_eq!(attachment.file_id.as_deref(), Some("file"));
     assert_eq!(cached[3].created_at, Some(1_700_000_000_000));
     assert_eq!(
         cached[3].completion.as_ref().unwrap().items[0]["toolInvocationId"],

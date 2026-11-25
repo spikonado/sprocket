@@ -28,18 +28,6 @@ export const vTranscriptMutationResult = v.object({
 	parts: v.array(schema.doc('threadTranscriptParts'))
 });
 
-export const vRegisterFileSuccess = v.object({
-	storageId: v.id('_storage'),
-	name: v.string(),
-	mediaType: v.string(),
-	size: v.number(),
-	url: v.string()
-});
-
-export const vAttachmentFileDownloadResult = v.union(v.null(), vRegisterFileSuccess);
-
-export const vRegisterFileResult = v.union(vRegisterFileSuccess, v.object({ error: v.string() }));
-
 export const vAgentQuestionSnapshot = v.object({
 	threadId: v.id('threadRecords'),
 	questionId: v.id('agentQuestions'),

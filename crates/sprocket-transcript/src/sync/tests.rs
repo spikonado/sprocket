@@ -53,28 +53,29 @@ fn parses_legacy_work_and_normalizes_call_invocations() {
 }
 
 #[test]
-fn attachment_wire_formats_serialize_with_storage_identity_only() {
-    for legacy in [false, true] {
-        let mut attachment = serde_json::json!({
-            "storageId": "storage", "name": "file.txt",
-            "mediaType": "text/plain", "size": 4.0
-        });
-        if legacy {
-            attachment["imageUploadId"] = "upload".into();
-        }
+fn attachments_keep_file_ids_and_treat_storage_only_ones_as_deleted() {
+    for (ids, file_id) in [
+        (
+            serde_json::json!({"fileId": "file", "storageId": "file"}),
+            Some("file"),
+        ),
+        (serde_json::json!({"storageId": "storage"}), None),
+    ] {
+        let mut attachment =
+            serde_json::json!({"name": "file.txt", "mediaType": "text/plain", "size": 4});
+        attachment
+            .as_object_mut()
+            .unwrap()
+            .extend(ids.as_object().unwrap().clone());
         let parts = parse_remote_parts(serde_json::json!({"parts": [{
             "number": 0.0, "sourceKey": "prompt:0", "kind": "prompt", "runId": "run",
-            "prompt": {"text": "hi", "imageUploads": [attachment]}
+            "prompt": {"text": "hi", "imageUploads": [attachment.clone()]}
         }]}))
         .unwrap();
         let meta = &parts[0].prompt.as_ref().unwrap().image_uploads[0];
-        assert_eq!(meta.storage_id, "storage");
-        let json = serde_json::to_value(meta).unwrap();
-        assert!(json.get("imageUploadId").is_none());
-        let mut old_local = json.clone();
-        old_local["imageUploadId"] = "upload".into();
+        assert_eq!(meta.file_id.as_deref(), file_id);
         assert_eq!(
-            serde_json::from_value::<TranscriptAttachmentMeta>(old_local).unwrap(),
+            serde_json::from_value::<TranscriptAttachmentMeta>(attachment).unwrap(),
             *meta
         );
     }

@@ -637,24 +637,12 @@ async fn load_prior_history(
             runtime.transcript_parts_page_for_run(run_id, thread_id, start, end)
         })
         .await?;
-    cache_prompt_attachments(
-        store,
-        user_id,
-        thread_id,
-        &mut parts,
-        |number, storage_id| async move {
-            runtime
-                .attachment_url_for_run(run_id, number, &storage_id)
-                .await
-        },
-    )
-    .await?;
+    let file_url =
+        |file_id: String| async move { runtime.file_url_for_run(run_id, &file_id).await };
+    cache_prompt_attachments(store, user_id, thread_id, &mut parts, file_url).await?;
     let mut current_prompt = match context.pending_prompt.clone() {
         Some(mut prompt) => {
-            cache_attachments(store, user_id, thread_id, &mut prompt, |_| async {
-                Ok(None)
-            })
-            .await?;
+            cache_attachments(store, user_id, thread_id, &mut prompt, file_url).await?;
             Some(prompt)
         }
         None => pending_prompt_part(&state, &parts, run_id).and_then(|part| part.prompt.clone()),

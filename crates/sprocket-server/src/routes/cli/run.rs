@@ -199,7 +199,7 @@ async fn prepare_run(
             .is_none()
             .then_some(attachment.repository_key),
         prompt: request.prompt.clone(),
-        storage_ids: Vec::new(),
+        file_ids: Vec::new(),
         selected_model: settings.model,
         completion_provider: settings.provider,
         reasoning_effort: settings.reasoning,

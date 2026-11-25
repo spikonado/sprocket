@@ -8,15 +8,14 @@ import {
 import type { TranscriptUploadResult } from '$lib/types/sprocket';
 import { fixtureId } from '$lib/convex-test-client';
 
-const storageId = fixtureId<'_storage'>;
+const fileId = fixtureId<'files'>;
 
-function uploadResult(storage: string): TranscriptUploadResult {
+function uploadResult(file: string): TranscriptUploadResult {
 	return {
-		storageId: storageId(storage),
+		fileId: fileId(file),
 		name: 'notes.txt',
 		mediaType: 'text/plain',
-		size: 8,
-		url: 'blob:local'
+		size: 8
 	};
 }
 
@@ -59,10 +58,10 @@ it('uploads with the context committed when the file is added, not the first ren
 	});
 
 	await act(async () => {
-		gate.resolve(uploadResult('storage-1'));
+		gate.resolve(uploadResult('file-1'));
 	});
 	expect(result.current.items[0]?.status).toBe('ready');
-	expect(result.current.items[0]?.storageId).toBe('storage-1');
+	expect(result.current.items[0]?.fileId).toBe('file-1');
 });
 
 it('reports an unavailable server when the context is still the unconnected one', async () => {
@@ -97,12 +96,12 @@ it('discards a late upload under the account that owned it, not the current one'
 		result.current.remove(localId);
 	});
 	await act(async () => {
-		gate.resolve(uploadResult('storage-9'));
+		gate.resolve(uploadResult('file-9'));
 	});
 
 	expect(api.discardTranscriptAttachment).toHaveBeenCalledWith({
 		userId: 'user-a',
-		storageId: storageId('storage-9'),
+		fileId: fileId('file-9'),
 		threadId: undefined
 	});
 	expect(result.current.items).toEqual([]);

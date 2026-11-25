@@ -1,9 +1,10 @@
 import { Check, Copy } from 'lucide-react';
+import type { Id } from '@convex/_generated/dataModel';
 import type { MarkdownImageScope } from '$lib/chat/markdown-images';
 import ChatMarkdown from '$lib/components/chat-markdown';
 import TranscriptAttachment from '$lib/components/home/transcript-attachment';
 import type { ViewerImage } from '$lib/components/image-viewer';
-import type { MessageAttachment, TranscriptRow } from '$lib/types/sprocket';
+import type { TranscriptRow } from '$lib/types/sprocket';
 
 type PromptMessage = Extract<TranscriptRow, { kind: 'prompt' }>;
 
@@ -11,7 +12,7 @@ type Props = {
 	message: PromptMessage;
 	imageScope?: MarkdownImageScope;
 	copied: boolean;
-	loadAttachment?: (storageId: MessageAttachment['storageId']) => Promise<string | null>;
+	loadAttachment?: (fileId: Id<'files'>) => Promise<string | null>;
 	onCopy: () => void;
 	onOpenImage: (image: ViewerImage) => void;
 };
@@ -37,10 +38,10 @@ export default function TranscriptPromptMessage({
 		>
 			{attachments.length > 0 ? (
 				<ul className="flex max-w-132 flex-wrap justify-end gap-2" aria-label="Attached files">
-					{attachments.map((attachment) => (
-						<li key={attachment.storageId}>
+					{attachments.map((attachment, index) => (
+						<li key={attachment.fileId ?? index}>
 							<TranscriptAttachment
-								attachment={{ ...attachment, url: null }}
+								attachment={attachment}
 								loadAttachment={loadAttachment}
 								onOpen={onOpenImage}
 							/>

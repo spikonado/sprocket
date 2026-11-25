@@ -21,7 +21,7 @@ fn request_thread_ids_reject_unsafe_paths() {
             valid
         );
         assert_eq!(
-            parse::<TranscriptAttachmentRequest>(thread_id, json!({"storageId":"storage-1"})),
+            parse::<TranscriptAttachmentRequest>(thread_id, json!({"fileId":"file-1"})),
             valid
         );
     }

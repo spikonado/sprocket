@@ -240,6 +240,20 @@ export const stripTerminalJobPayloads = migrations.define({
 	}
 });
 
+// Tool images carry a sha256; only user attachments moved to R2.
+export const deleteAttachmentUploads = migrations.define({
+	table: 'imageUploads',
+	migrateOne: async (ctx, upload) => {
+		if (upload.sha256 !== undefined) return;
+
+		if (await ctx.db.system.get('_storage', upload.storageId)) {
+			await ctx.storage.delete(upload.storageId);
+		}
+
+		await ctx.db.delete('imageUploads', upload._id);
+	}
+});
+
 export const run = migrations.runner([
 	internal.migrations.backfillToolInvocationIds,
 	internal.migrations.backfillCompletionToolInvocationIds,
@@ -262,5 +276,6 @@ export const run = migrations.runner([
 	internal.migrations.clearUsageLimitFailureKinds,
 	internal.migrations.dropShareConversationContent,
 	internal.migrations.deleteToolImages,
-	internal.migrations.stripTerminalJobPayloads
+	internal.migrations.stripTerminalJobPayloads,
+	internal.migrations.deleteAttachmentUploads
 ]);

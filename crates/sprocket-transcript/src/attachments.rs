@@ -6,11 +6,7 @@ use tokio::io::AsyncWriteExt;
 
 use crate::{TranscriptAttachmentMeta, TranscriptPart, TranscriptPromptBody, TranscriptStore};
 
-#[derive(Debug, thiserror::Error)]
-#[error("attachment is unavailable locally and its remote copy is missing or expired")]
-pub struct AttachmentUnavailable;
-
-pub async fn download_attachment_to_file(
+async fn download_attachment_to_file(
     url: &str,
     path: &Path,
     expected_size: u64,
@@ -25,11 +21,7 @@ pub async fn download_attachment_to_file(
         .connect_timeout(std::time::Duration::from_secs(30))
         .read_timeout(std::time::Duration::from_secs(60))
         .build()?;
-    let response = client.get(url).send().await?;
-    if matches!(response.status().as_u16(), 404 | 410) {
-        return Err(AttachmentUnavailable.into());
-    }
-    let mut response = response.error_for_status()?;
+    let mut response = client.get(url).send().await?.error_for_status()?;
     if let Some(size) = response.content_length() {
         anyhow::ensure!(
             size == expected_size,
@@ -54,45 +46,36 @@ pub async fn download_attachment_to_file(
     Ok(())
 }
 
-pub async fn cache_attachment(
+pub async fn cache_attachment<F, Fut>(
     store: &TranscriptStore,
     user_id: &str,
     thread_id: &str,
     attachment: &TranscriptAttachmentMeta,
-) -> anyhow::Result<PathBuf> {
-    cache_attachment_with_url(store, user_id, thread_id, attachment, || async { Ok(None) }).await
-}
-
-async fn cache_attachment_with_url<F, Fut>(
-    store: &TranscriptStore,
-    user_id: &str,
-    thread_id: &str,
-    attachment: &TranscriptAttachmentMeta,
-    resolve: F,
+    resolve_url: F,
 ) -> anyhow::Result<PathBuf>
 where
     F: FnOnce() -> Fut,
-    Fut: Future<Output = anyhow::Result<Option<String>>>,
+    Fut: Future<Output = anyhow::Result<String>>,
 {
     let _lease = store.open_thread(user_id, thread_id).await?;
-    let lock = store.lock_attachment(user_id, &attachment.storage_id).await;
+    let file_id = attachment
+        .file_id
+        .as_deref()
+        .context("attachment file was deleted")?;
+    let lock = store.lock_attachment(user_id, file_id).await;
     let _guard = lock.lock().await;
-    let path = store.attachment_path(user_id, thread_id, attachment);
+    let path = store.attachment_path(user_id, thread_id, file_id, &attachment.name);
     if !tokio::fs::try_exists(&path).await? {
         let parent = path
             .parent()
             .context("attachment has no parent directory")?;
         tokio::fs::create_dir_all(parent).await?;
         let temp = tempfile::NamedTempFile::new_in(parent)?;
-        let staged = store.pending_attachment_path(user_id, &attachment.storage_id);
+        let staged = store.pending_attachment_path(user_id, file_id);
         if tokio::fs::try_exists(&staged).await? {
             tokio::fs::copy(&staged, temp.path()).await?;
         } else {
-            let url = match &attachment.url {
-                Some(url) => url.clone(),
-                None => resolve().await?.ok_or(AttachmentUnavailable)?,
-            };
-            download_attachment_to_file(&url, temp.path(), attachment.size)
+            download_attachment_to_file(&resolve_url().await?, temp.path(), attachment.size)
                 .await
                 .with_context(|| format!("failed to retrieve attachment {}", attachment.name))?;
         }
@@ -122,46 +105,39 @@ pub async fn cache_prompt_attachments<F, Fut>(
     user_id: &str,
     thread_id: &str,
     parts: &mut [TranscriptPart],
-    mut resolve: F,
+    mut resolve_url: F,
 ) -> anyhow::Result<()>
 where
-    F: FnMut(u32, String) -> Fut,
-    Fut: Future<Output = anyhow::Result<Option<String>>>,
+    F: FnMut(String) -> Fut,
+    Fut: Future<Output = anyhow::Result<String>>,
 {
-    for part in parts {
-        let number = part.number;
-        if let Some(prompt) = &mut part.prompt {
-            cache_attachments(store, user_id, thread_id, prompt, |storage_id| {
-                resolve(number, storage_id)
-            })
-            .await?;
-        }
+    for prompt in parts.iter_mut().filter_map(|part| part.prompt.as_mut()) {
+        cache_attachments(store, user_id, thread_id, prompt, &mut resolve_url).await?;
     }
     Ok(())
 }
 
+/// Leaves `local_path` unset for deleted files.
 pub async fn cache_attachments<F, Fut>(
     store: &TranscriptStore,
     user_id: &str,
     thread_id: &str,
     prompt: &mut TranscriptPromptBody,
-    mut resolve: F,
+    mut resolve_url: F,
 ) -> anyhow::Result<()>
 where
     F: FnMut(String) -> Fut,
-    Fut: Future<Output = anyhow::Result<Option<String>>>,
+    Fut: Future<Output = anyhow::Result<String>>,
 {
     for attachment in &mut prompt.image_uploads {
-        attachment.local_path =
-            match cache_attachment_with_url(store, user_id, thread_id, attachment, || {
-                resolve(attachment.storage_id.clone())
-            })
-            .await
-            {
-                Ok(path) => Some(path.to_string_lossy().into_owned()),
-                Err(error) if error.is::<AttachmentUnavailable>() => None,
-                Err(error) => return Err(error),
-            };
+        let Some(file_id) = attachment.file_id.clone() else {
+            continue;
+        };
+        let path = cache_attachment(store, user_id, thread_id, attachment, || {
+            resolve_url(file_id)
+        })
+        .await?;
+        attachment.local_path = Some(path.to_string_lossy().into_owned());
     }
     Ok(())
 }

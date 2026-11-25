@@ -265,17 +265,14 @@ impl RuntimeClient {
         parse_remote_page(value, thread_id)
     }
 
-    pub(crate) async fn attachment_url_for_run(
+    pub(crate) async fn file_url_for_run(
         &self,
         run_id: &str,
-        part_number: u32,
-        storage_id: &str,
-    ) -> anyhow::Result<Option<String>> {
+        file_id: &str,
+    ) -> anyhow::Result<String> {
         let mut args = self.run_args(run_id);
-        args.insert("partNumber".into(), Value::Float64(f64::from(part_number)));
-        args.insert("storageId".into(), storage_id.to_owned().into());
-        self.query_json("transcript:attachmentUrlForRun", args)
-            .await
+        args.insert("fileId".into(), file_id.to_owned().into());
+        self.mutation_json("files:urlForRun", args).await
     }
 
     pub(crate) async fn create_run(
@@ -294,7 +291,7 @@ impl RuntimeClient {
             args.insert("repositoryKey".to_string(), repository_key.clone().into());
         }
         args.insert("prompt".to_string(), redact_secrets(&request.prompt).into());
-        args.insert("storageIds".to_string(), string_array(&request.storage_ids));
+        args.insert("fileIds".to_string(), string_array(&request.file_ids));
         args.insert(
             "selectedModel".to_string(),
             request.selected_model.clone().into(),

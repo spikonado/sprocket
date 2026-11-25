@@ -41,7 +41,8 @@ pub struct AgentLaunchRequest {
     #[serde(default)]
     pub repository_key: Option<String>,
     pub prompt: String,
-    pub storage_ids: Vec<String>,
+    #[serde(alias = "storageIds")]
+    pub file_ids: Vec<String>,
     pub selected_model: String,
     #[serde(default)]
     pub completion_provider: CompletionProvider,
@@ -164,7 +165,7 @@ async fn launch_agent_inner(
     host.prepare_tools();
     let tool_environment = host.tool_environment();
     let records_message = !payload.prompt.trim().is_empty()
-        || !payload.storage_ids.is_empty()
+        || !payload.file_ids.is_empty()
         || payload.continuation_of_run_id.is_some();
 
     host.machines
@@ -218,7 +219,7 @@ async fn launch_agent_inner(
         thread_id: payload.thread_id.unwrap_or_default(),
         repository_key: payload.repository_key,
         prompt: payload.prompt,
-        storage_ids: payload.storage_ids,
+        file_ids: payload.file_ids,
         selected_model: payload.selected_model,
         completion_provider: payload.completion_provider,
         reasoning_effort: payload.reasoning_effort,

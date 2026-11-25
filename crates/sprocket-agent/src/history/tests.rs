@@ -670,8 +670,7 @@ fn includes_attachment_paths_not_images_and_openai_reasoning_replay_fields() {
                         name: "shot.png".into(),
                         media_type: "image/png".into(),
                         size: 12,
-                        storage_id: "st".into(),
-                        url: Some("https://files.example/shot.png".into()),
+                        file_id: Some("file".into()),
                         local_path: Some("/cache/user/blobs/st".into()),
                     }],
                     hidden: None,
@@ -704,7 +703,6 @@ fn includes_attachment_paths_not_images_and_openai_reasoning_replay_fields() {
         None,
     );
     let serialized = format!("{history:?}");
-    assert!(!serialized.contains("https://files.example/shot.png"));
     assert!(!serialized.contains("Image {"));
     assert!(serialized.contains("/cache/user/blobs/st"));
     assert!(serialized.contains("rs_123"));

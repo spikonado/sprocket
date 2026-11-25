@@ -146,20 +146,19 @@ async fn saves_prompt_attachment_metadata_and_created_at() {
             name: "photo.png".into(),
             media_type: "image/png".into(),
             size: 12,
-            storage_id: "storage".into(),
-            url: Some("https://example.com/expiring".into()),
-            local_path: None,
+            file_id: Some("file".into()),
+            local_path: Some("/cache/photo.png".into()),
         });
     store.append_parts("user", "thread", &[part]).await.unwrap();
     let read = store.read_parts("user", "thread", &[0]).await.unwrap();
     assert_eq!(read[0].created_at, Some(1_700_000_000_000));
     let metadata = store
-        .attachment_metadata("user", "thread", "storage")
+        .attachment_metadata("user", "thread", "file")
         .await
         .unwrap()
         .unwrap();
     assert_eq!(metadata.name, "photo.png");
-    assert_eq!(metadata.url, None);
+    assert_eq!(metadata.local_path, None);
 }
 
 #[tokio::test]

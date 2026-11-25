@@ -25,7 +25,7 @@ impl SubagentLauncher for NativeSubagentLauncher {
                 thread_id: Some(request.thread_id),
                 repository_key: None,
                 prompt: request.prompt,
-                storage_ids: Vec::new(),
+                file_ids: Vec::new(),
                 selected_model: request.selected_model,
                 completion_provider: request.completion_provider,
                 reasoning_effort: request.reasoning_effort,

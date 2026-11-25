@@ -63,7 +63,6 @@ import {
 	getOrCreateTranscriptState,
 	getPromptPart,
 	hiddenPromptSourceKey,
-	hydratePromptUrls,
 	toolSourceKey
 } from '@convex/lib/transcriptParts';
 import { runHasBegun, runStartedAt } from '@convex/lib/runs';
@@ -159,7 +158,7 @@ export const insertGatewayRun = internalMutation({
 		threadId: v.optional(v.id('threadRecords')),
 		repositoryKey: v.optional(v.string()),
 		prompt: v.string(),
-		imageUploadIds: v.array(v.id('imageUploads')),
+		fileIds: v.array(v.id('files')),
 		selectedModel: v.string(),
 		completionProvider: vCompletionProvider,
 		reasoningEffort: vReasoningEffort,
@@ -183,7 +182,8 @@ export const createGatewayRun = action({
 		threadId: v.optional(v.id('threadRecords')),
 		repositoryKey: v.optional(v.string()),
 		prompt: v.string(),
-		storageIds: v.array(v.id('_storage')),
+		fileIds: v.optional(v.array(v.id('files'))),
+		storageIds: v.optional(v.array(v.string())),
 		selectedModel: v.string(),
 		completionProvider: vCompletionProvider,
 		reasoningEffort: vReasoningEffort,
@@ -199,10 +199,7 @@ export const createGatewayRun = action({
 	handler: async (ctx, args): Promise<Infer<typeof vCreateGatewayRunResult>> => {
 		const userId = await getUserId(ctx);
 
-		const imageUploadIds = await ctx.runQuery(internal.imageUploads.ownedIdsForStorageIds, {
-			userId,
-			storageIds: args.storageIds
-		});
+		if (args.storageIds?.length) throw new Error('File attachment was not found.');
 
 		const gatewayUrl = modelGatewayOrigin();
 
@@ -212,7 +209,7 @@ export const createGatewayRun = action({
 			threadId: args.threadId,
 			repositoryKey: args.repositoryKey,
 			prompt: args.prompt,
-			imageUploadIds,
+			fileIds: args.fileIds ?? [],
 			selectedModel: args.selectedModel,
 			completionProvider: args.completionProvider,
 			reasoningEffort: args.reasoningEffort,
@@ -409,7 +406,7 @@ export async function getContextHandler(ctx: QueryCtx, args: ObjectType<typeof g
 		run,
 		thread,
 		prompt: promptPart?.prompt?.text ?? '',
-		pendingPrompt: run.pendingPrompt && (await hydratePromptUrls(ctx, run.pendingPrompt)),
+		pendingPrompt: run.pendingPrompt,
 		contextTokens,
 		providerHandoff:
 			providerHandoff && knownProviders.includes(providerHandoff.completionProvider)

@@ -156,9 +156,9 @@ pub struct TranscriptAttachmentMeta {
     pub name: String,
     pub media_type: String,
     pub size: u64,
-    pub storage_id: String,
+    /// Missing for attachments from before files moved to R2; their files were deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
+    pub file_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_path: Option<String>,
 }
@@ -194,11 +194,10 @@ impl TranscriptPart {
             .map_or(&[], |completion| completion.items.as_slice())
     }
 
-    pub fn without_ephemeral_urls(&self) -> Self {
+    pub fn without_local_paths(&self) -> Self {
         let mut part = self.clone();
         if let Some(prompt) = part.prompt.as_mut() {
             for upload in &mut prompt.image_uploads {
-                upload.url = None;
                 upload.local_path = None;
             }
         }

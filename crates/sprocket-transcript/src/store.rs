@@ -257,7 +257,7 @@ impl TranscriptStore {
         }
         let parts: Vec<_> = parts
             .iter()
-            .map(TranscriptPart::without_ephemeral_urls)
+            .map(TranscriptPart::without_local_paths)
             .collect();
         let changes = self.changes.clone();
         let scope = (user_id.to_owned(), thread_id.to_owned());

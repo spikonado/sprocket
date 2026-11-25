@@ -9,7 +9,7 @@ fn base_request() -> serde_json::Value {
         "userId": "user-1",
         "submissionId": "submission-1",
         "prompt": "Build it",
-        "storageIds": [],
+        "fileIds": [],
         "selectedModel": "gpt-5.6-sol",
         "reasoningEffort": "medium",
         "fastMode": false,
@@ -22,6 +22,14 @@ fn accepts_fast_mode_requests() {
     let mut json = base_request();
     json["fastMode"] = true.into();
     assert!(request(json).fast_mode);
+}
+
+#[test]
+fn reads_recovery_requests_saved_with_storage_ids() {
+    let mut json = base_request();
+    json.as_object_mut().unwrap().remove("fileIds");
+    json["storageIds"] = serde_json::json!([]);
+    assert!(request(json).file_ids.is_empty());
 }
 
 #[test]

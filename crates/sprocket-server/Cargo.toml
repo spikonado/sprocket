@@ -15,6 +15,7 @@ clap = { workspace = true, features = ["env"] }
 convex.workspace = true
 cookie = { version = "0.18.1", features = ["percent-encode"] }
 futures.workspace = true
+hex.workspace = true
 hmac.workspace = true
 keyring.workspace = true
 open.workspace = true

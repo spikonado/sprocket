@@ -12,6 +12,7 @@ import {
 	createQueuedRun,
 	finishDueScheduledFunctions,
 	initConvexTest,
+	insertDraftFile,
 	insertQueuedRun,
 	seedOwnedThread,
 	seedThreadRecord,
@@ -323,25 +324,14 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 			status: 'failed'
 		});
 
-		const imageUploadId = await t.run(async (ctx) => {
-			const storageId = await ctx.storage.store(new Blob(['image'], { type: 'image/png' }));
-
-			return await ctx.db.insert('imageUploads', {
-				userId: subject,
-				storageId,
-				name: 'robot.png',
-				mediaType: 'image/png',
-				size: 5,
-				attached: false
-			});
-		});
+		const fileId = await t.run((ctx) => insertDraftFile(ctx, subject));
 
 		const args = {
 			threadId,
 			submissionId: 'image-follow-up',
 			executionSecret: 'next-secret',
 			prompt: '',
-			imageUploadIds: [imageUploadId]
+			fileIds: [fileId]
 		};
 
 		expect(await asUser.mutation(api.agentRuntime.prepareSubmission, { threadId })).toBe(false);
@@ -355,10 +345,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 			created: false,
 			runId: next.runId
 		});
-		expect(await t.run((ctx) => ctx.db.get('imageUploads', imageUploadId))).toMatchObject({
-			attached: true,
-			threadId
-		});
+		expect(await t.run((ctx) => ctx.db.get('files', fileId))).toMatchObject({ threadId });
 		await asUser.mutation(api.agentRuntime.requestCancellation, {
 			runId: next.runId
 		});
@@ -379,7 +366,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 		const prompt = parts.find((part) => part.runId === next.runId);
 		expect(prompt?.prompt).toMatchObject({
 			text: '',
-			imageUploads: [{ name: 'robot.png', storageId: expect.any(String) }]
+			imageUploads: [{ name: 'robot.png', fileId }]
 		});
 
 		for (const part of parts) {

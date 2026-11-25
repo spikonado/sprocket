@@ -10,9 +10,7 @@ mod sync;
 pub mod tool_display;
 mod types;
 
-pub use attachments::{
-    AttachmentUnavailable, cache_attachment, cache_attachments, cache_prompt_attachments,
-};
+pub use attachments::{cache_attachment, cache_attachments, cache_prompt_attachments};
 pub use live::{
     LiveAssistantPart, LiveAssistantParts, LiveCompletionHub, LiveCompletionOverlay,
     LiveCompletionSubscription, LiveCompletionWatchEvent, join_assistant_text_parts,

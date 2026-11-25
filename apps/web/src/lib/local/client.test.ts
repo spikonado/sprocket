@@ -16,7 +16,7 @@ import { fixtureId } from '$lib/convex-test-client';
 
 const threadRecordId = fixtureId<'threadRecords'>;
 
-const storageId = fixtureId<'_storage'>;
+const fileId = fixtureId<'files'>;
 
 const runId = fixtureId<'runs'>;
 
@@ -207,11 +207,10 @@ describe('transcript protocol', () => {
 				text: 'Inspect this',
 				attachments: [
 					{
-						storageId: storageId('storage-1'),
+						fileId: fileId('file-1'),
 						name: 'shot.png',
 						mediaType: 'image/png',
-						size: 12,
-						url: 'http://127.0.0.1:7731/files/shot.png'
+						size: 12
 					}
 				]
 			},
@@ -481,11 +480,10 @@ describe('transcript file upload', () => {
 
 		const fetch = vi.fn(async () =>
 			Response.json({
-				storageId: 'storage-1',
+				fileId: 'file-1',
 				name: 'notes.txt',
 				mediaType: 'text/plain',
-				size: 5,
-				url: 'http://127.0.0.1:7731/files/notes.txt'
+				size: 5
 			})
 		);
 
@@ -499,11 +497,10 @@ describe('transcript file upload', () => {
 		});
 
 		expect(result).toEqual({
-			storageId: 'storage-1',
+			fileId: 'file-1',
 			name: 'notes.txt',
 			mediaType: 'text/plain',
-			size: 5,
-			url: 'http://127.0.0.1:7731/files/notes.txt'
+			size: 5
 		});
 		expect(fetch).toHaveBeenCalledWith(
 			'http://127.0.0.1:7731/api/transcript/upload?userId=user%2F1&name=spec%20%26%20notes.pdf&threadId=thread%2F1',
@@ -560,7 +557,7 @@ describe('agent launch', () => {
 			createLocalClient('http://127.0.0.1:7731').runAgent({
 				userId: 'user-1',
 				prompt: 'Inspect src/lib.rs',
-				storageIds: [],
+				fileIds: [],
 				selectedModel: 'gpt-5.6-sol',
 				reasoningEffort: 'medium',
 				fastMode: false,
@@ -586,7 +583,7 @@ describe('transcript attachment discard', () => {
 		await expect(
 			createLocalClient('http://127.0.0.1:7731').discardTranscriptAttachment({
 				userId: 'user-1',
-				storageId: storageId('storage-1'),
+				fileId: fileId('file-1'),
 				threadId: threadRecordId('thread-1')
 			})
 		).resolves.toBe(true);
@@ -601,7 +598,7 @@ describe('transcript attachment discard', () => {
 		expect(fetch).toHaveBeenCalledWith(
 			expect.any(String),
 			expect.objectContaining({
-				body: JSON.stringify({ userId: 'user-1', storageId: 'storage-1', threadId: 'thread-1' })
+				body: JSON.stringify({ userId: 'user-1', fileId: 'file-1', threadId: 'thread-1' })
 			})
 		);
 	});
@@ -620,28 +617,28 @@ describe('transcript attachment discard', () => {
 		await expect(
 			createLocalClient('http://127.0.0.1:7731').discardTranscriptAttachment({
 				userId: 'user-1',
-				storageId: storageId('storage-1')
+				fileId: fileId('file-1')
 			})
 		).resolves.toBe(false);
 
 		expect(fetch).toHaveBeenCalledWith(
 			expect.any(String),
 			expect.objectContaining({
-				body: JSON.stringify({ userId: 'user-1', storageId: 'storage-1' })
+				body: JSON.stringify({ userId: 'user-1', fileId: 'file-1' })
 			})
 		);
 	});
 });
 
 describe('transcript attachment fetch', () => {
-	it('posts storageId with the thread scope', async () => {
+	it('posts fileId with the thread scope', async () => {
 		const fetch = vi.fn(async () => new Response(new Blob(['png']), { status: 200 }));
 		vi.stubGlobal('fetch', fetch);
 
 		const blob = await createLocalClient('http://127.0.0.1:7731').fetchTranscriptAttachment({
 			userId: 'user-1',
 			threadId: threadRecordId('thread-1'),
-			storageId: storageId('storage-1')
+			fileId: fileId('file-1')
 		});
 
 		expect(blob).toBeInstanceOf(Blob);
@@ -653,7 +650,7 @@ describe('transcript attachment fetch', () => {
 				body: JSON.stringify({
 					userId: 'user-1',
 					threadId: 'thread-1',
-					storageId: 'storage-1'
+					fileId: 'file-1'
 				})
 			})
 		);

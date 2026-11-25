@@ -4,12 +4,7 @@ import type { Doc, Id } from '@convex/_generated/dataModel';
 import { getOwnedThreadRecord, getOwnedThreadRecordByString } from '@convex/lib/access';
 import { getExecutionRunRecord, getUserId } from '@convex/lib/auth';
 import { toAgentToolConvexError } from '@convex/lib/agentErrors';
-import { imageUploadByStorageId } from '@convex/lib/imageUploads';
-import {
-	vAttachmentFileDownloadResult,
-	vTranscriptPartsResult,
-	vTranscriptStateResult
-} from '@convex/lib/docs';
+import { vTranscriptPartsResult, vTranscriptStateResult } from '@convex/lib/docs';
 import { transcriptContext, transcriptHistoryFromNumber } from '@convex/lib/contextHandoff';
 import { getTranscriptState, loadTranscriptPartsPage } from '@convex/lib/transcriptParts';
 
@@ -125,60 +120,14 @@ export const attachmentUrlForRun = query({
 		runId: v.id('runs'),
 		executionSecret: v.string(),
 		partNumber: v.number(),
-		storageId: v.id('_storage')
+		storageId: v.string()
 	},
-	returns: v.union(v.string(), v.null()),
-	handler: async (ctx, args) => {
-		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
-
-		if (!Number.isSafeInteger(args.partNumber) || args.partNumber < 0) {
-			throw new Error('Invalid transcript part number.');
-		}
-
-		const part = await ctx.db
-			.query('threadTranscriptParts')
-			.withIndex('by_threadId_and_number', (query) =>
-				query.eq('threadId', run.threadId).eq('number', args.partNumber)
-			)
-			.unique();
-
-		if (part?.kind !== 'prompt' || !part.prompt) {
-			throw new Error('Transcript prompt part not found.');
-		}
-
-		if (!part.prompt.imageUploads.some((upload) => upload.storageId === args.storageId)) {
-			throw new Error('Attachment not found in transcript part.');
-		}
-
-		return await ctx.storage.getUrl(args.storageId);
-	}
+	returns: v.null(),
+	handler: () => null
 });
 
 export const attachmentDownloadByStorageId = query({
-	args: {
-		storageId: v.id('_storage')
-	},
-	returns: vAttachmentFileDownloadResult,
-	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-		const upload = await imageUploadByStorageId(ctx, args.storageId);
-
-		if (!upload || upload.userId !== userId) {
-			return null;
-		}
-
-		const url = await ctx.storage.getUrl(upload.storageId);
-
-		if (!url) {
-			return null;
-		}
-
-		return {
-			storageId: upload.storageId,
-			name: upload.name,
-			mediaType: upload.mediaType,
-			size: upload.size,
-			url
-		};
-	}
+	args: { storageId: v.string() },
+	returns: v.null(),
+	handler: () => null
 });

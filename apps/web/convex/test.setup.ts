@@ -69,6 +69,16 @@ export function insertUser(ctx: MutationCtx, subject: string, dodoCustomerId?: s
 	});
 }
 
+export function insertDraftFile(ctx: MutationCtx, userId: string) {
+	return ctx.db.insert('files', {
+		userId,
+		sha256: 'a'.repeat(64),
+		name: 'robot.png',
+		mediaType: 'image/png',
+		size: 5
+	});
+}
+
 const DODO_WEBHOOK_SECRET = 'test_webhook_secret';
 
 export function stubDodoEnv() {
@@ -260,7 +270,7 @@ export async function insertQueuedRun(
 		submissionId: string;
 		executionSecret: string;
 		prompt: string;
-		imageUploadIds?: Id<'imageUploads'>[];
+		fileIds?: Id<'files'>[];
 		selectedModel?: string;
 		completionProvider?: CompletionProvider;
 		reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -278,7 +288,7 @@ export async function insertQueuedRun(
 		submissionId: args.submissionId,
 		threadId: args.threadId,
 		prompt: args.prompt,
-		imageUploadIds: args.imageUploadIds ?? [],
+		fileIds: args.fileIds ?? [],
 		selectedModel: args.selectedModel ?? 'gpt-5.6-sol',
 		completionProvider: args.completionProvider ?? 'spikonado',
 		reasoningEffort: args.reasoningEffort ?? 'medium',
