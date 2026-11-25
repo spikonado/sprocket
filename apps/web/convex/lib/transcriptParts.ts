@@ -1,6 +1,7 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
 import type { Value } from 'convex/values';
+import { redactCompletion, redactPrompt, redactTool } from '@convex/lib/secretRedaction';
 import type {
 	HiddenPrompt,
 	TranscriptCompletionBody,
@@ -195,7 +196,13 @@ export async function appendTranscriptPart(
 	ctx: MutationCtx,
 	args: AppendTranscriptPartArgs
 ): Promise<{ part: Doc<'threadTranscriptParts'>; inserted: boolean }> {
-	const completion = args.completion ? normalizeCompletion(args.completion, args.work) : undefined;
+	const prompt = args.prompt && redactPrompt(args.prompt);
+
+	const completion = args.completion
+		? normalizeCompletion(redactCompletion(args.completion), args.work)
+		: undefined;
+
+	const tool = args.tool && redactTool(args.tool);
 
 	const existing = await ctx.db
 		.query('threadTranscriptParts')
@@ -208,9 +215,9 @@ export async function appendTranscriptPart(
 		const expected = {
 			kind: args.kind,
 			runId: args.runId,
-			prompt: args.prompt,
+			prompt,
 			completion,
-			tool: args.tool,
+			tool,
 			work: args.work
 		};
 
@@ -243,11 +250,11 @@ export async function appendTranscriptPart(
 		work: args.work
 	};
 
-	if (args.prompt) part.prompt = args.prompt;
+	if (prompt) part.prompt = prompt;
 
 	if (completion) part.completion = completion;
 
-	if (args.tool) part.tool = args.tool;
+	if (tool) part.tool = tool;
 	const partId = await ctx.db.insert('threadTranscriptParts', part);
 	await ctx.db.patch('threadTranscriptStates', state._id, { totalParts: number + 1 });
 	const inserted = await ctx.db.get('threadTranscriptParts', partId);

@@ -13,6 +13,7 @@ import { ConvexError, v, type Infer, type ObjectType } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord } from '@convex/lib/access';
 import { getExecutionRun, getExecutionRunRecord, getUserId } from '@convex/lib/auth';
 import { latestRunForThread, patchRunExecution, type ExecutionRun } from '@convex/lib/runExecution';
+import { redactSecrets } from '@convex/lib/secretRedaction';
 import { GATEWAY_PROTOCOL_VERSION } from '@convex/lib/gatewayProtocol';
 import { modelGatewayOrigin, modelGatewayTokenSecret } from '@convex/lib/gatewayFetch';
 import { gatewayTokenExpiresAt, mintGatewayToken } from '@convex/lib/gatewayToken';
@@ -493,7 +494,9 @@ async function recordContextHandoff(
 		return null;
 	}
 
-	if (!args.summary.trim()) {
+	const summary = redactSecrets(args.summary);
+
+	if (!summary.trim()) {
 		throw new Error('Invalid context handoff.');
 	}
 
@@ -516,7 +519,7 @@ async function recordContextHandoff(
 	}
 
 	if (context.contextSummaryHandoffKey === handoffKey) {
-		if (context.contextSummary !== args.summary) {
+		if (context.contextSummary !== summary) {
 			throw new Error('Conflicting context handoff retry.');
 		}
 
@@ -529,7 +532,7 @@ async function recordContextHandoff(
 	}
 
 	await ctx.db.patch('threadTranscriptStates', state._id, {
-		contextSummary: args.summary,
+		contextSummary: summary,
 		contextSummaryPartCount: partCount,
 		contextSummaryHandoffKey: handoffKey
 	});
