@@ -678,6 +678,7 @@ describe('agentQuestions', () => {
 			lastError: 'Stopped before receiving the answer.',
 			executionSecret
 		});
+		await t.run((ctx) => ctx.db.patch('threadRecords', threadId, { lastMessageAt: 0 }));
 
 		const first = await asUser.mutation(api.agentQuestions.answer, {
 			threadId,
@@ -692,6 +693,9 @@ describe('agentQuestions', () => {
 				prompt: 'PostgreSQL: Use the existing container'
 			}
 		});
+		expect(
+			(await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.lastMessageAt
+		).toBeGreaterThan(0);
 
 		const retry = await asUser.mutation(api.agentQuestions.answer, {
 			threadId,
