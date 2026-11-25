@@ -27,6 +27,7 @@ pub mod profile;
 pub mod project_attachments;
 mod python_install;
 pub mod run_recovery;
+mod sealed_file;
 mod subagent_launcher;
 mod tool_install;
 pub mod transcript_client;
