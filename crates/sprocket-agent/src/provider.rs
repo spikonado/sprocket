@@ -1100,9 +1100,7 @@ async fn run_with_completion_model(
                                     Ok(Some((next_history, next_prompt))) => {
                                         history = next_history;
                                         prompt = next_prompt;
-                                        generation_tracker.finish_handoff(HandoffOutcome::Resumed {
-                                            document_bytes: summary.len(),
-                                        });
+                                        generation_tracker.finish_handoff(HandoffOutcome::Resumed);
                                     }
                                     Ok(None) => break 'agent_run AgentProviderResult::Cancelled,
                                     Err(error) => break 'agent_run transcript_error(error),

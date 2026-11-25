@@ -57,7 +57,7 @@ pub(crate) enum HandoffTrigger {
 }
 
 pub(crate) enum HandoffOutcome<'a> {
-    Resumed { document_bytes: usize },
+    Resumed,
     ContinuedWithoutHandoff { reason: &'a str },
     Failed { error: &'a anyhow::Error },
     Cancelled,
@@ -444,19 +444,18 @@ fn handoff_properties(
     handoff: &PendingHandoff,
     outcome: &HandoffOutcome<'_>,
 ) -> Map<String, Value> {
-    let (outcome_name, error, document_bytes) = match outcome {
-        HandoffOutcome::Resumed { document_bytes } => ("resumed", None, Some(*document_bytes)),
+    let (outcome_name, error) = match outcome {
+        HandoffOutcome::Resumed => ("resumed", None),
         HandoffOutcome::ContinuedWithoutHandoff { reason } => {
-            ("continued_without_handoff", Some(reason.to_string()), None)
+            ("continued_without_handoff", Some(reason.to_string()))
         }
-        HandoffOutcome::Failed { error } => ("failed", Some(format!("{error:#}")), None),
-        HandoffOutcome::Cancelled => ("cancelled", None, None),
+        HandoffOutcome::Failed { error } => ("failed", Some(format!("{error:#}"))),
+        HandoffOutcome::Cancelled => ("cancelled", None),
     };
     let (provider, model) = handoff.writer.clone().unzip();
     let properties = [
         ("outcome", json!(outcome_name)),
         ("error", json!(error)),
-        ("document_bytes", json!(document_bytes)),
         ("model_calls", json!(handoff.model_calls)),
         ("cost_usd", json!(handoff.cost_usd)),
         (

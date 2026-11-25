@@ -93,12 +93,7 @@ fn handoff_properties_total_the_writing_calls() {
     handoff.record_call(&call(Some(0.5)));
     handoff.record_call(&call(Some(0.25)));
 
-    let properties = handoff_properties(
-        &handoff,
-        &HandoffOutcome::Resumed {
-            document_bytes: 4_096,
-        },
-    );
+    let properties = handoff_properties(&handoff, &HandoffOutcome::Resumed);
 
     assert_eq!(properties["outcome"], "resumed");
     assert_eq!(properties["model_calls"], 2);
