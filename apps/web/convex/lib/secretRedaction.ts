@@ -5,20 +5,21 @@ import type {
 } from '@convex/lib/validators';
 import { isJsonObject, isJsonString, type JsonValue } from '@convex/lib/json';
 
-// Each pattern may start only at the beginning of a token run. A `\b` start goes quadratic on
-// inputs like `eyJ-eyJ-…`, where every prefix rescans the rest of the run.
+// Each pattern may start only at the beginning of a token run, or after a diff marker such as
+// `-sk-…`. A `\b` start goes quadratic on inputs like `eyJ-eyJ-…`, where every prefix rescans
+// the rest of the run.
 const KNOWN_FORMATS: [label: string, pattern: RegExp][] = [
 	[
 		'private-key',
 		/-----BEGIN [A-Z ]{0,20}PRIVATE KEY-----[\s\S]{0,16384}?-----END [A-Z ]{0,20}PRIVATE KEY-----/g
 	],
-	['jwt', /(?<![\w-])eyJ[\w-]{10,}\.eyJ[\w-]{10,}\.[\w-]{10,}/g],
-	['anthropic-key', /(?<![\w-])sk-ant-[\w-]{20,}/g],
-	['openai-key', /(?<![\w-])sk-(?:proj-|svcacct-|admin-)?[\w-]{20,}/g],
+	['jwt', /(?<!\w|\S-)eyJ[\w-]{10,}\.eyJ[\w-]{10,}\.[\w-]{10,}/g],
+	['anthropic-key', /(?<!\w|\S-)sk-ant-[\w-]{20,}/g],
+	['openai-key', /(?<!\w|\S-)sk-(?:proj-|svcacct-|admin-)?[\w-]{20,}/g],
 	['github-token', /\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_\w{22,})/g],
 	['aws-access-key', /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g],
 	['google-api-key', /\bAIza[\w-]{35}/g],
-	['slack-token', /(?<![\w-])xox[abposr]-[A-Za-z0-9-]{10,}/g],
+	['slack-token', /(?<!\w|\S-)xox[abposr]-[A-Za-z0-9-]{10,}/g],
 	['stripe-key', /\b[rs]k_(?:live|test)_[A-Za-z0-9]{16,}/g]
 ];
 

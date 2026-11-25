@@ -8,6 +8,7 @@ describe('redactSecrets', () => {
 		['OPENAI_API_KEY=sk-proj-Q3v9xYb2LmN8pR4tW6zA1cD5', 'OPENAI_API_KEY=[redacted:openai-key]'],
 		['token ghp_YQKG3NZUybE8CJqHhfmRxpysOBgPfmNd9wzM', 'token [redacted:github-token]'],
 		['aws AKIAIOSFODNN7EXAMPLE', 'aws [redacted:aws-access-key]'],
+		['-SLACK=x\n-xoxb-123456789012-ab12cd34ef56', '-SLACK=x\n-[redacted:slack-token]'],
 		['postgres://app:s3cr3tPass@db:5432/app', 'postgres://app:[redacted:password]@db:5432/app'],
 		['"client_secret": "9f86d081884c7d65"', '"client_secret": "[redacted:secret]"'],
 		['Authorization: Bearer abc123def456ghi', 'Authorization: Bearer [redacted:secret]'],
@@ -34,7 +35,7 @@ describe('redactSecrets', () => {
 		expect(redactSecrets(text)).toBe(text);
 	});
 
-	it.each(['eyJ-', 'sk-ant-', 'xoxb-', 'a+'])('stays linear on repeated %s', (unit) => {
+	it.each(['eyJ-', '--eyJ', 'sk-ant-', 'xoxb-', 'a+'])('stays linear on repeated %s', (unit) => {
 		const started = performance.now();
 
 		redactSecrets(unit.repeat(250_000));
