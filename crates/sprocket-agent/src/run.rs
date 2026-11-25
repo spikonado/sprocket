@@ -661,10 +661,11 @@ async fn load_prior_history(
     };
     // Convex holds the prompt with secrets redacted, so the turn that submitted it reads the
     // text this process still has. Recovered runs have none and read the redacted copy.
+    let submitted_prompt = submitted_prompt.trim();
     if let Some(prompt) = &mut current_prompt
-        && !submitted_prompt.trim().is_empty()
+        && !submitted_prompt.is_empty()
     {
-        prompt.text = submitted_prompt.trim().to_string();
+        prompt.text = submitted_prompt.to_string();
     }
     let mut history = agent_history_from_parts(
         &state,

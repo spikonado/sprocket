@@ -91,8 +91,7 @@ pub(super) async fn begin_executor_job(
     context: &AgentToolContext,
     kind: &str,
     assignment: ToolInvocationAssignment,
-    payload: &serde_json::Value,
-    runs_in_cloud: bool,
+    mut payload: serde_json::Value,
 ) -> Result<String, ToolExecutionError> {
     let mut begin_args = BTreeMap::new();
     begin_args.insert("runId".to_string(), context.run_id.clone().into());
@@ -108,19 +107,14 @@ pub(super) async fn begin_executor_job(
         Value::Float64(assignment.attempt_seq as f64),
     );
     begin_args.insert("streamId".to_string(), assignment.stream_id.into());
-    let mut stored_payload = payload.clone();
     if matches!(kind, "bind_artifact" | "save_artifact")
-        && let Some(fields) = stored_payload.as_object_mut()
+        && let Some(fields) = payload.as_object_mut()
     {
         fields.remove("path");
     }
-    // Convex runs cloud jobs from the stored payload, so it needs the real values.
-    if !runs_in_cloud {
-        redact_json(&mut stored_payload);
-    }
     begin_args.insert(
         "payload".to_string(),
-        Value::try_from(stored_payload).map_err(tool_error)?,
+        Value::try_from(payload).map_err(tool_error)?,
     );
     let BeginJobResponse { job_id, parts } = context
         .runtime
@@ -154,7 +148,8 @@ pub(super) async fn execute_cloud_tool_job(
         return Err(cancelled_error());
     }
 
-    let job_id = begin_executor_job(context, kind, assignment, &payload, true).await?;
+    // Convex runs cloud jobs from the stored payload, so it gets the real values.
+    let job_id = begin_executor_job(context, kind, assignment, payload).await?;
     let mut job_args = BTreeMap::new();
     job_args.insert("runId".to_string(), context.run_id.clone().into());
     job_args.insert("jobId".to_string(), job_id.clone().into());
@@ -278,7 +273,7 @@ async fn execute_tool_job_with_assignment<F, Fut>(
     context: &AgentToolContext,
     assignment: ToolInvocationAssignment,
     kind: &str,
-    payload: serde_json::Value,
+    mut payload: serde_json::Value,
     operation: F,
 ) -> Result<serde_json::Value, ToolExecutionError>
 where
@@ -301,7 +296,8 @@ where
         return Err(cancelled_error());
     }
 
-    let job_id = begin_executor_job(context, kind, assignment, &payload, false).await?;
+    redact_json(&mut payload);
+    let job_id = begin_executor_job(context, kind, assignment, payload).await?;
 
     let cancellation = WorkspaceCancellation::new();
     let operation = operation(cancellation.clone(), job_id.clone());
