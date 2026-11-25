@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
+import { BLOB_DELETE_DELAY_MS } from '@convex/lib/files';
 import {
 	finishDueScheduledFunctions,
 	initConvexTest,
@@ -154,7 +155,7 @@ describe('files', () => {
 		const { file: reupload } = await createUpload(owned);
 		expect(await blobPath(t, reupload.fileId)).not.toBe(path);
 
-		vi.advanceTimersByTime(60 * 60 * 1_000);
+		vi.advanceTimersByTime(BLOB_DELETE_DELAY_MS);
 		await finishDueScheduledFunctions(t);
 		expect(
 			fetchMock.mock.calls.map(([request]) => [request.method, new URL(request.url).pathname])
