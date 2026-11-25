@@ -1,7 +1,7 @@
 mod oauth;
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
@@ -18,10 +18,14 @@ use oauth::{
     require_scopes,
 };
 
+use crate::sealed_file::{SealedFile, os_key_store};
+
+const STORE_FILE: &str = "chatgpt-siwc.json";
+
 #[derive(Clone)]
 pub struct ChatGptService {
     state: Arc<Mutex<Store>>,
-    path: Arc<PathBuf>,
+    file: Arc<SealedFile>,
     issuer: String,
     token_endpoint: String,
     client: reqwest::Client,
@@ -143,16 +147,16 @@ impl ChatGptService {
     }
 
     pub fn load_or_unavailable(data_dir: &Path) -> anyhow::Result<Arc<Self>> {
-        Self::load(data_dir).or_else(|_| {
+        Self::load(data_dir).or_else(|error| {
             Self::from_state(
-                data_dir.join("chatgpt-siwc.json"),
+                SealedFile::new(data_dir.join(STORE_FILE), os_key_store()),
                 Store {
                     version: 1,
                     host_id: format!("urn:uuid:{}", Uuid::new_v4()),
                     users: HashMap::new(),
                 },
                 ISSUER,
-                Some("Local ChatGPT storage is unavailable. Preserve chatgpt-siwc.json in the Sprocket data directory and repair or restore it, then restart Sprocket. Other providers remain available.".to_owned()),
+                Some(format!("Local ChatGPT storage is unavailable: {error:#}. Preserve {STORE_FILE} in the Sprocket data directory and repair or restore it, then restart Sprocket. Other providers remain available.")),
             )
         })
     }
@@ -169,17 +173,16 @@ impl ChatGptService {
     }
 
     fn load_with_issuer(data_dir: &Path, issuer: &str) -> anyhow::Result<Arc<Self>> {
-        let path = data_dir.join("chatgpt-siwc.json");
-        let mut state: Store = match std::fs::read(&path) {
-            Ok(bytes) => {
+        let file = SealedFile::new(data_dir.join(STORE_FILE), os_key_store());
+        let mut state: Store = match file.read().context("Could not read local ChatGPT state")? {
+            Some(bytes) => {
                 serde_json::from_slice(&bytes).context("Could not read local ChatGPT state.")?
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Store {
+            None => Store {
                 version: 1,
                 host_id: format!("urn:uuid:{}", Uuid::new_v4()),
                 users: HashMap::new(),
             },
-            Err(error) => return Err(error).context("Could not read local ChatGPT state."),
         };
         ensure!(
             state.version == 1,
@@ -220,12 +223,12 @@ impl ChatGptService {
         state
             .users
             .retain(|_, accounts| !accounts.accounts.is_empty());
-        crate::profile::write_private_file(&path, &serde_json::to_vec(&state)?)?;
-        Self::from_state(path, state, issuer, None)
+        file.write(&serde_json::to_vec(&state)?)?;
+        Self::from_state(file, state, issuer, None)
     }
 
     fn from_state(
-        path: PathBuf,
+        file: SealedFile,
         state: Store,
         issuer: &str,
         storage_error: Option<String>,
@@ -240,7 +243,7 @@ impl ChatGptService {
             .collect();
         Ok(Arc::new(Self {
             state: Arc::new(Mutex::new(state)),
-            path: Arc::new(path),
+            file: Arc::new(file),
             issuer: issuer.to_owned(),
             token_endpoint: format!("{issuer}/api/accounts/oauth/token"),
             client: reqwest::Client::builder()
@@ -272,8 +275,8 @@ impl ChatGptService {
             }
         }
         let bytes = serde_json::to_vec(state)?;
-        let path = Arc::clone(&self.path);
-        tokio::task::spawn_blocking(move || crate::profile::write_private_file(&path, &bytes))
+        let file = Arc::clone(&self.file);
+        tokio::task::spawn_blocking(move || file.write(&bytes))
             .await
             .context("ChatGPT storage task stopped.")?
             .context("Could not save local ChatGPT credentials.")?;

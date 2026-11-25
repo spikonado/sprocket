@@ -9531,6 +9531,7 @@ dependencies = [
  "nsis",
  "portable-pty",
  "reqwest 0.13.5",
+ "ring",
  "serde",
  "serde_json",
  "sevenz-rust2",

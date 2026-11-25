@@ -198,15 +198,9 @@ impl RefreshTokenStore for ProfileCredentials {
 }
 
 fn keyring_unavailable(error: &anyhow::Error) -> bool {
-    matches!(
-        error.downcast_ref::<keyring::Error>(),
-        Some(
-            keyring::Error::NoDefaultStore
-                | keyring::Error::NoStorageAccess(_)
-                | keyring::Error::PlatformFailure(_)
-                | keyring::Error::NotSupportedByStore(_)
-        )
-    )
+    error
+        .downcast_ref::<keyring::Error>()
+        .is_some_and(crate::sealed_file::keyring_unavailable)
 }
 
 #[cfg(test)]
