@@ -7,10 +7,11 @@ use std::sync::{Arc, Weak};
 use anyhow::Context;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
-use tokio::sync::{Mutex, broadcast};
+use tokio::sync::{Mutex, OwnedMutexGuard, broadcast};
 
 use super::attachment_store::write_attachment_metadata;
 use super::monitor::{PatchIdentities, PatchIndex};
+use super::retention::mark_opened;
 use super::types::{TRANSCRIPT_CHUNK_SIZE, TranscriptPart};
 
 const FORMAT_FILE: &str = "format";
@@ -96,6 +97,11 @@ pub struct TranscriptLease {
     _slot: Arc<ThreadSlot>,
 }
 
+/// Excludes every reader and writer of a thread directory that no one had open.
+pub(super) struct IdleThread {
+    _index: OwnedMutexGuard<Option<ThreadIndex>>,
+}
+
 pub struct TranscriptStore {
     pub(super) root: PathBuf,
     locks: Mutex<HashMap<String, Weak<Mutex<()>>>>,
@@ -145,6 +151,21 @@ impl TranscriptStore {
         slot
     }
 
+    pub(super) async fn lock_idle_thread(&self, dir: &Path) -> Option<IdleThread> {
+        let mut threads = self.threads.lock().await;
+        if threads
+            .get(dir)
+            .is_some_and(|slot| slot.strong_count() != 0)
+        {
+            return None;
+        }
+        let slot = Arc::new(ThreadSlot::default());
+        threads.insert(dir.to_owned(), Arc::downgrade(&slot));
+        Some(IdleThread {
+            _index: slot.lock_owned().await,
+        })
+    }
+
     async fn with_thread<T: Send + 'static>(
         &self,
         user_id: &str,
@@ -174,7 +195,8 @@ impl TranscriptStore {
         thread_id: &str,
     ) -> anyhow::Result<TranscriptLease> {
         let slot = self.thread_slot(&self.thread_dir(user_id, thread_id)).await;
-        self.with_thread(user_id, thread_id, |_, _| Ok(())).await?;
+        self.with_thread(user_id, thread_id, |dir, _| Ok(mark_opened(dir)?))
+            .await?;
         Ok(TranscriptLease { _slot: slot })
     }
 

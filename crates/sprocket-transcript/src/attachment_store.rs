@@ -8,6 +8,8 @@ use tokio::sync::Mutex;
 use super::store::{TranscriptStore, atomic_write, safe_segment};
 use super::types::TranscriptAttachmentMeta;
 
+pub(super) const PENDING_ATTACHMENTS_DIR: &str = "pending-attachments";
+
 pub(super) fn write_attachment_metadata(
     thread_dir: &Path,
     attachment: &TranscriptAttachmentMeta,
@@ -27,7 +29,7 @@ impl TranscriptStore {
     pub fn pending_attachment_path(&self, user_id: &str, storage_id: &str) -> PathBuf {
         self.root
             .join(safe_segment(user_id))
-            .join("pending-attachments")
+            .join(PENDING_ATTACHMENTS_DIR)
             .join(safe_segment(storage_id))
     }
 
@@ -56,7 +58,7 @@ impl TranscriptStore {
             if !user.file_type().await?.is_dir() {
                 continue;
             }
-            let directory = user.path().join("pending-attachments");
+            let directory = user.path().join(PENDING_ATTACHMENTS_DIR);
             let metadata = match tokio::fs::symlink_metadata(&directory).await {
                 Ok(metadata) => metadata,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
