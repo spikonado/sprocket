@@ -515,6 +515,13 @@ fn saved_tool_actions_are_display_only() {
         json!({"label": "Parsed File", "summary": "design.pdf", "status": "completed", "action": {"kind": "openFile", "path": "/repo/docs/design.pdf"}})
     );
 
+    assert_eq!(
+        display("scrape_url", json!({"url": " https://react.dev"}), None).action,
+        Some(ToolDisplayAction::OpenUrl {
+            url: "https://react.dev".into()
+        })
+    );
+
     let checkout = display(
         "card_checkout",
         json!({"amount": "23.06", "currency": "USD", "payButton": "private"}),

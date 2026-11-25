@@ -30,6 +30,7 @@ impl ToolStatus {
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum ToolDisplayAction {
     OpenFile { path: String },
+    OpenUrl { url: String },
     SaveCard,
 }
 
@@ -161,6 +162,12 @@ impl<'a> ToolDisplayInput<'a> {
                 .filter(|path| !path.is_empty())
                 .map(|path| ToolDisplayAction::OpenFile {
                     path: path.to_owned(),
+                }),
+            "scrape_url" | "screenshot_url" => string(self.input, "url")
+                .map(str::trim)
+                .filter(|url| url.starts_with("https://") || url.starts_with("http://"))
+                .map(|url| ToolDisplayAction::OpenUrl {
+                    url: url.to_owned(),
                 }),
             "card_checkout"
                 if self.output.and_then(|output| string(output, "status"))
