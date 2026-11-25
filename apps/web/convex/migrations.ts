@@ -6,15 +6,13 @@ import type { TableNames } from '@convex/_generated/dataModel';
 import { getUserBySubject } from '@convex/lib/auth';
 import { transcriptContext } from '@convex/lib/contextHandoff';
 import { getOrCreateTranscriptState, withToolInvocationIds } from '@convex/lib/transcriptParts';
+import { isRunFinalStatus } from '@convex/lib/validators';
 import schema from '@convex/schema';
 
 export const migrations = new Migrations(components.migrations, { schema, internalMutation });
 
 // Spreads the resync's Dodo list calls so up to ~14k customers stay under Dodo's 240 requests a minute.
 const DODO_RESYNC_SPREAD_MS = 60 * 60 * 1_000;
-
-// Released agents keep reusing a tool image's URL for the rest of the run that created it.
-const TOOL_IMAGE_RUN_GRACE_MS = 24 * 60 * 60 * 1_000;
 
 async function moveGrants(ctx: MutationCtx, userId: string): Promise<void> {
 	const rows = await ctx.db
@@ -212,8 +210,12 @@ export const dropShareConversationContent = migrations.define({
 export const deleteToolImages = migrations.define({
 	table: 'imageUploads',
 	migrateOne: async (ctx, upload) => {
-		if (upload.sha256 === undefined || upload._creationTime > Date.now() - TOOL_IMAGE_RUN_GRACE_MS)
-			return;
+		if (upload.sha256 === undefined) return;
+
+		// Released agents reuse a tool image's URL until their run ends.
+		const thread = upload.threadId && (await ctx.db.get('threadRecords', upload.threadId));
+
+		if (thread && !isRunFinalStatus(thread.status)) return;
 
 		if (upload.storageDeletedAt === undefined) await ctx.storage.delete(upload.storageId);
 		await ctx.db.delete('imageUploads', upload._id);

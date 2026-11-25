@@ -418,12 +418,14 @@ test('run removes the retired conversation sharing preference', async () => {
 	vi.useRealTimers();
 });
 
-test('run deletes tool images older than a day and their files and keeps attachments', async () => {
+test('run deletes tool images of idle threads and their files and keeps attachments', async () => {
 	vi.useFakeTimers();
 	const t = initConvexTest();
 	const { threadId } = await seedOwnedThread(t);
+	const { threadId: runningThreadId } = await seedOwnedThread(t);
+	await t.run((ctx) => ctx.db.patch('threadRecords', runningThreadId, { status: 'running' }));
 
-	const upload = (name: string, sha256?: string) =>
+	const upload = (name: string, sha256?: string, uploadThreadId = threadId) =>
 		t.run(async (ctx) => {
 			const storageId = await ctx.storage.store(new Blob(['png'], { type: 'image/png' }));
 
@@ -434,7 +436,7 @@ test('run deletes tool images older than a day and their files and keeps attachm
 				mediaType: 'image/png',
 				size: 3,
 				attached: true,
-				threadId,
+				threadId: uploadThreadId,
 				sha256
 			});
 
@@ -443,20 +445,19 @@ test('run deletes tool images older than a day and their files and keeps attachm
 
 	const attachment = await upload('photo.png');
 	const toolImage = await upload('tool-image', 'a'.repeat(64));
-	vi.advanceTimersByTime(25 * 60 * 60 * 1_000);
-	const recentToolImage = await upload('tool-image', 'b'.repeat(64));
+	const runningToolImage = await upload('tool-image', 'b'.repeat(64), runningThreadId);
 
 	await t.mutation(internal.migrations.run, {});
 	await t.finishAllScheduledFunctions(vi.runAllTimers);
 
-	const [attachmentRow, attachmentFile, toolImageRow, toolImageFile, recentFile] = await t.run(
+	const [attachmentRow, attachmentFile, toolImageRow, toolImageFile, runningFile] = await t.run(
 		(ctx) =>
 			Promise.all([
 				ctx.db.get('imageUploads', attachment.id),
 				ctx.storage.getUrl(attachment.storageId),
 				ctx.db.get('imageUploads', toolImage.id),
 				ctx.storage.getUrl(toolImage.storageId),
-				ctx.storage.getUrl(recentToolImage.storageId)
+				ctx.storage.getUrl(runningToolImage.storageId)
 			])
 	);
 
@@ -464,6 +465,6 @@ test('run deletes tool images older than a day and their files and keeps attachm
 	expect(attachmentFile).not.toBeNull();
 	expect(toolImageRow).toBeNull();
 	expect(toolImageFile).toBeNull();
-	expect(recentFile).not.toBeNull();
+	expect(runningFile).not.toBeNull();
 	vi.useRealTimers();
 });
