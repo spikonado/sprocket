@@ -516,7 +516,7 @@ export default function App({
 	const lastSyncedComposerThreadId = useRef<Id<'threadRecords'> | null>(null);
 	const desktopProjectAttachmentsGeneration = useRef(0);
 	const [projectLaunchInFlight, setProjectLaunchInFlight] = useState(false);
-	const lastAppliedThemePreferences = useRef<Doc<'uiPreferences'> | null | undefined>(undefined);
+	const lastAppliedThemePreferences = useRef<Partial<Doc<'uiPreferences'>> | undefined>(undefined);
 	const [pendingTheme, setPendingTheme] = useState<SprocketTheme | null>(null);
 	const themeSaveGeneration = useRef(0);
 

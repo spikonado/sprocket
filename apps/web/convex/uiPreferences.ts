@@ -123,11 +123,11 @@ export const setRestrictSubagentsToProvider = mutation({
 
 export const getMine = query({
 	args: {},
-	returns: v.union(schema.doc('uiPreferences'), v.null()),
-	handler: async (ctx): Promise<Doc<'uiPreferences'> | null> => {
+	returns: v.union(schema.doc('uiPreferences'), schema.tables.uiPreferences.validator.partial()),
+	handler: async (ctx): Promise<Partial<Doc<'uiPreferences'>>> => {
 		const preferences = await getUiPreferences(ctx.db, await getUserId(ctx));
 
-		return preferences && { ...preferences, shareConversationContent: false };
+		return { ...preferences, shareConversationContent: false };
 	}
 });
 

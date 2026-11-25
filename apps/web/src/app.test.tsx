@@ -197,7 +197,7 @@ function museStatus(state: MuseStatus['state']): MuseStatus {
 
 function createConvexFixtures(): ConvexTestClient {
 	const client = new ConvexTestClient();
-	client.registerQuery(api.uiPreferences.getMine, null);
+	client.registerQuery(api.uiPreferences.getMine, {});
 	client.registerQuery(api.uiPreferences.getMyProviderOrder, [...defaultProviderOrder]);
 	client.registerQuery(api.usage.getMyUsage, {
 		tier: 'free',

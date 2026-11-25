@@ -10,7 +10,7 @@ it.each([
 	['Pull the latest code automatically', false, api.uiPreferences.setAutoPullCheckouts]
 ] as const)('flips %s from its default', async (name, enabledByDefault, setPreference) => {
 	const client = new ConvexTestClient();
-	client.registerQuery(api.uiPreferences.getMine, null);
+	client.registerQuery(api.uiPreferences.getMine, {});
 	client.registerMutation(setPreference, null);
 	const mutation = vi.spyOn(client, 'mutation');
 

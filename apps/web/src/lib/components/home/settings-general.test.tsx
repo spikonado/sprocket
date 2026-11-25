@@ -56,19 +56,16 @@ function disabledStates() {
 	return allSwitches().map((toggle) => toggle.hasAttribute('disabled'));
 }
 
-it.each([null, preferences])(
-	'uses defaults for missing preferences or fields: %j',
-	async (data) => {
-		const client = new ConvexTestClient();
-		client.registerQuery(api.uiPreferences.getMine, data);
-		await mount(client);
-		expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy();
-		expect(allSwitches().map((toggle) => toggle.getAttribute('aria-checked'))).toEqual(
-			toggles.map(({ defaultEnabled }) => String(defaultEnabled))
-		);
-		expect(disabledStates()).toEqual(toggles.map(() => false));
-	}
-);
+it.each([{}, preferences])('uses defaults for missing preferences or fields: %j', async (data) => {
+	const client = new ConvexTestClient();
+	client.registerQuery(api.uiPreferences.getMine, data);
+	await mount(client);
+	expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy();
+	expect(allSwitches().map((toggle) => toggle.getAttribute('aria-checked'))).toEqual(
+		toggles.map(({ defaultEnabled }) => String(defaultEnabled))
+	);
+	expect(disabledStates()).toEqual(toggles.map(() => false));
+});
 
 it('waits for preferences to load before allowing changes', async () => {
 	const client = new ConvexTestClient();

@@ -20,7 +20,7 @@ Released agents require `providerPreferences.restrictSubagentsToProvider` in `ag
 
 ### Retired conversation content sharing
 
-Released UIs unmask session replays unless `uiPreferences.getMine` reports `shareConversationContent: false`, so it always does. They also call `uiPreferences.setShareConversationContent`, which accepts and ignores the value. Released agents default the missing `shareConversationContent` in `agentRuntime.getContext` to `false` and send no content. Once those UIs age out, remove the mutation and the `getMine` override.
+Released UIs unmask session replays unless `uiPreferences.getMine` reports `shareConversationContent: false`, so it always does, returning only that field for users with no saved preferences. They also call `uiPreferences.setShareConversationContent`, which accepts and ignores the value. Released agents default the missing `shareConversationContent` in `agentRuntime.getContext` to `false` and send no content. Once those UIs age out, remove the mutation and the `getMine` override.
 
 ### Enabled providers for released clients
 
