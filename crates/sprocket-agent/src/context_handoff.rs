@@ -127,6 +127,10 @@ impl ContextHandoffHook {
         self.state().due(self.token_limit)
     }
 
+    pub(crate) fn context_tokens(&self) -> u64 {
+        self.state().context_tokens
+    }
+
     pub(crate) fn take_handoff_history(&self) -> Option<Vec<Message>> {
         let mut state = self.state();
         match std::mem::take(&mut state.phase) {

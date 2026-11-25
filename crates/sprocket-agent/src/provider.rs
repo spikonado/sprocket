@@ -22,6 +22,7 @@ use sprocket_workspace::{CommandSessionManager, WorkspaceSkill};
 use tokio::time::sleep;
 
 use self::transcript_sink::TranscriptSink;
+use crate::analytics::{GenerationTracker, HandoffOutcome, HandoffTrigger};
 use crate::anthropic;
 use crate::chatgpt::ChatGptClient;
 use crate::claude_code::ClaudeCode;
@@ -789,11 +790,12 @@ async fn run_with_completion_model(
 
     let prompt_hook = AgentPromptHook::new(tool_call_tracker.clone());
     let completion_origin = CompletionOrigin::default();
-    let generation_tracker = crate::analytics::GenerationTracker::new(
+    let generation_tracker = GenerationTracker::new(
         &request.user_id,
         &request.run_id,
         &request.thread_id,
         target.completion_provider,
+        request.context_budget.clone(),
     );
     let mut stream_recovery = StreamRecovery::default();
     let mut recovery_delay = Duration::ZERO;
@@ -838,6 +840,14 @@ async fn run_with_completion_model(
         }
         prompt = handoff_prompt();
         context_handoff_hook.start_handoff();
+        generation_tracker.start_handoff(
+            if provider_switch.is_some() {
+                HandoffTrigger::ProviderSwitch
+            } else {
+                HandoffTrigger::ContextLimit
+            },
+            context_handoff_hook.context_tokens(),
+        );
     }
 
     macro_rules! current_usage_source {
@@ -858,10 +868,12 @@ async fn run_with_completion_model(
         ($stream:ident, $generations:lifetime, $agent_run:lifetime, $reason:expr) => {{
             drop($stream);
             let pending = provider_switch.take().expect("provider-switch handoff");
+            let reason: &str = &$reason;
             tracing::warn!(
                 "provider switch context handoff failed ({}); continuing on the selected provider without it",
-                $reason
+                reason
             );
+            generation_tracker.finish_handoff(HandoffOutcome::ContinuedWithoutHandoff { reason });
             match resume_without_provider_handoff(
                 &mut agent,
                 pending.history,
@@ -890,7 +902,7 @@ async fn run_with_completion_model(
         }};
     }
 
-    'agent_run: {
+    let result = 'agent_run: {
         'generations: loop {
             if deferred_prompt.is_none()
                 && let Some(begin_prompts) = pending_begin.take()
@@ -1088,6 +1100,9 @@ async fn run_with_completion_model(
                                     Ok(Some((next_history, next_prompt))) => {
                                         history = next_history;
                                         prompt = next_prompt;
+                                        generation_tracker.finish_handoff(HandoffOutcome::Resumed {
+                                            document_bytes: summary.len(),
+                                        });
                                     }
                                     Ok(None) => break 'agent_run AgentProviderResult::Cancelled,
                                     Err(error) => break 'agent_run transcript_error(error),
@@ -1142,6 +1157,10 @@ async fn run_with_completion_model(
                                     history = handoff_history;
                                     prompt = handoff_prompt();
                                     context_handoff_hook.start_handoff();
+                                    generation_tracker.start_handoff(
+                                        HandoffTrigger::ContextLimit,
+                                        context_handoff_hook.context_tokens(),
+                                    );
                                     continue 'generations;
                                 }
                                 if let Some((next_history, next_prompt, delay)) = stream_recovery.resume(&error) {
@@ -1219,7 +1238,12 @@ async fn run_with_completion_model(
                 }
             }
         }
-    }
+    };
+    generation_tracker.finish_handoff(match &result {
+        AgentProviderResult::Failed { error } => HandoffOutcome::Failed { error },
+        _ => HandoffOutcome::Cancelled,
+    });
+    result
 }
 
 fn transcript_error(error: anyhow::Error) -> AgentProviderResult {

@@ -16,7 +16,7 @@ use sprocket_convex::{ConvexErrorCode, convex_error_code};
 use crate::chatgpt::ChatGptNotConnected;
 use crate::provider::ProviderFailures;
 use crate::stream_recovery::is_provider_failure_cause;
-use crate::types::CompletionProvider;
+use crate::types::{CompletionProvider, ContextBudget};
 use crate::usage::{ModelCallUsage, UsageSource};
 
 #[derive(Clone)]
@@ -25,6 +25,7 @@ pub(crate) struct GenerationTracker {
     run_id: String,
     thread_id: String,
     initial_provider: CompletionProvider,
+    context_budget: ContextBudget,
     state: Arc<Mutex<TrackerState>>,
 }
 
@@ -34,6 +35,7 @@ struct TrackerState {
     in_flight_turn: Option<usize>,
     parameter_defaults: HashMap<String, Map<String, Value>>,
     tools: HashMap<EffectId, PendingTool>,
+    handoff: Option<PendingHandoff>,
 }
 
 struct PendingModelCall {
@@ -45,6 +47,54 @@ struct PendingModelCall {
 struct PendingTool {
     started_at: Instant,
     changed_defaults: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum HandoffTrigger {
+    ContextLimit,
+    ProviderSwitch,
+}
+
+pub(crate) enum HandoffOutcome<'a> {
+    Resumed { document_bytes: usize },
+    ContinuedWithoutHandoff { reason: &'a str },
+    Failed { error: &'a anyhow::Error },
+    Cancelled,
+}
+
+struct PendingHandoff {
+    trigger: HandoffTrigger,
+    started_at: Instant,
+    context_tokens: u64,
+    writer: Option<(CompletionProvider, String)>,
+    model_calls: u32,
+    /// `None` once any writing call can't be priced.
+    cost_usd: Option<f64>,
+}
+
+impl PendingHandoff {
+    fn new(trigger: HandoffTrigger, context_tokens: u64) -> Self {
+        Self {
+            trigger,
+            started_at: Instant::now(),
+            context_tokens,
+            writer: None,
+            model_calls: 0,
+            cost_usd: Some(0.0),
+        }
+    }
+
+    fn record_call(&mut self, call: &ModelCall<'_>) {
+        self.writer = Some((call.provider, call.model.to_string()));
+        self.model_calls += 1;
+        if call.usage.is_some() {
+            self.cost_usd = self
+                .cost_usd
+                .zip(call.cost_usd)
+                .map(|(sum, cost)| sum + cost);
+        }
+    }
 }
 
 // Rig skips the content hook for a turn that ends the run or gets abandoned.
@@ -73,12 +123,14 @@ impl GenerationTracker {
         run_id: &str,
         thread_id: &str,
         initial_provider: CompletionProvider,
+        context_budget: ContextBudget,
     ) -> Self {
         Self {
             user_id: user_id.to_string(),
             run_id: run_id.to_string(),
             thread_id: thread_id.to_string(),
             initial_provider,
+            context_budget,
             state: Arc::default(),
         }
     }
@@ -99,6 +151,9 @@ impl GenerationTracker {
         };
         let mut state = self.state.lock().ok();
         let pending = state.as_mut().and_then(|state| {
+            if context_handoff && let Some(handoff) = &mut state.handoff {
+                handoff.record_call(&call);
+            }
             state.in_flight_turn = None;
             state.turns.remove(&turn)
         });
@@ -120,17 +175,40 @@ impl GenerationTracker {
         context_handoff: bool,
         error: &PromptError,
     ) {
-        let Some(pending) = self.state.lock().ok().and_then(|mut state| {
-            let turn = state.in_flight_turn.take()?;
-            state.turns.remove(&turn)
-        }) else {
-            return;
-        };
         let call = ModelCall {
             error: Some(error.to_string()),
             ..self.model_call(source, context_handoff)
         };
+        let Some(pending) = self.state.lock().ok().and_then(|mut state| {
+            let turn = state.in_flight_turn.take()?;
+            if context_handoff && let Some(handoff) = &mut state.handoff {
+                handoff.record_call(&call);
+            }
+            state.turns.remove(&turn)
+        }) else {
+            return;
+        };
         posthog_rs::capture(self.model_call_event(&call, Some(pending.started_at)));
+    }
+
+    pub(crate) fn start_handoff(&self, trigger: HandoffTrigger, context_tokens: u64) {
+        if let Ok(mut state) = self.state.lock() {
+            state.handoff = Some(PendingHandoff::new(trigger, context_tokens));
+        }
+    }
+
+    /// Does nothing when no handoff is open, so every run exit can call it.
+    pub(crate) fn finish_handoff(&self, outcome: HandoffOutcome<'_>) {
+        let Some(handoff) = self
+            .state
+            .lock()
+            .ok()
+            .and_then(|mut state| state.handoff.take())
+        else {
+            return;
+        };
+        let properties = handoff_properties(&handoff, &self.context_budget, &outcome);
+        posthog_rs::capture(self.event("context_handoff", properties));
     }
 
     fn model_call<'a>(&self, source: &'a UsageSource, context_handoff: bool) -> ModelCall<'a> {
@@ -334,6 +412,47 @@ fn model_call_properties(call: &ModelCall<'_>, started_at: Option<Instant>) -> M
 
 fn to_json(value: impl Serialize) -> Value {
     serde_json::to_value(value).unwrap_or(Value::Null)
+}
+
+fn handoff_properties(
+    handoff: &PendingHandoff,
+    budget: &ContextBudget,
+    outcome: &HandoffOutcome<'_>,
+) -> Map<String, Value> {
+    let (outcome_name, error, document_bytes) = match outcome {
+        HandoffOutcome::Resumed { document_bytes } => ("resumed", None, Some(*document_bytes)),
+        HandoffOutcome::ContinuedWithoutHandoff { reason } => {
+            ("continued_without_handoff", Some(reason.to_string()), None)
+        }
+        HandoffOutcome::Failed { error } => ("failed", Some(format!("{error:#}")), None),
+        HandoffOutcome::Cancelled => ("cancelled", None, None),
+    };
+    let (provider, model) = handoff.writer.clone().unzip();
+    let properties = [
+        ("trigger", to_json(handoff.trigger)),
+        ("outcome", json!(outcome_name)),
+        ("error", json!(error)),
+        ("document_bytes", json!(document_bytes)),
+        ("context_tokens", json!(handoff.context_tokens)),
+        (
+            "handoff_token_limit",
+            json!(budget.auto_handoff_token_limit),
+        ),
+        ("context_window_tokens", json!(budget.context_window_tokens)),
+        ("model_calls", json!(handoff.model_calls)),
+        ("cost_usd", json!(handoff.cost_usd)),
+        (
+            "latency_seconds",
+            json!(handoff.started_at.elapsed().as_secs_f64()),
+        ),
+        ("provider", to_json(provider)),
+        ("model", json!(model)),
+    ];
+    properties
+        .into_iter()
+        .filter(|(_, value)| !value.is_null())
+        .map(|(key, value)| (key.to_string(), value))
+        .collect()
 }
 
 fn is_sprocket_fixable(error: &anyhow::Error) -> bool {
