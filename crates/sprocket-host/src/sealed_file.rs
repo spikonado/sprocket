@@ -74,7 +74,10 @@ struct Envelope {
 enum KeyState {
     Unresolved,
     Unavailable,
-    Ready { id: String, key: LessSafeKey },
+    Ready {
+        id: String,
+        key: Box<LessSafeKey>,
+    },
 }
 
 /// A private file encrypted with a key held in the operating system keyring. Without a usable
@@ -128,7 +131,7 @@ impl SealedFile {
         let plaintext = open(&key, &envelope)?;
         *self.lock() = KeyState::Ready {
             id: envelope.key_id,
-            key,
+            key: Box::new(key),
         };
         Ok(Some(plaintext))
     }
@@ -153,7 +156,7 @@ impl SealedFile {
         let id = Uuid::new_v4().to_string();
         match self.keys.save(&id, &raw) {
             Ok(()) => Ok(KeyState::Ready {
-                key: aead_key(&raw)?,
+                key: Box::new(aead_key(&raw)?),
                 id,
             }),
             Err(error) if keyring_unavailable(&error) => {

@@ -39,6 +39,32 @@ fn plain_file_is_sealed_on_write_and_reads_back_after_restart() {
 
     let restarted = SealedFile::new(path, keys);
     assert_eq!(restarted.read().unwrap().unwrap(), b"new secret");
+    restarted.write(b"newer secret").unwrap();
+    assert!(
+        serde_json::from_slice::<Envelope>(&std::fs::read(restarted.path.as_path()).unwrap())
+            .is_ok()
+    );
+}
+
+#[test]
+fn sealed_file_fails_to_read_when_locked_or_tampered() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("secret.json");
+    let keys: Arc<MemoryKeyStore> = Arc::default();
+    SealedFile::new(path.clone(), keys.clone())
+        .write(b"secret")
+        .unwrap();
+
+    assert!(
+        SealedFile::new(path.clone(), Arc::new(UnavailableKeyStore))
+            .read()
+            .is_err()
+    );
+
+    let mut envelope: Envelope = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    envelope.data.replace_range(..4, "AAAA");
+    std::fs::write(&path, serde_json::to_vec(&envelope).unwrap()).unwrap();
+    assert!(SealedFile::new(path, keys).read().is_err());
 }
 
 #[test]
