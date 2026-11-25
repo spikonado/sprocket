@@ -352,7 +352,6 @@ function getContextResult(args: {
 	providerHandoff: Infer<typeof vGetContextResult>['providerHandoff'];
 	providerPreferences: Infer<typeof vGetContextResult>['providerPreferences'];
 	cwd: string | undefined;
-	shareConversationContent: boolean;
 	coAuthorCommits: boolean;
 }): Infer<typeof vGetContextResult> {
 	const result: Infer<typeof vGetContextResult> = {
@@ -371,7 +370,6 @@ function getContextResult(args: {
 		},
 		providerPreferences: args.providerPreferences,
 		prompt: args.prompt,
-		shareConversationContent: args.shareConversationContent,
 		coAuthorCommits: args.coAuthorCommits
 	};
 
@@ -422,7 +420,6 @@ export async function getContextHandler(ctx: QueryCtx, args: ObjectType<typeof g
 			restrictSubagentsToProvider: false
 		},
 		cwd: thread.cwd,
-		shareConversationContent: preferences?.shareConversationContent ?? true,
 		coAuthorCommits: preferences?.coAuthorCommits ?? true
 	});
 }

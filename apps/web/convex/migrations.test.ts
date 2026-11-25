@@ -396,3 +396,24 @@ test('run backfills missing completion providers as spikonado', async () => {
 	expect(run?.completionProvider).toBe('spikonado');
 	vi.useRealTimers();
 });
+
+test('run removes the retired conversation sharing preference', async () => {
+	vi.useFakeTimers();
+	const t = initConvexTest();
+
+	const preferencesId = await t.run((ctx) =>
+		ctx.db.insert('uiPreferences', {
+			userId: 'user-1',
+			theme: 'dark',
+			shareConversationContent: true
+		})
+	);
+
+	await t.mutation(internal.migrations.run, {});
+	await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+	const preferences = await t.run((ctx) => ctx.db.get('uiPreferences', preferencesId));
+	expect(preferences).not.toHaveProperty('shareConversationContent');
+	expect(preferences?.theme).toBe('dark');
+	vi.useRealTimers();
+});

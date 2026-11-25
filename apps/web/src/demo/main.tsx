@@ -63,7 +63,7 @@ document.addEventListener(
 
 const client = new ConvexTestClient();
 
-client.registerQuery(api.uiPreferences.getMine, null);
+client.registerQuery(api.uiPreferences.getMine, {});
 
 function serveUsage() {
 	client.handleQuery(api.aiUsage.getRunUsage, ({ runId }) => state.runUsage(runId));

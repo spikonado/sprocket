@@ -1,21 +1,6 @@
 import { useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
-import { ExternalLink } from 'lucide-react';
 import PreferenceToggle, { useMyPreferences } from '$lib/components/home/preference-toggle';
-
-function DescriptionLink({ href, children }: { href: string; children: string }) {
-	return (
-		<a
-			href={href}
-			target="_blank"
-			rel="noreferrer"
-			className="text-foreground inline-flex items-center gap-0.5 hover:underline"
-		>
-			{children}
-			<ExternalLink className="size-3" aria-hidden="true" />
-		</a>
-	);
-}
 
 export default function SettingsGeneral() {
 	const { preferences, disabled, loadState } = useMyPreferences();
@@ -27,8 +12,6 @@ export default function SettingsGeneral() {
 	);
 
 	const setSettleMergedThreads = useMutation(api.uiPreferences.setSettleMergedThreads);
-
-	const setShareConversationContent = useMutation(api.uiPreferences.setShareConversationContent);
 
 	return (
 		<section className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -55,24 +38,6 @@ export default function SettingsGeneral() {
 						savedEnabled={preferences?.settleMergedThreads ?? false}
 						disabled={disabled}
 						save={setSettleMergedThreads}
-					/>
-					<PreferenceToggle
-						title="Share anonymous conversation data to help improve Sprocket for everyone"
-						description={
-							<>
-								We don't sell your data:{' '}
-								<DescriptionLink href="https://spikonado.com/privacy">
-									our Privacy Policy
-								</DescriptionLink>
-								. Sprocket is{' '}
-								<DescriptionLink href="https://github.com/spikonado/sprocket">
-									fair-source
-								</DescriptionLink>
-							</>
-						}
-						savedEnabled={preferences?.shareConversationContent ?? true}
-						disabled={disabled}
-						save={setShareConversationContent}
 					/>
 					{loadState}
 				</div>

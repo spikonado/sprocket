@@ -23,9 +23,9 @@ const available: UpdateState = {
 	error: null
 };
 
-function preferences(automaticAgentContinuation?: boolean): Doc<'uiPreferences'> | null {
+function preferences(automaticAgentContinuation?: boolean): Partial<Doc<'uiPreferences'>> {
 	return automaticAgentContinuation === undefined
-		? null
+		? {}
 		: {
 				_id: fixtureId<'uiPreferences'>('preferences-test'),
 				_creationTime: 1,

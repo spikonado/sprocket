@@ -7,7 +7,6 @@ describe('theme preferences', () => {
 		['automaticThreadTitles', api.uiPreferences.setAutomaticThreadTitles],
 		['automaticAgentContinuation', api.uiPreferences.setAutomaticAgentContinuation],
 		['restrictSubagentsToProvider', api.uiPreferences.setRestrictSubagentsToProvider],
-		['shareConversationContent', api.uiPreferences.setShareConversationContent],
 		['coAuthorCommits', api.uiPreferences.setCoAuthorCommits],
 		['autoPullCheckouts', api.uiPreferences.setAutoPullCheckouts]
 	] as const)('syncs %s per account and preserves the theme', async (field, setPreference) => {
@@ -39,11 +38,18 @@ describe('theme preferences', () => {
 		const alice = t.withIdentity({ subject: 'alice' });
 		const otherAliceSession = t.withIdentity({ subject: 'alice' });
 		const bob = t.withIdentity({ subject: 'bob' });
-		expect(await alice.query(api.uiPreferences.getMine, {})).toBeNull();
+		expect(await alice.query(api.uiPreferences.getMine, {})).toEqual({
+			shareConversationContent: false
+		});
 
 		const saved = await alice.mutation(api.uiPreferences.setTheme, { theme: 'dark' });
-		expect(await otherAliceSession.query(api.uiPreferences.getMine, {})).toEqual(saved);
-		expect(await bob.query(api.uiPreferences.getMine, {})).toBeNull();
+		expect(await otherAliceSession.query(api.uiPreferences.getMine, {})).toEqual({
+			...saved,
+			shareConversationContent: false
+		});
+		expect(await bob.query(api.uiPreferences.getMine, {})).toEqual({
+			shareConversationContent: false
+		});
 
 		const updated = await otherAliceSession.mutation(api.uiPreferences.setTheme, {
 			theme: 'light'

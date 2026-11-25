@@ -123,9 +123,11 @@ export const setRestrictSubagentsToProvider = mutation({
 
 export const getMine = query({
 	args: {},
-	returns: v.union(schema.doc('uiPreferences'), v.null()),
-	handler: async (ctx) => {
-		return await getUiPreferences(ctx.db, await getUserId(ctx));
+	returns: v.union(schema.doc('uiPreferences'), schema.tables.uiPreferences.validator.partial()),
+	handler: async (ctx): Promise<Partial<Doc<'uiPreferences'>>> => {
+		const preferences = await getUiPreferences(ctx.db, await getUserId(ctx));
+
+		return { ...preferences, shareConversationContent: false };
 	}
 });
 
@@ -155,11 +157,7 @@ export const getMyEnabledProviders = query({
 export const setShareConversationContent = mutation({
 	args: { enabled: v.boolean() },
 	returns: v.null(),
-	handler: async (ctx, args) => {
-		await savePreferences(ctx, { shareConversationContent: args.enabled });
-
-		return null;
-	}
+	handler: () => null
 });
 
 export const setCoAuthorCommits = mutation({

@@ -1,6 +1,5 @@
 import { expect, it } from 'vitest';
 import { internal } from '@convex/_generated/api';
-import { analyticsId } from '@convex/lib/analytics';
 import { initConvexTest, seedThreadRecord, type ConvexTestInstance } from './test.setup';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -16,12 +15,6 @@ async function scheduledCaptures(t: ConvexTestInstance) {
 			return { distinctId: args.distinctId, event: args.event, ...JSON.parse(args.properties) };
 		});
 }
-
-it('hashes ids like the Rust agent', async () => {
-	expect(await analyticsId('thread-1')).toBe(
-		'4b0a5fefc328e6b9257bc535e3c5d26fec36b52f92e277618bf5b30fc3885e58'
-	);
-});
 
 it('sends per-user daily token usage and thread counts', async () => {
 	const t = initConvexTest();

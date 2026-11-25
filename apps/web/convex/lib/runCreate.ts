@@ -32,7 +32,7 @@ import {
 	getPromptPart
 } from '@convex/lib/transcriptParts';
 import { recordPromptTranscript } from '@convex/lib/transcriptWrites';
-import { analyticsId, captureAnonymous } from '@convex/lib/analytics';
+import { posthog } from '@convex/lib/analytics';
 import {
 	isRunFinalStatus,
 	type CompletionProvider,
@@ -186,14 +186,12 @@ export async function createQueuedRunRecord(
 
 		threadRecord = (await ctx.db.get('threadRecords', threadId))!;
 
-		const sessionId = await analyticsId(threadId);
-
-		await captureAnonymous(ctx, {
-			distinctId: sessionId,
+		await posthog.capture(ctx, {
+			distinctId: args.userId,
 			event: 'thread_created',
 			properties: {
-				$ai_session_id: sessionId,
-				parent_session_id: args.parentThreadId ? await analyticsId(args.parentThreadId) : null,
+				thread_id: threadId,
+				parent_thread_id: args.parentThreadId ?? null,
 				model: args.selectedModel,
 				provider: args.completionProvider
 			}

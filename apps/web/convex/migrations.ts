@@ -197,6 +197,15 @@ export const clearUsageLimitFailureKinds = migrations.define({
 	}
 });
 
+export const dropShareConversationContent = migrations.define({
+	table: 'uiPreferences',
+	migrateOne: (_ctx, preferences) => {
+		if (preferences.shareConversationContent !== undefined) {
+			return { shareConversationContent: undefined };
+		}
+	}
+});
+
 export const run = migrations.runner([
 	internal.migrations.backfillToolInvocationIds,
 	internal.migrations.backfillCompletionToolInvocationIds,
@@ -214,5 +223,6 @@ export const run = migrations.runner([
 	internal.migrations.resyncDodoCustomers,
 	internal.migrations.backfillThreadCompletionProviders,
 	internal.migrations.backfillRunCompletionProviders,
-	internal.migrations.clearUsageLimitFailureKinds
+	internal.migrations.clearUsageLimitFailureKinds,
+	internal.migrations.dropShareConversationContent
 ]);

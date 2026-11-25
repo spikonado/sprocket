@@ -5,7 +5,7 @@ import { isJsonObject, isJsonString, type JsonValue } from '@convex/lib/json';
 import { recordToolTranscript } from '@convex/lib/transcriptWrites';
 import type { ExecutorJobResult } from '@convex/lib/validators';
 import { patchRunExecution, type ExecutionRun } from '@convex/lib/runExecution';
-import { analyticsId, captureAnonymous } from '@convex/lib/analytics';
+import { posthog } from '@convex/lib/analytics';
 
 export async function applyExecutorJobSuccess(
 	ctx: MutationCtx,
@@ -61,16 +61,10 @@ export async function applyExecutorJobSuccess(
 			: undefined;
 
 	if (isJsonString(skill)) {
-		const traceId = await analyticsId(args.run._id);
-
-		await captureAnonymous(ctx, {
-			distinctId: traceId,
+		await posthog.capture(ctx, {
+			distinctId: args.run.userId,
 			event: 'skill_read',
-			properties: {
-				skill,
-				$ai_trace_id: traceId,
-				$ai_session_id: await analyticsId(args.run.threadId)
-			}
+			properties: { skill, run_id: args.run._id, thread_id: args.run.threadId }
 		});
 	}
 

@@ -276,8 +276,6 @@ pub struct RunContextResponse {
     #[serde(default)]
     pub cwd: Option<String>,
     #[serde(default)]
-    pub share_conversation_content: bool,
-    #[serde(default)]
     pub co_author_commits: bool,
 }
 
@@ -316,7 +314,7 @@ pub struct ContextBudget {
     pub auto_handoff_token_limit: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CatalogModelCapabilities {
     pub label: String,
     pub route: ModelRoute,
@@ -326,10 +324,31 @@ pub struct CatalogModelCapabilities {
     pub usage_pricing: UsagePricing,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct UsagePricing {
-    pub long_context_threshold_tokens: Option<u64>,
     pub cache_write_ttl: Option<String>,
+    pub direct_api: Option<DirectApiPricing>,
+}
+
+/// The provider's own API list prices in USD per million tokens.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectApiPricing {
+    pub input: f64,
+    pub cache_read: f64,
+    /// Keyed by cache lifetime, matching `UsagePricing::cache_write_ttl`.
+    pub cache_write: HashMap<String, f64>,
+    pub output: f64,
+    pub fast_multiplier: f64,
+    pub long_context: Option<LongContextPricing>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LongContextPricing {
+    pub threshold_input_tokens: u64,
+    pub input_multiplier: f64,
+    pub output_multiplier: f64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
