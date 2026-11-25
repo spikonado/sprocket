@@ -30,7 +30,7 @@ Released clients reject unknown completion providers. `uiPreferences.getMyEnable
 
 Released UIs call `providerCredentials:saveOpenAiKey` and `removeOpenAiKey`, and released agents call `issueOpenAiCredential`. They wrap `saveApiKey`, `removeApiKey` and `issueApiKey` with `provider: 'openai'`, except that `issueOpenAiCredential` throws string `data` instead of `PROVIDER_NOT_CONFIGURED`, because v0.4 agents read only string error data. Once the UIs and agents that call them age out, remove the three actions.
 
-### Retired cloud request mailboxes
+### Retired cloud request mutations
 
 Released agents start cloud scrapes with `webRequests:start` or `firecrawlRequests:start` and hosted parses with `hostedParse:createUpload`. Current agents call the `/agent/scrape` and `/agent/parse` HTTP actions instead. The three mutations accept any arguments and throw "Update Sprocket to scrape pages and parse documents in the cloud.", so released agents never reach the rest of the old flows. Remove `hostedParse.ts`, `webRequests.ts`, `firecrawlRequests.ts` and `retiredCloudRequest` once clients that call them age out.
 

@@ -20,10 +20,8 @@ export const activeJob = internalQuery({
 	},
 	returns: v.union(
 		v.null(),
-		v.object({
-			kind: v.union(v.literal('parse_file'), v.literal('scrape_url')),
-			url: v.optional(v.string())
-		})
+		v.object({ kind: v.literal('parse_file') }),
+		v.object({ kind: v.literal('scrape_url'), url: v.string() })
 	),
 	handler: async (ctx, args) => {
 		const runId = ctx.db.normalizeId('runs', args.runId);
@@ -86,7 +84,7 @@ async function streamedProviderResponse(request: () => Promise<Response>): Promi
 export const scrape = httpAction(async (ctx, request) => {
 	const job = await requestedJob(ctx, request);
 
-	if (job?.kind !== 'scrape_url' || !job.url) return failure(409, RUN_NO_LONGER_ACTIVE);
+	if (job?.kind !== 'scrape_url') return failure(409, RUN_NO_LONGER_ACTIVE);
 	const url = job.url;
 	const rawDocument = new URL(request.url).searchParams.get('rawDocument') === 'true';
 

@@ -115,14 +115,14 @@ impl rig::tool::Tool for ScrapeUrlTool {
             Self::NAME,
             payload,
             |cancellation, job_id| async move {
-                let hosted = CloudJob {
+                let cloud = CloudJob {
                     runtime: &self.0.runtime,
                     run_id: &self.0.run_id,
                     claim_id: &self.0.claim_id,
                     job_id: &job_id,
                 };
                 if let Some(raw_url) = super::github_url::github_raw_url(&url) {
-                    let result = super::github_url::fetch_github_file(raw_url, self.0.supports_images, &cache_dir, Some(&hosted), &cancellation).await.map_err(tool_error)?;
+                    let result = super::github_url::fetch_github_file(raw_url, self.0.supports_images, &cache_dir, Some(&cloud), &cancellation).await.map_err(tool_error)?;
                     return if result.get("outputType").and_then(serde_json::Value::as_str) == Some("image") {
                         Ok(result)
                     } else {
@@ -140,7 +140,7 @@ impl rig::tool::Tool for ScrapeUrlTool {
                         return super::scrape_files::localize_scrape(result, &cache_dir, &cancellation, saved_file).await.map_err(tool_error);
                     }
                     LocalResource::Document(document) => Some(document),
-                    LocalResource::UnreadableDocument => fetch_raw_document(&hosted, &url, &cancellation).await.map_err(tool_error)?,
+                    LocalResource::UnreadableDocument => fetch_raw_document(&cloud, &url, &cancellation).await.map_err(tool_error)?,
                     LocalResource::Page => {
                         if let Some(result) = super::markdown_url::try_markdown_url(url.clone(), &cancellation).await.map_err(tool_error)? {
                             return super::scrape_files::localize_scrape(result, &cache_dir, &cancellation, saved_file).await.map_err(tool_error);
@@ -149,10 +149,10 @@ impl rig::tool::Tool for ScrapeUrlTool {
                     }
                 };
                 if let Some(document) = document {
-                    let result = convert_web_document(document, &hosted, &cancellation).await.map_err(tool_error)?;
+                    let result = convert_web_document(document, &cloud, &cancellation).await.map_err(tool_error)?;
                     return super::scrape_files::localize_scrape(result, &cache_dir, &cancellation, saved_file).await.map_err(tool_error);
                 }
-                let result = super::cloud::scrape_markdown(&hosted, &url, &cancellation).await.map_err(tool_error)?;
+                let result = super::cloud::scrape_markdown(&cloud, &url, &cancellation).await.map_err(tool_error)?;
                 super::scrape_files::localize_scrape(result, &cache_dir, &cancellation, saved_file).await.map_err(tool_error)
             },
         )
@@ -192,11 +192,11 @@ async fn fetch_raw_document(
 
 async fn convert_web_document(
     WebDocument { url, bytes, hint }: WebDocument,
-    hosted: &CloudJob<'_>,
+    cloud: &CloudJob<'_>,
     cancellation: &WorkspaceCancellation,
 ) -> anyhow::Result<serde_json::Value> {
     let name = url_file_name(&url);
-    let (markdown, _) = convert_document(bytes, name, hint, Some(hosted), cancellation)
+    let (markdown, _) = convert_document(bytes, name, hint, Some(cloud), cancellation)
         .await
         .with_context(|| format!("failed to parse the document at {url}"))?;
     Ok(json!({

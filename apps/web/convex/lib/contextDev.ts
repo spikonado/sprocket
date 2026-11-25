@@ -7,7 +7,7 @@ import { retryAfterHeaderMs, retryRateLimited } from '@convex/lib/providerRetry'
 export const CONTEXT_DEV_CREDITS_EXHAUSTED = 'context.dev credits are exhausted.';
 
 /** context.dev's own deadline for one scrape attempt. */
-export const SCRAPE_TIMEOUT_MS = 60_000;
+const SCRAPE_TIMEOUT_MS = 60_000;
 
 /** Long enough to reuse pages that sibling subagents re-read, short enough for distributor stock. */
 export const SCRAPE_CACHE_MAX_AGE_MS = 30 * 60 * 1_000;
