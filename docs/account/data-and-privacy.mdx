@@ -8,7 +8,7 @@ Read the full [privacy policy](https://spikonado.com/privacy).
 ## Stored on Sprocket's servers
 
 - Threads and their transcripts, including tool output.
-- Before a prompt, reply, tool call, tool output, or context summary is stored, Sprocket replaces secrets in it with placeholders like `[redacted:openai-key]`. It looks for known key formats, private keys, passwords in URLs, values assigned to names like `password` or `api_key`, and long random strings. Later turns in the thread see the placeholders, so the agent can't read a key you pasted in an earlier message.
+- Before a prompt, reply, tool call, tool output, or context summary is stored, Sprocket replaces secrets in it with placeholders like `[redacted:openai-key]`. It looks for known key formats, private keys, passwords in URLs and long random strings. Model reasoning is stored as the provider returned it, because providers need it unchanged to continue the conversation. Later turns in the thread see the placeholders, so the agent can't read a key you pasted in an earlier message.
 - Artifact contents.
 - Attachments. Sprocket deletes them 7 days after a thread's last message.
 - Files the agent can't parse on your computer. Sprocket uploads them for a short time to parse them.

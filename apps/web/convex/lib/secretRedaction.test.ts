@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { initConvexTest, readTranscriptRange, seedOwnedThread } from '../test.setup';
-import { redactCompletion, redactSecrets, redactTool } from './secretRedaction';
+import { redactCompletion, redactSecrets } from './secretRedaction';
 import { appendTranscriptPart } from './transcriptParts';
 
 describe('redactSecrets', () => {
@@ -10,8 +10,6 @@ describe('redactSecrets', () => {
 		['aws AKIAIOSFODNN7EXAMPLE', 'aws [redacted:aws-access-key]'],
 		['-SLACK=x\n-xoxb-123456789012-ab12cd34ef56', '-SLACK=x\n-[redacted:slack-token]'],
 		['postgres://app:s3cr3tPass@db:5432/app', 'postgres://app:[redacted:password]@db:5432/app'],
-		['"client_secret": "9f86d081884c7d65"', '"client_secret": "[redacted:secret]"'],
-		['Authorization: Bearer abc123def456ghi', 'Authorization: Bearer [redacted:secret]'],
 		['key Zx7Qp2Lm9Vb4Nc8Rt1Ws6Yh3Kd5Jf0', 'key [redacted:high-entropy]'],
 		[
 			'-----BEGIN RSA PRIVATE KEY-----\nMIIE\n-----END RSA PRIVATE KEY-----',
@@ -27,9 +25,12 @@ describe('redactSecrets', () => {
 			'thread js724ftx3y7e6d5e1n73egy7t58jw025',
 			'user user_01KXVEGKXJPVMPPVEAWY4T7DWB',
 			'uuid 25e57611-c2cb-4934-8142-fde1a3644a46',
-			'integrity sha512-Zx7Qp2Lm9Vb4Nc8Rt1Ws6Yh3Kd5Jf0Aa',
+			'"sha512-1Duyg48TdJNdyhEB8Xn1L36bT9Pv6GUtlKjHxOys8xkaF/rQq3XJE+bAurSK/AgIz5mGFsb77cn9Pb20+WCScw=="',
+			'narHash = "sha256-Zx7Qp2Lm9Vb4Nc8Rt1Ws6Yh3Kd5Jf0Aa/Q3v9xYb2LmN8pR4tW6zA1cD5="',
 			'useTranscriptRowsVirtualizer2 attachmentDownloadByStorageId',
-			'password: process.env.DB_PASSWORD'
+			'password: process.env.DB_PASSWORD',
+			'let token = uuid::Uuid::new_v4();',
+			'max_tokens: Option<u64>,'
 		].join('\n');
 
 		expect(redactSecrets(text)).toBe(text);
@@ -43,35 +44,19 @@ describe('redactSecrets', () => {
 	});
 });
 
-it('redacts secrets held under secret-like field names', () => {
-	const tool = redactTool({
-		toolInvocationId: 'call',
-		name: 'exec_command',
-		input: { env: { password: 'abc123def456ghi', mode: 'abc123def456ghi' } },
-		status: 'completed'
-	});
+it('redacts reply text and keeps reasoning as the provider returned it', () => {
+	const text = 'use sk-proj-Q3v9xYb2LmN8pR4tW6zA1cD5';
 
-	expect(tool.input).toEqual({ env: { password: '[redacted:secret]', mode: 'abc123def456ghi' } });
-});
-
-it('drops the signature of Claude thinking that redaction changes', () => {
-	const signed = { rigNative: { type: 'thinking', signature: 'sig' } };
-
-	const thinking = (text: string) => ({
+	const reasoning = {
 		type: 'reasoning' as const,
 		id: 'r',
 		text,
-		providerMetadata: signed
-	});
+		providerMetadata: { rigNative: { type: 'thinking', signature: 'sig' } }
+	};
 
-	const { items } = redactCompletion({
-		items: [thinking('use sk-proj-Q3v9xYb2LmN8pR4tW6zA1cD5'), thinking('plan')]
-	});
+	const { items } = redactCompletion({ items: [reasoning, { type: 'text', id: 't', text }] });
 
-	expect(items).toEqual([
-		{ type: 'reasoning', id: 'r', text: 'use [redacted:openai-key]' },
-		thinking('plan')
-	]);
+	expect(items).toEqual([reasoning, { type: 'text', id: 't', text: 'use [redacted:openai-key]' }]);
 });
 
 it('stores transcript parts with secrets redacted and accepts retries of raw stored parts', async () => {

@@ -25,16 +25,10 @@ const KNOWN_FORMATS: [label: string, pattern: RegExp][] = [
 
 const URL_PASSWORD = /(\b[a-z][a-z0-9+.-]{0,30}:\/\/[^\s/:@]{1,256}:)([^\s/@]{1,256})@/gi;
 
-const SECRET_NAME = /password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key/i;
-
-const SECRET_ASSIGNMENT = new RegExp(
-	`(\\b[\\w-]{0,40}(?:${SECRET_NAME.source})[\\w-]{0,40}["']?\\s{0,8}[:=]\\s{0,8}["']?|\\bBearer\\s{1,8})([^\\s"'\`,;)]{8,})`,
-	'gi'
-);
-
-// `_` and `-` split candidates so prefixed IDs such as `user_01KX…` stay intact. Lockfile and
-// Nix hashes are long and random but not secret.
-const CANDIDATE = /(?<!sha(?:1|256|384|512)-)(?<![\w+=])[A-Za-z0-9+=]{24,}/g;
+// Lockfile and Nix integrity hashes are long and random but not secret, so they are matched
+// whole and kept. `_` and `-` split other candidates so prefixed IDs such as `user_01KX…` stay
+// intact.
+const CANDIDATE = /(sha(?:1|256|384|512)-[A-Za-z0-9+/]+=*)|(?<![\w+=])[A-Za-z0-9+=]{24,}/g;
 
 function placeholder(label: string): string {
 	return `[redacted:${label}]`;
@@ -58,10 +52,6 @@ function digitCount(text: string): number {
 	return text.replace(/\D/g, '').length;
 }
 
-function isAssignedSecret(value: string): boolean {
-	return digitCount(value) > 0 && /[A-Za-z]/.test(value) && entropy(value) >= 3;
-}
-
 // Requiring mixed case and digits keeps commit SHAs, Convex IDs, ULIDs and UUIDs intact.
 // The entropy bar follows the length because random strings gain entropy with length and
 // identifiers made of words don't.
@@ -83,25 +73,18 @@ export function redactSecrets(text: string): string {
 
 	return redacted
 		.replace(URL_PASSWORD, (_match, prefix: string) => `${prefix}${placeholder('password')}@`)
-		.replace(SECRET_ASSIGNMENT, (match, prefix: string, value: string) =>
-			isAssignedSecret(value) ? `${prefix}${placeholder('secret')}` : match
-		)
-		.replace(CANDIDATE, (token) => (isHighEntropy(token) ? placeholder('high-entropy') : token));
+		.replace(CANDIDATE, (token, hash?: string) =>
+			!hash && isHighEntropy(token) ? placeholder('high-entropy') : token
+		);
 }
 
-function redactJson(value: JsonValue, key?: string): JsonValue {
-	if (isJsonString(value) && key && SECRET_NAME.test(key) && isAssignedSecret(value)) {
-		return placeholder('secret');
-	}
-
+function redactJson(value: JsonValue): JsonValue {
 	if (isJsonString(value)) return redactSecrets(value);
 
-	if (Array.isArray(value)) return value.map((item) => redactJson(item));
+	if (Array.isArray(value)) return value.map(redactJson);
 
 	if (isJsonObject(value)) {
-		return Object.fromEntries(
-			Object.entries(value).map(([name, item]) => [name, redactJson(item, name)])
-		);
+		return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redactJson(item)]));
 	}
 
 	return value;
@@ -111,32 +94,16 @@ export function redactPrompt(prompt: TranscriptPromptBody): TranscriptPromptBody
 	return { ...prompt, text: redactSecrets(prompt.text) };
 }
 
-function isSignedThinking(metadata: JsonValue | undefined): boolean {
-	if (!metadata || !isJsonObject(metadata)) return false;
-
-	const native = metadata.rigNative;
-
-	return !!native && isJsonObject(native) && native.type === 'thinking';
-}
-
 type CompletionItem = TranscriptCompletionBody['items'][number];
 
-// IDs and providerMetadata stay as sent, since providers replay encrypted reasoning from them.
-// Claude signs its thinking text, so a redacted thinking item drops its signature and replays
-// as plain text.
+// Reasoning stays as the provider returned it, since providers replay it, and Claude rejects
+// thinking whose signed text changed.
 function redactCompletionItem(item: CompletionItem): CompletionItem {
 	if (item.type === 'tool-call') return { ...item, input: redactJson(item.input) };
 
-	const text = redactSecrets(item.text);
+	if (item.type === 'reasoning') return item;
 
-	if (text === item.text) return item;
-	const redacted = { ...item, text };
-
-	if (item.type === 'reasoning' && isSignedThinking(item.providerMetadata)) {
-		delete redacted.providerMetadata;
-	}
-
-	return redacted;
+	return { ...item, text: redactSecrets(item.text) };
 }
 
 export function redactCompletion(completion: TranscriptCompletionBody): TranscriptCompletionBody {
