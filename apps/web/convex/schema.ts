@@ -240,7 +240,9 @@ export default defineSchema({
 		threadId: v.id('threadRecords'),
 		workingDescendantCount: v.number(),
 		descendantCount: v.number(),
-		activeDescendantCount: v.number()
+		activeDescendantCount: v.number(),
+		// Retention dates a tree from this too, since prompts to a subagent leave its root's `lastMessageAt`.
+		lastDescendantActivityAt: v.optional(v.number())
 	}).index('by_threadId', ['threadId']),
 
 	threadUsage: defineTable({

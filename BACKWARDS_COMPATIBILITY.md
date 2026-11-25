@@ -120,6 +120,10 @@ Released v0.5.x clients attach files through Convex storage. `imageUploads:gener
 
 `imageUploads` rows without `sha256` are user attachments from before R2. `migrations:deleteAttachmentUploads` deletes them with their `_storage` files, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, remove the migration.
 
+### Subagent activity on thread trees
+
+`threadHierarchyStates` rows from before thread retention lack `lastDescendantActivityAt`, so the retention sweep would date those trees from the root's `lastMessageAt` alone. `migrations:backfillDescendantActivity` sets it on each root from its subagents' `lastMessageAt`, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, remove the migration.
+
 ### Completion provider defaults
 
 Older `threadRecords` and `runs` rows lack `completionProvider`, so the schema keeps it optional. Convex readers, including provider handoffs and subagent settings, and the Rust agent's `RunSnapshot` treat a missing value as `spikonado`. `migrations:backfillThreadCompletionProviders` and `migrations:backfillRunCompletionProviders` set it, and the Convex Production workflow runs them after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports both done on production, make the field required, drop the `?? 'spikonado'` reads and the Rust default, and remove the migrations.

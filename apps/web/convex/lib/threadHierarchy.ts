@@ -156,11 +156,14 @@ async function applyAncestorCountChanges(
 			throw new Error('Invalid thread activity aggregate.');
 		}
 
-		await ctx.db.patch('threadHierarchyStates', state._id, {
+		const counts: Partial<Doc<'threadHierarchyStates'>> = {
 			descendantCount,
 			activeDescendantCount,
 			workingDescendantCount: workingCount
-		});
+		};
+
+		if (changes.active !== 0) counts.lastDescendantActivityAt = Date.now();
+		await ctx.db.patch('threadHierarchyStates', state._id, counts);
 	}
 
 	if (changes.active > 0) await unsettleRoot(ctx, thread);

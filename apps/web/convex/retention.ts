@@ -4,7 +4,7 @@ import { internal } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
 import { internalMutation, type MutationCtx, type QueryCtx } from '@convex/_generated/server';
 import { deleteThread } from '@convex/lib/threadDeletion';
-import { subtreeSummary } from '@convex/lib/threadHierarchy';
+import { hierarchyState, subtreeSummary } from '@convex/lib/threadHierarchy';
 import { resolvePlan } from '@convex/lib/tiers';
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
@@ -70,6 +70,15 @@ function staleRoots(ctx: QueryCtx, userId: string, cutoff: number) {
 		);
 }
 
+async function isExpired(ctx: QueryCtx, root: Doc<'threadRecords'>, cutoff: number) {
+	const lastDescendantActivityAt = (await hierarchyState(ctx.db, root._id))
+		?.lastDescendantActivityAt;
+
+	if (lastDescendantActivityAt !== undefined && lastDescendantActivityAt >= cutoff) return false;
+
+	return !(await subtreeSummary(ctx.db, root)).anyActive;
+}
+
 export const sweep = internalMutation({
 	args: { cursor: vCursor },
 	returns: v.null(),
@@ -113,7 +122,7 @@ export const sweepUser = internalMutation({
 		});
 
 		for (const root of roots.page) {
-			if (!(await subtreeSummary(ctx.db, root)).anyActive) await deleteThread(ctx, root);
+			if (await isExpired(ctx, root, args.cutoff)) await deleteThread(ctx, root);
 		}
 
 		if (!roots.isDone) {
