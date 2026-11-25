@@ -276,8 +276,6 @@ pub struct RunContextResponse {
     #[serde(default)]
     pub cwd: Option<String>,
     #[serde(default)]
-    pub share_conversation_content: bool,
-    #[serde(default)]
     pub co_author_commits: bool,
 }
 

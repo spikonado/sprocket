@@ -31,12 +31,6 @@ const toggles = [
 		field: 'settleMergedThreads',
 		mutation: api.uiPreferences.setSettleMergedThreads,
 		defaultEnabled: false
-	},
-	{
-		name: 'Share anonymous conversation data to help improve Sprocket for everyone',
-		field: 'shareConversationContent',
-		mutation: api.uiPreferences.setShareConversationContent,
-		defaultEnabled: true
 	}
 ] as const;
 

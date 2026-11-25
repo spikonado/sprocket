@@ -1,15 +1,12 @@
-use std::sync::Arc;
-
 use anyhow::anyhow;
 use rig::ProviderError;
-use rig::agent::CompletionCallEvent;
-use rig::completion::{Message, PromptError, Usage};
+use rig::completion::{PromptError, Usage};
 use rig::message::{AssistantContent, ToolName};
 use serde_json::json;
 
 use super::{
-    GenerationCall, MAX_CONTENT_BYTES, analytics_id, bounded, generation_properties, input_delta,
-    is_sprocket_fixable, tools_called,
+    GenerationCall, analytics_id, changed_defaults, generation_properties, is_sprocket_fixable,
+    tools_called,
 };
 use crate::chatgpt::ChatGptNotConnected;
 use crate::provider::provider_failures;
@@ -17,41 +14,14 @@ use crate::provider::test_support::coded_convex_error;
 use crate::types::CompletionProvider;
 
 #[test]
-fn input_delta_sends_new_messages_without_the_previous_output() {
-    let first_prompt = Message::user("list the files");
-    let earlier = vec![
-        Arc::new(Message::user("earlier")),
-        Arc::new(Message::assistant("earlier reply")),
-    ];
-    let first = CompletionCallEvent {
-        prompt: &first_prompt,
-        history: &earlier,
-        turn: 1,
-    };
-    assert_eq!(input_delta(first, 0), json!([first_prompt]));
+fn changed_defaults_lists_parameters_set_away_from_their_default() {
+    let defaults = json!({ "chars": "", "yieldTimeMs": 10_000, "includeSettled": false });
+    let args = r#"{"chars":"","yieldTimeMs":30000,"cmd":"ls"}"#;
 
-    let tool_result = Message::user("README.md");
-    let mut history = earlier.clone();
-    history.extend([
-        Arc::new(first_prompt.clone()),
-        Arc::new(Message::assistant("calling ls")),
-    ]);
-    let second = CompletionCallEvent {
-        prompt: &tool_result,
-        history: &history,
-        turn: 2,
-    };
-    assert_eq!(input_delta(second, earlier.len() + 1), json!([tool_result]));
-}
-
-#[test]
-fn bounded_replaces_oversized_content() {
-    let small = json!(["hello"]);
-    assert_eq!(bounded(small.clone()), small);
-
-    let large = json!(["x".repeat(MAX_CONTENT_BYTES)]);
-    let size = large.to_string().len();
-    assert_eq!(bounded(large), json!(format!("[{size} bytes omitted]")));
+    assert_eq!(
+        changed_defaults(defaults.as_object(), args),
+        ["yieldTimeMs"]
+    );
 }
 
 #[test]
@@ -76,7 +46,6 @@ fn generation_properties_describe_the_call() {
     assert_eq!(properties["$ai_output_tokens"], 30);
     assert_eq!(properties["$ai_span_name"], "context_handoff");
     assert!(!properties.contains_key("$ai_cache_read_input_tokens"));
-    assert!(!properties.contains_key("$ai_input"));
 
     let failed = GenerationCall {
         error: Some("connection reset".to_string()),

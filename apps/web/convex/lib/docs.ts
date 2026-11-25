@@ -84,7 +84,6 @@ export const vGetContextResult = v.object({
 	contextTokens: v.optional(v.number()),
 	providerHandoff: v.optional(vProviderHandoff),
 	cwd: v.optional(v.string()),
-	shareConversationContent: v.boolean(),
 	coAuthorCommits: v.boolean()
 });
 

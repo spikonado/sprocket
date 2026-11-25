@@ -145,7 +145,6 @@ import { applyTheme, resolveTheme, type SprocketTheme } from '$lib/theme';
 import { useLocalCliStatus } from '$lib/home/local-cli-status';
 import type { LocalApi, ThreadSummary, ProjectAttachment } from '$lib/types/sprocket';
 import { cn } from '$lib/utils';
-import { syncShareConversationContent } from '$lib/analytics';
 
 type ConvexQuery = FunctionReference<'query'>;
 
@@ -607,17 +606,6 @@ export default function App({
 		setWorkspaceTheme(nextTheme);
 		applyTheme(nextTheme);
 	}, [authReady, uiPreferencesQuery.data, pendingTheme]);
-
-	const shareConversationContent =
-		uiPreferencesQuery.data === undefined
-			? undefined
-			: (uiPreferencesQuery.data?.shareConversationContent ?? true);
-
-	useEffect(() => {
-		if (shareConversationContent !== undefined) {
-			syncShareConversationContent(shareConversationContent);
-		}
-	}, [shareConversationContent]);
 
 	async function handleThemeChange(theme: SprocketTheme) {
 		const previous = workspaceTheme;

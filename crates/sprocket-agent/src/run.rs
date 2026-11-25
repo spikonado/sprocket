@@ -994,7 +994,6 @@ pub async fn run_agent(
                     subagent_models: Arc::new(subagent_models),
                     subagent_launcher: request.subagent_launcher.clone(),
                     transcript_store: request.transcript_store.clone(),
-                    share_conversation_content: context.share_conversation_content,
                 },
             )
             .await;

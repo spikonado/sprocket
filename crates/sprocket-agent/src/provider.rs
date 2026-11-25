@@ -270,7 +270,6 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) subagent_models: Arc<Vec<crate::catalog::SubagentModelChoice>>,
     pub(crate) subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
     pub(crate) transcript_store: Option<Arc<sprocket_transcript::TranscriptStore>>,
-    pub(crate) share_conversation_content: bool,
 }
 
 pub(crate) enum AgentProviderResult {
@@ -793,7 +792,6 @@ async fn run_with_completion_model(
     let generation_tracker = crate::analytics::GenerationTracker::new(
         &request.run_id,
         &request.thread_id,
-        request.share_conversation_content,
         target.completion_provider,
     );
     let mut stream_recovery = StreamRecovery::default();

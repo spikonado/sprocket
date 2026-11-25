@@ -6,7 +6,7 @@ use rig::agent::{
     AgentHook, CompletionCallAction, CompletionCallEvent, DispatchAction, DispatchEvent,
     HookContext, ModelTurnAction, ModelTurnFinished, OutcomeAction, OutcomeEvent,
 };
-use rig::completion::{FinishReason, Message, PromptError, Usage};
+use rig::completion::{FinishReason, PromptError, ToolDefinition, Usage};
 use rig::effect::EffectId;
 use rig::message::AssistantContent;
 use serde::Serialize;
@@ -21,30 +21,26 @@ use crate::stream_recovery::is_provider_failure_cause;
 use crate::types::CompletionProvider;
 use crate::usage::UsageSource;
 
-const MAX_CONTENT_BYTES: usize = 256 * 1024;
-
 #[derive(Clone)]
 pub(crate) struct GenerationTracker {
     trace_id: String,
     session_id: String,
-    share_content: bool,
     initial_provider: CompletionProvider,
     state: Arc<Mutex<TrackerState>>,
 }
 
 #[derive(Default)]
 struct TrackerState {
-    conversation_len: usize,
     turns: HashMap<usize, PendingGeneration>,
     in_flight_turn: Option<usize>,
     latest_generation_span_id: Option<String>,
+    parameter_defaults: HashMap<String, Map<String, Value>>,
     tools: HashMap<EffectId, PendingTool>,
 }
 
 struct PendingGeneration {
     span_id: String,
     started_at: Instant,
-    input: Option<Value>,
     /// Rig streams a call's usage before the hook that sees its content, so the event waits here.
     event: Option<posthog_rs::Event>,
 }
@@ -52,6 +48,7 @@ struct PendingGeneration {
 struct PendingTool {
     started_at: Instant,
     parent_id: Option<String>,
+    changed_defaults: Vec<String>,
 }
 
 // Rig skips the content hook for a turn that ends the run or gets abandoned.
@@ -74,16 +71,10 @@ struct GenerationCall<'a> {
 }
 
 impl GenerationTracker {
-    pub(crate) fn new(
-        run_id: &str,
-        thread_id: &str,
-        share_content: bool,
-        initial_provider: CompletionProvider,
-    ) -> Self {
+    pub(crate) fn new(run_id: &str, thread_id: &str, initial_provider: CompletionProvider) -> Self {
         Self {
             trace_id: analytics_id(run_id),
             session_id: analytics_id(thread_id),
-            share_content,
             initial_provider,
             state: Arc::default(),
         }
@@ -168,14 +159,6 @@ impl GenerationTracker {
     fn capture_tool_span(&self, name: &str, pending: PendingTool, event: &OutcomeEvent<'_>) {
         let mut span = posthog_rs::Event::new("$ai_span", self.trace_id.as_str());
         let result = event.tool_result();
-        let (input, output) = if self.share_content {
-            (
-                event.tool_args().map(|args| bounded(tool_arguments(args))),
-                result.map(|result| bounded(to_json(result.output()))),
-            )
-        } else {
-            (None, None)
-        };
         let properties = [
             ("$ai_trace_id", json!(self.trace_id)),
             ("$ai_session_id", json!(self.session_id)),
@@ -189,8 +172,7 @@ impl GenerationTracker {
                 "$ai_is_error",
                 json!(result.is_none_or(|result| result.is_error())),
             ),
-            ("$ai_input_state", json!(input)),
-            ("$ai_output_state", json!(output)),
+            ("changed_defaults", json!(pending.changed_defaults)),
             ("$process_person_profile", json!(false)),
         ];
         for (key, value) in properties {
@@ -213,10 +195,6 @@ impl AgentHook for GenerationTracker {
         event: CompletionCallEvent<'_>,
     ) -> CompletionCallAction {
         if let Ok(mut state) = self.state.lock() {
-            let input = self
-                .share_content
-                .then(|| bounded(input_delta(event, state.conversation_len)));
-            state.conversation_len = event.history.len() + 1;
             let span_id = Uuid::new_v4().to_string();
             state.latest_generation_span_id = Some(span_id.clone());
             state.in_flight_turn = Some(event.turn);
@@ -225,7 +203,6 @@ impl AgentHook for GenerationTracker {
                 PendingGeneration {
                     span_id,
                     started_at: Instant::now(),
-                    input,
                     event: None,
                 },
             );
@@ -250,12 +227,6 @@ impl AgentHook for GenerationTracker {
                 let _ = event.insert_prop("$ai_tools_called", tools.join(","));
                 let _ = event.insert_prop("$ai_tool_call_count", tools.len());
             }
-            if self.share_content {
-                let _ = event.insert_prop(
-                    "$ai_output_choices",
-                    bounded(json!([{ "role": "assistant", "content": turn.content }])),
-                );
-            }
             posthog_rs::capture(event);
         }
         ModelTurnAction::Continue
@@ -266,15 +237,23 @@ impl AgentHook for GenerationTracker {
         _context: &HookContext,
         event: DispatchEvent<'_>,
     ) -> DispatchAction {
-        if event.tool_name().is_some()
-            && let Ok(mut state) = self.state.lock()
-        {
+        let Ok(mut state) = self.state.lock() else {
+            return DispatchAction::Proceed;
+        };
+        if let Some(request) = event.completion_request() {
+            state.parameter_defaults = parameter_defaults(&request.tools);
+        } else if let Some(name) = event.tool_name() {
             let parent_id = state.latest_generation_span_id.clone();
+            let changed_defaults = changed_defaults(
+                state.parameter_defaults.get(name),
+                event.tool_args().unwrap_or_default(),
+            );
             state.tools.insert(
                 event.id,
                 PendingTool {
                     started_at: Instant::now(),
                     parent_id,
+                    changed_defaults,
                 },
             );
         }
@@ -305,32 +284,32 @@ fn tools_called(content: &[AssistantContent]) -> Vec<&str> {
         .collect()
 }
 
-fn tool_arguments(args: &str) -> Value {
-    serde_json::from_str(args).unwrap_or_else(|_| json!(args))
-}
-
-fn input_delta(event: CompletionCallEvent<'_>, previous_len: usize) -> Value {
-    let added = if event.turn == 1 || previous_len > event.history.len() {
-        &[][..]
-    } else {
-        &event.history[previous_len..]
-    };
-    let messages: Vec<&Message> = added
+fn parameter_defaults(tools: &[Arc<ToolDefinition>]) -> HashMap<String, Map<String, Value>> {
+    tools
         .iter()
-        .map(|message| &**message)
-        .filter(|message| !matches!(message, Message::Assistant(_)))
-        .chain([event.prompt])
-        .collect();
-    serde_json::to_value(messages).unwrap_or(Value::Null)
+        .map(|tool| {
+            let defaults = tool.parameters["properties"]
+                .as_object()
+                .into_iter()
+                .flatten()
+                .filter_map(|(name, schema)| Some((name.clone(), schema.get("default")?.clone())))
+                .collect();
+            (tool.name.to_string(), defaults)
+        })
+        .collect()
 }
 
-fn bounded(content: Value) -> Value {
-    let size = content.to_string().len();
-    if size > MAX_CONTENT_BYTES {
-        Value::String(format!("[{size} bytes omitted]"))
-    } else {
-        content
-    }
+/// Names only, because values such as command input are conversation content.
+fn changed_defaults(defaults: Option<&Map<String, Value>>, args: &str) -> Vec<String> {
+    let Ok(Value::Object(args)) = serde_json::from_str::<Value>(args) else {
+        return Vec::new();
+    };
+    defaults
+        .into_iter()
+        .flatten()
+        .filter(|(name, default)| args.get(*name).is_some_and(|value| value != *default))
+        .map(|(name, _)| name.clone())
+        .collect()
 }
 
 fn generation_properties(
@@ -361,6 +340,8 @@ fn generation_properties(
         json!(call.usage.cache_creation_input_tokens),
     );
     set("$ai_reasoning_tokens", json!(call.usage.reasoning_tokens));
+    // Rig counts cache reads and writes inside input tokens for every provider.
+    set("$ai_cache_reporting_exclusive", json!(false));
     set("$ai_stop_reason", to_json(call.finish_reason));
     if let Some(error) = &call.error {
         set("$ai_is_error", json!(true));
@@ -377,7 +358,6 @@ fn generation_properties(
             "$ai_latency",
             json!(pending.started_at.elapsed().as_secs_f64()),
         );
-        set("$ai_input", pending.input.take().unwrap_or(Value::Null));
     }
     properties
 }

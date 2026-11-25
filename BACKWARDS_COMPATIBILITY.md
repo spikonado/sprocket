@@ -18,6 +18,10 @@ Once clients through v0.5.x age out, stop writing these fields, migrate `work` a
 
 Released agents require `providerPreferences.restrictSubagentsToProvider` in `agentRuntime.getContext`, so it is always `false`. Released UIs still call `uiPreferences.setRestrictSubagentsToProvider`, which keeps saving the ignored `restrictSubagentsToProvider` field. Once those clients age out, remove the context field and the mutation, migrate the field off `uiPreferences` rows, then drop it from the schema.
 
+### Retired conversation content sharing
+
+Released UIs unmask session replays unless `uiPreferences.getMine` reports `shareConversationContent: false`, so it always does. They also call `uiPreferences.setShareConversationContent`, which accepts and ignores the value. Released agents default the missing `shareConversationContent` in `agentRuntime.getContext` to `false` and send no content. Once those UIs age out, remove the mutation and the `getMine` override.
+
 ### Enabled providers for released clients
 
 Released clients reject unknown completion providers. `uiPreferences.getMyEnabledProviders` and `agentRuntime.getContext` take the providers a client can parse as `knownProviders` and leave the others out of enabled providers and provider handoffs. Released clients omit it, so a missing `knownProviders` means `releasedClientProviders` in `lib/providerOrder.ts`: `spikonado`, `openai` and `chatgpt`. Once clients that omit it age out, make `knownProviders` required and remove `releasedClientProviders`.
@@ -107,6 +111,10 @@ Older `threadRecords` and `runs` rows lack `completionProvider`, so the schema k
 ### Stored usage-limit failure kinds
 
 Older `runs` rows carry `failureKind: 'usage_limit'`, so the schema uses `vStoredRunFailureKind` and `projectSelectedThreadLifecycle` reports only `abandoned`. `migrations:clearUsageLimitFailureKinds` clears it, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, store `vRunFailureKind` and remove `vStoredRunFailureKind` and the migration.
+
+### Stored conversation sharing preferences
+
+Older `uiPreferences` rows carry `shareConversationContent`, so the schema keeps it optional. `migrations:dropShareConversationContent` unsets it, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production and the "Retired conversation content sharing" shim is gone, drop the field and the migration.
 
 ### Migration records
 

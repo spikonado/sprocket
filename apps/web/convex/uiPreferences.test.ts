@@ -7,7 +7,6 @@ describe('theme preferences', () => {
 		['automaticThreadTitles', api.uiPreferences.setAutomaticThreadTitles],
 		['automaticAgentContinuation', api.uiPreferences.setAutomaticAgentContinuation],
 		['restrictSubagentsToProvider', api.uiPreferences.setRestrictSubagentsToProvider],
-		['shareConversationContent', api.uiPreferences.setShareConversationContent],
 		['coAuthorCommits', api.uiPreferences.setCoAuthorCommits],
 		['autoPullCheckouts', api.uiPreferences.setAutoPullCheckouts]
 	] as const)('syncs %s per account and preserves the theme', async (field, setPreference) => {
@@ -42,7 +41,10 @@ describe('theme preferences', () => {
 		expect(await alice.query(api.uiPreferences.getMine, {})).toBeNull();
 
 		const saved = await alice.mutation(api.uiPreferences.setTheme, { theme: 'dark' });
-		expect(await otherAliceSession.query(api.uiPreferences.getMine, {})).toEqual(saved);
+		expect(await otherAliceSession.query(api.uiPreferences.getMine, {})).toEqual({
+			...saved,
+			shareConversationContent: false
+		});
 		expect(await bob.query(api.uiPreferences.getMine, {})).toBeNull();
 
 		const updated = await otherAliceSession.mutation(api.uiPreferences.setTheme, {
