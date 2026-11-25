@@ -286,6 +286,16 @@ describe('tool rows', () => {
 		});
 	});
 
+	it('opens the scraped URL in a new tab', () => {
+		const { props } = transcript(
+			tool({ name: 'scrape_url', action: { kind: 'openUrl', url: 'https://react.dev' } })
+		);
+
+		const link = within(render(<WorkTools {...props} />).container).getByRole('link');
+		expect(link.getAttribute('href')).toBe('https://react.dev');
+		expect(link.getAttribute('target')).toBe('_blank');
+	});
+
 	it('shows the save-card action after reload without loading details', () => {
 		const { store, props } = transcript(tool({ action: { kind: 'saveCard' } }));
 

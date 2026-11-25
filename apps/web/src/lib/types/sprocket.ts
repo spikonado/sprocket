@@ -107,7 +107,10 @@ export type TranscriptRow = { id: string; runId: string } & (
 			hasMore: boolean;
 			status: 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
 			error?: string;
-			action?: { kind: 'openFile'; path: string } | { kind: 'saveCard' };
+			action?:
+				| { kind: 'openFile'; path: string }
+				| { kind: 'openUrl'; url: string }
+				| { kind: 'saveCard' };
 	  }
 );
 

@@ -200,6 +200,7 @@ const transcriptRowSchema: z.ZodType<TranscriptRow> = z.discriminatedUnion('kind
 		action: z
 			.discriminatedUnion('kind', [
 				z.object({ kind: z.literal('openFile'), path: z.string() }),
+				z.object({ kind: z.literal('openUrl'), url: z.string() }),
 				z.object({ kind: z.literal('saveCard') })
 			])
 			.optional()

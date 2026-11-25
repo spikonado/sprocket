@@ -138,6 +138,18 @@ const WorkTools = memo(function WorkTools({ store, rowId }: Props) {
 				>
 					{content}
 				</button>
+			) : row.action?.kind === 'openUrl' ? (
+				<a
+					data-tool-row
+					data-work-detail
+					href={row.action.url}
+					target="_blank"
+					rel="noopener noreferrer"
+					title={title}
+					className={`${workRowClass} max-w-full`}
+				>
+					{content}
+				</a>
 			) : (
 				<div
 					data-tool-row
