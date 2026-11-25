@@ -22,7 +22,7 @@ export type PaidTerm = Pick<PaidSubscription, 'billingPeriodStart' | 'billingPer
 export type Plan = {
 	tier: SubscriptionTier;
 	label: string;
-	limits: { modelUsage: number };
+	limits: Pick<Doc<'tiers'>, 'retentionDays' | 'storageBytes'> & { modelUsage: number };
 	subscription: (PaidSubscription & PaidTerm) | null;
 	legacyQuotaResetAt: number | undefined;
 };
@@ -98,7 +98,15 @@ async function planForTier(
 
 	if (!limitsRow) throw new Error('Subscription tiers are unavailable.');
 
-	return { tier: tierId, label: row?.label ?? tierId, limits: { modelUsage: limitsRow.monthly } };
+	return {
+		tier: tierId,
+		label: row?.label ?? tierId,
+		limits: {
+			modelUsage: limitsRow.monthly,
+			retentionDays: limitsRow.retentionDays,
+			storageBytes: limitsRow.storageBytes
+		}
+	};
 }
 
 export async function resolvePlan(ctx: QueryCtx, userId: string, now: number): Promise<Plan> {
