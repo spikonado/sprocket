@@ -296,7 +296,10 @@ where
         return Err(cancelled_error());
     }
 
-    redact_json(&mut payload);
+    // Convex's hosted scraper fetches the URL stored in the job, as cloud jobs do.
+    if kind != "scrape_url" {
+        redact_json(&mut payload);
+    }
     let job_id = begin_executor_job(context, kind, assignment, payload).await?;
 
     let cancellation = WorkspaceCancellation::new();
