@@ -5,7 +5,8 @@ use rig::message::{AssistantContent, ToolName};
 use serde_json::json;
 
 use super::{
-    ModelCall, changed_defaults, is_sprocket_fixable, model_call_properties, tools_called,
+    HandoffOutcome, ModelCall, PendingHandoff, changed_defaults, handoff_properties,
+    is_sprocket_fixable, model_call_properties, tools_called,
 };
 use crate::chatgpt::ChatGptNotConnected;
 use crate::provider::provider_failures;
@@ -65,6 +66,52 @@ fn model_call_properties_describe_the_call() {
 
     assert_eq!(properties["is_error"], true);
     assert_eq!(properties["error"], "connection reset");
+}
+
+#[test]
+fn handoff_properties_total_the_writing_calls() {
+    let source = UsageSource {
+        provider: CompletionProvider::Claude,
+        model: "claude-opus".to_string(),
+        fast: false,
+        pricing: UsagePricing::default(),
+    };
+    let usage = source
+        .call_usage(Usage::new().input_tokens(200_000).output_tokens(3_000))
+        .unwrap();
+    let call = |cost_usd| ModelCall {
+        provider: source.provider,
+        model: &source.model,
+        usage: Some(&usage),
+        cost_usd,
+        finish_reason: None,
+        error: None,
+        context_handoff: true,
+        provider_fallback: false,
+    };
+    let mut handoff = PendingHandoff::new(posthog_rs::Event::new("context_handoff", "user-1"));
+    handoff.record_call(&call(Some(0.5)));
+    handoff.record_call(&call(Some(0.25)));
+
+    let properties = handoff_properties(&handoff, &HandoffOutcome::Resumed);
+
+    assert_eq!(properties["outcome"], "resumed");
+    assert_eq!(properties["model_calls"], 2);
+    assert_eq!(properties["cost_usd"], 0.75);
+    assert_eq!(properties["provider"], "claude");
+
+    handoff.record_call(&ModelCall {
+        usage: None,
+        ..call(None)
+    });
+    let error = anyhow!("the agent called a tool").context("Context handoff failed");
+    let properties = handoff_properties(&handoff, &HandoffOutcome::Failed { error: &error });
+
+    assert!(!properties.contains_key("cost_usd"));
+    assert_eq!(
+        properties["error"],
+        "Context handoff failed: the agent called a tool"
+    );
 }
 
 #[test]
