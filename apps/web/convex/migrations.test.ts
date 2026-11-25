@@ -422,6 +422,7 @@ test('run deletes tool images older than a day and their files and keeps attachm
 	vi.useFakeTimers();
 	const t = initConvexTest();
 	const { threadId } = await seedOwnedThread(t);
+
 	const upload = (name: string, sha256?: string) =>
 		t.run(async (ctx) => {
 			const storageId = await ctx.storage.store(new Blob(['png'], { type: 'image/png' }));
