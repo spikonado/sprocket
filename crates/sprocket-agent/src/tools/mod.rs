@@ -1,11 +1,11 @@
 mod artifacts;
 mod async_tools;
+mod cloud;
 mod commands;
 mod context;
 mod convert;
 mod cwd;
 mod github_url;
-mod hosted_parse;
 mod job;
 mod markdown_url;
 mod parse_file;
@@ -21,7 +21,6 @@ mod subagents;
 mod threads;
 mod url_fetch;
 mod web;
-mod web_request;
 mod wiring;
 
 use self::artifacts::{BindArtifactTool, DeleteArtifactTool, ListArtifactsTool, SaveArtifactTool};

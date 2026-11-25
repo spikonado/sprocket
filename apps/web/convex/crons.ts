@@ -17,12 +17,6 @@ crons.interval(
 );
 
 crons.interval(
-	'expire hosted parse temporaries',
-	{ hours: 1 },
-	internal.hostedParse.cleanupExpired
-);
-
-crons.interval(
 	'delete unregistered file bytes',
 	{ hours: 1 },
 	internal.storageCleanup.cleanupUnregistered,

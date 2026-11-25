@@ -577,18 +577,6 @@ export const vScrapeUrlResult = v.object({
 	images: v.optional(v.array(v.string()))
 });
 
-/** webRequests scrape transport. Oversized pages return a temporary markdown download URL. */
-export const vScrapeUrlTransport = v.union(
-	v.object({
-		url: v.string(),
-		markdown: v.string()
-	}),
-	v.object({
-		url: v.string(),
-		scrapeUrl: v.string()
-	})
-);
-
 export const vWebImageResult = v.object({
 	outputType: v.literal('image'),
 	url: v.string(),

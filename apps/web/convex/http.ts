@@ -2,8 +2,13 @@ import { httpRouter } from 'convex/server';
 import { internal } from '@convex/_generated/api';
 import { env, httpAction } from '@convex/_generated/server';
 import { parseAgentcardWebhook, verifyAgentcardSignature } from '@convex/lib/payments/agentcard';
+import { parse, scrape } from '@convex/webToolHttp';
 
 const http = httpRouter();
+
+http.route({ path: '/agent/scrape', method: 'POST', handler: scrape });
+
+http.route({ path: '/agent/parse', method: 'POST', handler: parse });
 
 http.route({
 	path: '/dodopayments-webhook',

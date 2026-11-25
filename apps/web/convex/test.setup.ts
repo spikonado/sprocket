@@ -6,9 +6,6 @@ import exaTest from '@exalabs/convex-exa/test';
 import workpoolTest from '@convex-dev/workpool/test';
 import posthogTest from '@posthog/convex/test';
 import { vWorkId, type WorkId } from '@convex-dev/workpool';
-import { ContextDev } from 'context.dev';
-import { APIPromise } from 'context.dev/core/api-promise';
-import { Web, type WebScrapeParams, type WebScrapeResponse } from 'context.dev/resources/web';
 import { parse } from 'convex-helpers/validators';
 import { convexTest, type TestConvex } from 'convex-test';
 import { vi } from 'vitest';
@@ -61,54 +58,6 @@ export async function finishDueScheduledFunctions(t: ConvexTestInstance) {
 
 export function fixtureWorkId(value: string): WorkId {
 	return parse(vWorkId, value);
-}
-
-const emptyScrapeOutput = { data: null, requested: false, success: null };
-
-export function contextDevScrapeResponse(
-	overrides: Partial<WebScrapeResponse> = {}
-): WebScrapeResponse {
-	return {
-		bytes: emptyScrapeOutput,
-		cache_metadata: { age_ms: 0, status: 'miss' },
-		highlights: emptyScrapeOutput,
-		html: emptyScrapeOutput,
-		images: emptyScrapeOutput,
-		json: emptyScrapeOutput,
-		markdown: { data: '# Page', requested: true, success: true },
-		metadata: { title: 'Page', headings: [{ level: 1, text: 'Page' }] },
-		parsed: { ...emptyScrapeOutput, type: 'custom' },
-		product: emptyScrapeOutput,
-		profile: null,
-		request_id: 'request-1',
-		screenshot: emptyScrapeOutput,
-		url: 'https://example.com/page',
-		...overrides
-	};
-}
-
-function apiPromise<T>(result: Promise<T>): APIPromise<T> {
-	const props = result.then(() => ({
-		response: new Response(),
-		options: { method: 'post' as const, path: '/web/scrape' },
-		controller: new AbortController(),
-		requestLogID: 'test',
-		retryOfRequestLogID: undefined,
-		startTime: 0
-	}));
-
-	return new APIPromise(new ContextDev({ apiKey: 'test' }), props, () => result);
-}
-
-export function mockContextDevScrape(
-	scrape: (
-		body: WebScrapeParams,
-		options?: Parameters<Web['scrape']>[1]
-	) => Promise<WebScrapeResponse>
-) {
-	return vi
-		.spyOn(Web.prototype, 'scrape')
-		.mockImplementation((body, options) => apiPromise(scrape(body, options)));
 }
 
 export function insertUser(ctx: MutationCtx, subject: string, dodoCustomerId?: string) {
@@ -222,8 +171,6 @@ export function initConvexTest(): ConvexTestInstance {
 	migrationsTest.register(t);
 	exaTest.register(t);
 	workpoolTest.register(t, 'webSearchWorkpool');
-	workpoolTest.register(t, 'contextDevWorkpool');
-	workpoolTest.register(t, 'firecrawlScrapeWorkpool');
 	posthogTest.register(t);
 
 	return t;

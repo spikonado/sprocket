@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use sprocket_workspace::{WorkspaceCancellation, WorkspaceOperationCancelled};
 use tokio::io::AsyncReadExt;
 
-use super::hosted_parse::HostedParseContext;
+use super::cloud::CloudJob;
 use crate::types::AgentHistoryToolResultItem;
 
 pub(crate) const MAX_PARSE_FILE_IMAGE_BYTES: usize = 20 * 1024 * 1024;
@@ -310,7 +310,7 @@ pub(super) async fn convert_document(
     bytes: Vec<u8>,
     file_name: PathBuf,
     format_hint: Option<anydoc::Format>,
-    hosted: Option<&HostedParseContext<'_>>,
+    hosted: Option<&CloudJob<'_>>,
     cancellation: &WorkspaceCancellation,
 ) -> anyhow::Result<(String, &'static str)> {
     anyhow::ensure!(!bytes.is_empty(), "file is empty");

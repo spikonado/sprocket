@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sprocket_workspace::WorkspaceCancellation;
 
+use super::cloud::CloudJob;
 use super::context::{AgentToolContext, tool_error};
 use super::convert::{
     IMAGE_SNIFF_BYTES, LocalConversionFailed, ParseFilePersistedOutput, ParseFilePersistedSource,
@@ -16,7 +17,6 @@ use super::convert::{
     read_file_bounded, read_image_bytes_bounded, replay_tool_output, run_cancellable_blocking,
     sniff_supported_image_format,
 };
-use super::hosted_parse::HostedParseContext;
 use super::job::execute_tool_job_with_id;
 
 pub(crate) const PARSE_FILE_TOOL_NAME: &str = "parse_file";
@@ -77,7 +77,7 @@ impl rig::tool::Tool for ParseFileTool {
             Self::NAME,
             payload,
             |cancellation, job_id| async move {
-                let hosted = HostedParseContext {
+                let hosted = CloudJob {
                     runtime: &self.0.runtime,
                     run_id: &self.0.run_id,
                     claim_id: &self.0.claim_id,
@@ -233,12 +233,12 @@ async fn persist_non_image_file(
     source: ParseFilePersistedSource,
     cache_dir: PathBuf,
     cancellation: &WorkspaceCancellation,
-    hosted: Option<&HostedParseContext<'_>>,
+    hosted: Option<&CloudJob<'_>>,
 ) -> anyhow::Result<ParseFilePersistedOutput> {
     let local = convert_local_file(path.clone(), cache_dir.clone(), cancellation, hosted).await;
     let parsed = if let Some(hosted) = hosted {
         local_or_hosted(local, cache_dir, cancellation, || {
-            super::hosted_parse::parse(hosted, &path, &path, cancellation)
+            super::cloud::parse(hosted, &path, &path, cancellation)
         })
         .await?
     } else {
@@ -258,7 +258,7 @@ async fn convert_local_file(
     path: PathBuf,
     cache_dir: PathBuf,
     cancellation: &WorkspaceCancellation,
-    hosted: Option<&HostedParseContext<'_>>,
+    hosted: Option<&CloudJob<'_>>,
 ) -> anyhow::Result<ParsedText> {
     let worker_path = path.clone();
     let bytes =
@@ -304,7 +304,7 @@ async fn persist_parse_file(
     cancellation: WorkspaceCancellation,
     supports_images: bool,
     args: ParseFileArgs,
-    hosted: Option<&HostedParseContext<'_>>,
+    hosted: Option<&CloudJob<'_>>,
 ) -> anyhow::Result<ParseFilePersistedOutput> {
     let path = parse_file_args(&args)?;
     ensure_not_cancelled(&cancellation)?;

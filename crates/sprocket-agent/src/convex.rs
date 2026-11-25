@@ -722,6 +722,10 @@ impl RuntimeClient {
         &self.execution_secret
     }
 
+    pub(crate) fn http_action_url(&self, path: &str) -> String {
+        self.client.http_action_url(path)
+    }
+
     fn add_execution_secret(&self, args: &mut BTreeMap<String, Value>) {
         args.insert(
             "executionSecret".to_string(),

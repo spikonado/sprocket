@@ -1,11 +1,11 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
-import type { MutationCtx } from '@convex/_generated/server';
+import type { QueryCtx } from '@convex/_generated/server';
 import { isSettledExecutorJobStatus } from '@convex/lib/runs';
 import { runAcceptsNewWork } from '@convex/lib/runLease';
 import { getRunWithExecution, type ExecutionRun } from '@convex/lib/runExecution';
 
 export async function claimedJobForActiveRun(
-	ctx: MutationCtx,
+	ctx: Pick<QueryCtx, 'db'>,
 	args: { jobId: Id<'executorJobs'>; runId: Id<'runs'>; claimId: string }
 ): Promise<{ job: Doc<'executorJobs'>; run: ExecutionRun } | null> {
 	const job = await ctx.db.get('executorJobs', args.jobId);

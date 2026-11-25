@@ -161,6 +161,10 @@ export const clearCommandSessions = deleteEveryRow('commandSessions');
 // Each chunk holds up to 128 KiB, so the default 100-row batch nears the 16 MiB read limit.
 export const clearCommandLogChunks = deleteEveryRow('commandLogChunks', 20);
 
+export const clearHostedParseRequests = deleteEveryRow('hostedParseRequests');
+
+export const clearWebRequests = deleteEveryRow('webRequests');
+
 export const resyncDodoCustomers = migrations.define({
 	table: 'users',
 	customRange: (query) =>
@@ -236,6 +240,8 @@ export const run = migrations.runner([
 	internal.migrations.clearPricingCache,
 	internal.migrations.clearCommandSessions,
 	internal.migrations.clearCommandLogChunks,
+	internal.migrations.clearHostedParseRequests,
+	internal.migrations.clearWebRequests,
 	internal.migrations.resyncDodoCustomers,
 	internal.migrations.backfillThreadCompletionProviders,
 	internal.migrations.backfillRunCompletionProviders,

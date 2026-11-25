@@ -41,9 +41,4 @@ app.use(migrations);
 
 app.use(workpool, { name: 'webSearchWorkpool' });
 
-app.use(workpool, { name: 'contextDevWorkpool' });
-
-// Keeps its original name so hosted parses queued before a deploy still run.
-app.use(workpool, { name: 'firecrawlScrapeWorkpool' });
-
 export default app;
