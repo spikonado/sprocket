@@ -873,7 +873,6 @@ async fn run_with_completion_model(
                 "provider switch context handoff failed ({}); continuing on the selected provider without it",
                 reason
             );
-            generation_tracker.finish_handoff(HandoffOutcome::ContinuedWithoutHandoff { reason });
             match resume_without_provider_handoff(
                 &mut agent,
                 pending.history,
@@ -889,6 +888,7 @@ async fn run_with_completion_model(
             .await
             {
                 Ok(Some((next_history, next_prompt))) => {
+                    generation_tracker.finish_handoff(HandoffOutcome::ContinuedWithoutHandoff { reason });
                     history = next_history;
                     prompt = next_prompt;
                     deferred_prompt = None;

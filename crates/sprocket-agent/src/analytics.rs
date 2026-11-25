@@ -64,35 +64,48 @@ pub(crate) enum HandoffOutcome<'a> {
 }
 
 struct PendingHandoff {
-    trigger: HandoffTrigger,
     started_at: Instant,
-    context_tokens: u64,
     writer: Option<(CompletionProvider, String)>,
     model_calls: u32,
     /// `None` once any writing call can't be priced.
     cost_usd: Option<f64>,
+    /// Holds the properties known at the start, and is sent on drop if the run future is dropped.
+    event: Option<posthog_rs::Event>,
 }
 
 impl PendingHandoff {
-    fn new(trigger: HandoffTrigger, context_tokens: u64) -> Self {
+    fn new(event: posthog_rs::Event) -> Self {
         Self {
-            trigger,
             started_at: Instant::now(),
-            context_tokens,
             writer: None,
             model_calls: 0,
             cost_usd: Some(0.0),
+            event: Some(event),
         }
     }
 
     fn record_call(&mut self, call: &ModelCall<'_>) {
         self.writer = Some((call.provider, call.model.to_string()));
         self.model_calls += 1;
-        if call.usage.is_some() {
-            self.cost_usd = self
-                .cost_usd
-                .zip(call.cost_usd)
-                .map(|(sum, cost)| sum + cost);
+        self.cost_usd = self
+            .cost_usd
+            .zip(call.cost_usd)
+            .map(|(sum, cost)| sum + cost);
+    }
+
+    fn finish(&mut self, outcome: &HandoffOutcome<'_>) -> Option<posthog_rs::Event> {
+        let mut event = self.event.take()?;
+        for (key, value) in handoff_properties(self, outcome) {
+            let _ = event.insert_prop(key, value);
+        }
+        Some(event)
+    }
+}
+
+impl Drop for PendingHandoff {
+    fn drop(&mut self) {
+        if let Some(event) = self.finish(&HandoffOutcome::Cancelled) {
+            posthog_rs::capture(event);
         }
     }
 }
@@ -192,23 +205,36 @@ impl GenerationTracker {
     }
 
     pub(crate) fn start_handoff(&self, trigger: HandoffTrigger, context_tokens: u64) {
+        let event = self.event(
+            "context_handoff",
+            [
+                ("trigger", to_json(trigger)),
+                ("context_tokens", json!(context_tokens)),
+                (
+                    "handoff_token_limit",
+                    json!(self.context_budget.auto_handoff_token_limit),
+                ),
+                (
+                    "context_window_tokens",
+                    json!(self.context_budget.context_window_tokens),
+                ),
+            ],
+        );
         if let Ok(mut state) = self.state.lock() {
-            state.handoff = Some(PendingHandoff::new(trigger, context_tokens));
+            state.handoff = Some(PendingHandoff::new(event));
         }
     }
 
     /// Does nothing when no handoff is open, so every run exit can call it.
     pub(crate) fn finish_handoff(&self, outcome: HandoffOutcome<'_>) {
-        let Some(handoff) = self
+        if let Some(event) = self
             .state
             .lock()
             .ok()
-            .and_then(|mut state| state.handoff.take())
-        else {
-            return;
-        };
-        let properties = handoff_properties(&handoff, &self.context_budget, &outcome);
-        posthog_rs::capture(self.event("context_handoff", properties));
+            .and_then(|mut state| state.handoff.take()?.finish(&outcome))
+        {
+            posthog_rs::capture(event);
+        }
     }
 
     fn model_call<'a>(&self, source: &'a UsageSource, context_handoff: bool) -> ModelCall<'a> {
@@ -416,7 +442,6 @@ fn to_json(value: impl Serialize) -> Value {
 
 fn handoff_properties(
     handoff: &PendingHandoff,
-    budget: &ContextBudget,
     outcome: &HandoffOutcome<'_>,
 ) -> Map<String, Value> {
     let (outcome_name, error, document_bytes) = match outcome {
@@ -429,16 +454,9 @@ fn handoff_properties(
     };
     let (provider, model) = handoff.writer.clone().unzip();
     let properties = [
-        ("trigger", to_json(handoff.trigger)),
         ("outcome", json!(outcome_name)),
         ("error", json!(error)),
         ("document_bytes", json!(document_bytes)),
-        ("context_tokens", json!(handoff.context_tokens)),
-        (
-            "handoff_token_limit",
-            json!(budget.auto_handoff_token_limit),
-        ),
-        ("context_window_tokens", json!(budget.context_window_tokens)),
         ("model_calls", json!(handoff.model_calls)),
         ("cost_usd", json!(handoff.cost_usd)),
         (

@@ -5,13 +5,13 @@ use rig::message::{AssistantContent, ToolName};
 use serde_json::json;
 
 use super::{
-    HandoffOutcome, HandoffTrigger, ModelCall, PendingHandoff, changed_defaults,
-    handoff_properties, is_sprocket_fixable, model_call_properties, tools_called,
+    HandoffOutcome, ModelCall, PendingHandoff, changed_defaults, handoff_properties,
+    is_sprocket_fixable, model_call_properties, tools_called,
 };
 use crate::chatgpt::ChatGptNotConnected;
 use crate::provider::provider_failures;
 use crate::provider::test_support::coded_convex_error;
-use crate::types::{CompletionProvider, ContextBudget, UsagePricing};
+use crate::types::{CompletionProvider, UsagePricing};
 use crate::usage::UsageSource;
 
 #[test]
@@ -89,36 +89,28 @@ fn handoff_properties_total_the_writing_calls() {
         context_handoff: true,
         provider_fallback: false,
     };
-    let mut handoff = PendingHandoff::new(HandoffTrigger::ContextLimit, 190_000);
+    let mut handoff = PendingHandoff::new(posthog_rs::Event::new("context_handoff", "user-1"));
     handoff.record_call(&call(Some(0.5)));
-    handoff.record_call(&ModelCall {
-        usage: None,
-        ..call(None)
-    });
     handoff.record_call(&call(Some(0.25)));
-    let budget = ContextBudget {
-        context_window_tokens: 200_000,
-        auto_handoff_token_limit: 180_000,
-    };
 
     let properties = handoff_properties(
         &handoff,
-        &budget,
         &HandoffOutcome::Resumed {
             document_bytes: 4_096,
         },
     );
 
-    assert_eq!(properties["trigger"], "context_limit");
     assert_eq!(properties["outcome"], "resumed");
-    assert_eq!(properties["model_calls"], 3);
+    assert_eq!(properties["model_calls"], 2);
     assert_eq!(properties["cost_usd"], 0.75);
     assert_eq!(properties["provider"], "claude");
 
-    handoff.record_call(&call(None));
+    handoff.record_call(&ModelCall {
+        usage: None,
+        ..call(None)
+    });
     let error = anyhow!("the agent called a tool").context("Context handoff failed");
-    let properties =
-        handoff_properties(&handoff, &budget, &HandoffOutcome::Failed { error: &error });
+    let properties = handoff_properties(&handoff, &HandoffOutcome::Failed { error: &error });
 
     assert!(!properties.contains_key("cost_usd"));
     assert_eq!(
