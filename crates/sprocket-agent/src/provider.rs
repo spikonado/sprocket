@@ -790,6 +790,7 @@ async fn run_with_completion_model(
     let prompt_hook = AgentPromptHook::new(tool_call_tracker.clone());
     let completion_origin = CompletionOrigin::default();
     let generation_tracker = crate::analytics::GenerationTracker::new(
+        &request.user_id,
         &request.run_id,
         &request.thread_id,
         target.completion_provider,
@@ -971,16 +972,17 @@ async fn run_with_completion_model(
                             Some(Ok(rig::agent::MultiTurnStreamItem::CompletionCall(call))) => {
                                 transcript.finish_completion_call();
                                 let source = current_usage_source!();
+                                let call_usage = source.call_usage(call.usage);
                                 generation_tracker.capture(
                                     call.call_index + 1,
                                     &source,
                                     context_handoff_hook.is_writing(),
-                                    call.usage,
+                                    call_usage.as_ref(),
                                     call.finish_reason.as_ref(),
                                 );
-                                if let Some(call_usage) = source.call_usage(call.usage)
+                                if let Some(call_usage) = &call_usage
                                     && let Err(error) = runtime.record_model_call(
-                                        &request.run_id, &request.claim_id, observed_calls, &call_usage,
+                                        &request.run_id, &request.claim_id, observed_calls, call_usage,
                                     ).await
                                 {
                                     break 'agent_run transcript_error(error);

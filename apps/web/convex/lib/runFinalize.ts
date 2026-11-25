@@ -20,7 +20,7 @@ import {
 } from '@convex/lib/runExecution';
 import { cancelRunLifecycleCheck } from '@convex/lib/runLifecycleSchedule';
 import { RUN_ABANDONED_BY_MACHINE } from '@convex/lib/agentErrors';
-import { analyticsId, captureAnonymous } from '@convex/lib/analytics';
+import { posthog } from '@convex/lib/analytics';
 import { runStartedAt } from '@convex/lib/runs';
 import { getTranscriptState } from '@convex/lib/transcriptParts';
 import { settleRoot } from '@convex/lib/threadHierarchy';
@@ -136,14 +136,12 @@ export async function finalizeRunRecord(
 
 	await settleEmptyRootThread(ctx, run.threadId);
 
-	const traceId = await analyticsId(run._id);
-
-	await captureAnonymous(ctx, {
-		distinctId: traceId,
+	await posthog.capture(ctx, {
+		distinctId: run.userId,
 		event: 'run_finished',
 		properties: {
-			$ai_trace_id: traceId,
-			$ai_session_id: await analyticsId(run.threadId),
+			run_id: run._id,
+			thread_id: run.threadId,
 			status: finalStatus,
 			failure_kind: finalStatus === 'failed' ? (args.failureKind ?? null) : null,
 			duration_ms: completedAt - runStartedAt(run)

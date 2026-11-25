@@ -5,13 +5,13 @@ use rig::message::{AssistantContent, ToolName};
 use serde_json::json;
 
 use super::{
-    GenerationCall, analytics_id, changed_defaults, generation_properties, is_sprocket_fixable,
-    tools_called,
+    ModelCall, changed_defaults, is_sprocket_fixable, model_call_properties, tools_called,
 };
 use crate::chatgpt::ChatGptNotConnected;
 use crate::provider::provider_failures;
 use crate::provider::test_support::coded_convex_error;
-use crate::types::CompletionProvider;
+use crate::types::{CompletionProvider, UsagePricing};
+use crate::usage::UsageSource;
 
 #[test]
 fn changed_defaults_lists_parameters_set_away_from_their_default() {
@@ -25,36 +25,46 @@ fn changed_defaults_lists_parameters_set_away_from_their_default() {
 }
 
 #[test]
-fn generation_properties_describe_the_call() {
-    let mut usage = Usage::default();
-    usage.input_tokens = Some(120);
-    usage.output_tokens = Some(30);
-    let call = GenerationCall {
+fn model_call_properties_describe_the_call() {
+    let source = UsageSource {
+        provider: CompletionProvider::Spikonado,
+        model: "gpt-5".to_string(),
+        fast: false,
+        pricing: UsagePricing::default(),
+    };
+    let usage = source
+        .call_usage(Usage::new().input_tokens(120).output_tokens(30))
+        .unwrap();
+    let call = ModelCall {
         provider: CompletionProvider::Spikonado,
         model: "gpt-5",
-        usage,
+        usage: Some(&usage),
+        cost_usd: Some(0.25),
         finish_reason: None,
         error: None,
         context_handoff: true,
         provider_fallback: false,
     };
 
-    let properties = generation_properties("run-1", "thread-1", &call, None);
+    let properties = model_call_properties(&call, None);
 
-    assert_eq!(properties["$ai_provider"], "spikonado");
-    assert_eq!(properties["$ai_input_tokens"], 120);
-    assert_eq!(properties["$ai_output_tokens"], 30);
-    assert_eq!(properties["$ai_span_name"], "context_handoff");
-    assert!(!properties.contains_key("$ai_cache_read_input_tokens"));
+    assert_eq!(properties["provider"], "spikonado");
+    assert_eq!(properties["input_tokens"], 120);
+    assert_eq!(properties["output_tokens"], 30);
+    assert_eq!(properties["cost_usd"], 0.25);
+    assert_eq!(properties["context_handoff"], true);
+    assert_eq!(properties["is_error"], false);
 
-    let failed = GenerationCall {
+    let failed = ModelCall {
+        usage: None,
+        cost_usd: None,
         error: Some("connection reset".to_string()),
         ..call
     };
-    let properties = generation_properties("run-1", "thread-1", &failed, None);
+    let properties = model_call_properties(&failed, None);
 
-    assert_eq!(properties["$ai_is_error"], true);
-    assert_eq!(properties["$ai_error"], "connection reset");
+    assert_eq!(properties["is_error"], true);
+    assert_eq!(properties["error"], "connection reset");
 }
 
 #[test]
@@ -71,14 +81,6 @@ fn tools_called_lists_each_call_in_order() {
     assert_eq!(
         tools_called(&content),
         ["exec_cmd", "apply_patch", "exec_cmd"]
-    );
-}
-
-#[test]
-fn analytics_id_matches_convex() {
-    assert_eq!(
-        analytics_id("thread-1"),
-        "4b0a5fefc328e6b9257bc535e3c5d26fec36b52f92e277618bf5b30fc3885e58"
     );
 }
 

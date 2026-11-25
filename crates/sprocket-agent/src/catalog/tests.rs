@@ -1,4 +1,5 @@
 use super::*;
+use crate::types::LongContextPricing;
 
 fn catalog_payload() -> GatewayModelsResponse {
     serde_json::from_value(serde_json::json!({
@@ -61,8 +62,19 @@ fn reports_selected_model_metadata_from_one_payload() {
     assert_eq!(
         vision.usage_pricing,
         UsagePricing {
-            long_context_threshold_tokens: Some(272_000),
             cache_write_ttl: Some("30m".to_string()),
+            direct_api: Some(DirectApiPricing {
+                input: 2.0,
+                cache_read: 0.1,
+                cache_write: [("30m".to_string(), 2.5), ("12h".to_string(), 5.0)].into(),
+                output: 10.0,
+                fast_multiplier: 2.0,
+                long_context: Some(LongContextPricing {
+                    threshold_input_tokens: 272_000,
+                    input_multiplier: 2.0,
+                    output_multiplier: 1.5,
+                }),
+            }),
         }
     );
 

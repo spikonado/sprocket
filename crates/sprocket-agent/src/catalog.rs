@@ -4,8 +4,8 @@ use anyhow::{Context, anyhow};
 use serde::Deserialize;
 
 use crate::types::{
-    CatalogModelCapabilities, CompletionProvider, ContextBudget, ModelRoute, ProviderHandoff,
-    RunSnapshot, UsagePricing, gateway_api_v1_url,
+    CatalogModelCapabilities, CompletionProvider, ContextBudget, DirectApiPricing, ModelRoute,
+    ProviderHandoff, RunSnapshot, UsagePricing, gateway_api_v1_url,
 };
 
 const GATEWAY_PROTOCOL_VERSION: u64 = 1;
@@ -65,19 +65,7 @@ struct GatewayCatalogModel {
     #[serde(default)]
     cache_write_ttl: Option<String>,
     #[serde(default)]
-    direct_api_pricing: Option<GatewayDirectApiPricing>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct GatewayDirectApiPricing {
-    long_context: Option<GatewayLongContextPricing>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct GatewayLongContextPricing {
-    threshold_input_tokens: u64,
+    direct_api_pricing: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -197,12 +185,12 @@ fn select_catalog_model(
         supports_images: model.supports_images,
         supports_fast: lists_fast_tier(&model.service_tiers),
         usage_pricing: UsagePricing {
-            long_context_threshold_tokens: model
-                .direct_api_pricing
-                .as_ref()
-                .and_then(|pricing| pricing.long_context.as_ref())
-                .map(|long_context| long_context.threshold_input_tokens),
             cache_write_ttl: model.cache_write_ttl.clone(),
+            // Like the web catalog, a price shape this build can't read leaves the model unpriced.
+            direct_api: model
+                .direct_api_pricing
+                .clone()
+                .and_then(|pricing| DirectApiPricing::deserialize(pricing).ok()),
         },
     })
 }
