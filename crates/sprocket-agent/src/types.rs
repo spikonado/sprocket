@@ -261,7 +261,6 @@ pub struct RenewClaimResponse {
 #[serde(rename_all = "camelCase")]
 pub struct RunContextResponse {
     pub run: RunSnapshot,
-    pub prompt: String,
     #[serde(
         default,
         deserialize_with = "sprocket_transcript::deserialize_remote_prompt"

@@ -21,7 +21,6 @@ import {
 	LEGACY_AUTOMATIC_RECOVERY_SUBMISSION_PREFIX
 } from '@convex/lib/runRecovery';
 import { assertThreadCanStartRun } from '@convex/lib/runs';
-import { redactSecrets } from '@convex/lib/secretRedaction';
 import { getUiPreferences } from '@convex/lib/uiPreferences';
 import { headActionablePendingQuestion } from '@convex/lib/agentQuestions';
 import { registerChildThread, threadRoot } from '@convex/lib/threadHierarchy';
@@ -120,7 +119,7 @@ export async function createQueuedRunRecord(
 
 	const secretHash = await executionSecretHash(args.executionSecret);
 	const continuationOfRunId = args.continuationOfRunId;
-	const prompt = redactSecrets(args.prompt.trim());
+	const prompt = args.prompt.trim();
 
 	const imageUploads = await getOwnedImageUploads(ctx, args.userId, args.imageUploadIds);
 	const recordsPrompt = !continuationOfRunId || Boolean(prompt) || imageUploads.length > 0;

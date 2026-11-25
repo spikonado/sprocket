@@ -9453,6 +9453,7 @@ dependencies = [
  "percent-encoding",
  "posthog-rs",
  "pulldown-cmark",
+ "regex",
  "reqwest 0.13.5",
  "rig",
  "schemars 1.2.3",

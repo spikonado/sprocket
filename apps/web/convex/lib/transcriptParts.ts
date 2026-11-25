@@ -1,7 +1,6 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
 import type { Value } from 'convex/values';
-import { redactCompletion, redactPrompt, redactTool } from '@convex/lib/secretRedaction';
 import type {
 	HiddenPrompt,
 	TranscriptCompletionBody,
@@ -196,13 +195,7 @@ export async function appendTranscriptPart(
 	ctx: MutationCtx,
 	args: AppendTranscriptPartArgs
 ): Promise<{ part: Doc<'threadTranscriptParts'>; inserted: boolean }> {
-	const prompt = args.prompt && redactPrompt(args.prompt);
-
-	const completion = args.completion
-		? normalizeCompletion(redactCompletion(args.completion), args.work)
-		: undefined;
-
-	const tool = args.tool && redactTool(args.tool);
+	const completion = args.completion ? normalizeCompletion(args.completion, args.work) : undefined;
 
 	const existing = await ctx.db
 		.query('threadTranscriptParts')
@@ -215,21 +208,18 @@ export async function appendTranscriptPart(
 		const expected = {
 			kind: args.kind,
 			runId: args.runId,
-			prompt,
+			prompt: args.prompt,
 			completion,
-			tool,
+			tool: args.tool,
 			work: args.work
 		};
 
-		// Parts stored before redaction shipped hold raw text, so retries compare redacted forms.
 		const persisted = {
 			kind: existing.kind,
 			runId: existing.runId,
-			prompt: existing.prompt && redactPrompt(existing.prompt),
-			completion:
-				existing.completion &&
-				normalizeCompletion(redactCompletion(existing.completion), existing.work),
-			tool: existing.tool && redactTool(existing.tool),
+			prompt: existing.prompt,
+			completion: existing.completion && normalizeCompletion(existing.completion, existing.work),
+			tool: existing.tool,
 			work: existing.work
 		};
 
@@ -253,11 +243,11 @@ export async function appendTranscriptPart(
 		work: args.work
 	};
 
-	if (prompt) part.prompt = prompt;
+	if (args.prompt) part.prompt = args.prompt;
 
 	if (completion) part.completion = completion;
 
-	if (tool) part.tool = tool;
+	if (args.tool) part.tool = args.tool;
 	const partId = await ctx.db.insert('threadTranscriptParts', part);
 	await ctx.db.patch('threadTranscriptStates', state._id, { totalParts: number + 1 });
 	const inserted = await ctx.db.get('threadTranscriptParts', partId);

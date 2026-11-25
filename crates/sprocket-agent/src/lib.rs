@@ -19,6 +19,7 @@ mod request_compression;
 mod responses_gateway;
 mod run;
 mod run_settings;
+mod secret_redaction;
 mod stream_recovery;
 pub mod subagents;
 mod submission;
