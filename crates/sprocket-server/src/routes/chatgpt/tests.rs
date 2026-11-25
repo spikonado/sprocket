@@ -1,8 +1,6 @@
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::body::Body;
-use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode, header};
 use tower::ServiceExt;
 
@@ -30,7 +28,7 @@ async fn fixture() -> (tempfile::TempDir, AppState, String) {
 }
 
 fn request(path: &str, session: &str, body: serde_json::Value) -> Request<Body> {
-    let mut request = Request::builder()
+    Request::builder()
         .method("POST")
         .uri(path)
         .header(header::HOST, "127.0.0.1:7731")
@@ -41,17 +39,13 @@ fn request(path: &str, session: &str, body: serde_json::Value) -> Request<Body> 
         )
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(body.to_string()))
-        .unwrap();
-    request
-        .extensions_mut()
-        .insert(ConnectInfo("127.0.0.1:1234".parse::<SocketAddr>().unwrap()));
-    request
+        .unwrap()
 }
 
 #[tokio::test]
 async fn local_status_is_account_scoped_and_reports_login_availability() {
     let (_directory, state, session) = fixture().await;
-    let app = crate::build_router(state, None);
+    let app = crate::test_support::test_router(state);
     let response = app
         .clone()
         .oneshot(request(
@@ -86,7 +80,7 @@ async fn local_status_is_account_scoped_and_reports_login_availability() {
 #[tokio::test]
 async fn unknown_browser_sign_in_reports_an_error_the_client_can_stop_on() {
     let (_directory, state, session) = fixture().await;
-    let response = crate::build_router(state, None)
+    let response = crate::test_support::test_router(state)
         .oneshot(request(
             "/api/chatgpt/browser/result",
             &session,

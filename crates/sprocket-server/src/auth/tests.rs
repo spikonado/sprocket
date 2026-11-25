@@ -278,32 +278,6 @@ async fn session_guard_serializes_sign_in_commit_with_logout() {
 }
 
 #[test]
-fn peer_loopback_gate_uses_socket_address() {
-    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-
-    assert!(peer_may_complete_desktop_login_callback(SocketAddr::new(
-        IpAddr::V4(Ipv4Addr::LOCALHOST),
-        54321
-    )));
-    assert!(peer_may_complete_desktop_login_callback(SocketAddr::new(
-        IpAddr::V4(Ipv4Addr::new(127, 0, 0, 42)),
-        1
-    )));
-    assert!(peer_may_complete_desktop_login_callback(SocketAddr::new(
-        IpAddr::V6(Ipv6Addr::LOCALHOST),
-        1
-    )));
-    assert!(!peer_may_complete_desktop_login_callback(SocketAddr::new(
-        IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)),
-        54321
-    )));
-    assert!(!peer_may_complete_desktop_login_callback(SocketAddr::new(
-        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-        54321
-    )));
-}
-
-#[test]
 fn desktop_login_callback_url_uses_loopback() {
     assert_eq!(
         desktop_login_callback_url(7731),

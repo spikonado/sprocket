@@ -1,11 +1,10 @@
 use std::collections::BTreeMap;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
 use axum::Json;
-use axum::extract::{ConnectInfo, State};
+use axum::extract::State;
 use axum::http::HeaderMap;
 use convex::Value;
 use serde::Deserialize;
@@ -33,11 +32,10 @@ struct ThreadSettings {
 
 pub(super) async fn list_models(
     State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(request): Json<CliClientRequest>,
 ) -> Result<Json<CliModelsResponse>, ApiError> {
-    let client = client_session(&state, peer, &headers, &request.client_id).await?;
+    let client = client_session(&state, &headers, &request.client_id).await?;
     let user = state
         .host
         .native_auth
@@ -72,11 +70,10 @@ pub(super) async fn list_models(
 
 pub(super) async fn start(
     State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(request): Json<CliRunRequest>,
 ) -> Result<Json<RunStarted>, ApiError> {
-    let client = client_session(&state, peer, &headers, &request.client_id).await?;
+    let client = client_session(&state, &headers, &request.client_id).await?;
     let result = tokio::spawn(async move {
         let mut submission = client.submission.lock().await;
         if let Some(previous) = &*submission {
@@ -215,11 +212,10 @@ async fn prepare_run(
 
 pub(super) async fn output(
     State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(request): Json<CliOutputRequest>,
 ) -> Result<Json<CliRunSnapshot>, ApiError> {
-    let client = client_session(&state, peer, &headers, &request.client_id).await?;
+    let client = client_session(&state, &headers, &request.client_id).await?;
     let StartedRun { user_id, run } = match &*client.submission.lock().await {
         Some(Submission {
             result: Ok(started),
@@ -275,11 +271,10 @@ pub(super) async fn output(
 
 pub(super) async fn cancel(
     State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(request): Json<CliClientRequest>,
 ) -> Result<Json<bool>, ApiError> {
-    let client = client_session(&state, peer, &headers, &request.client_id).await?;
+    let client = client_session(&state, &headers, &request.client_id).await?;
     client.cancellation.cancel();
     state
         .host

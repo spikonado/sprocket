@@ -108,7 +108,7 @@ async fn serves_subscriptions_over_a_same_origin_socket_until_the_session_ends()
     let auth = std::sync::Arc::clone(&state.auth);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
-    let app = crate::build_router(state, None);
+    let app = crate::test_support::test_router(state);
     let server = tokio::spawn(async move {
         axum::serve(
             listener,
