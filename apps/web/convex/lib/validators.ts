@@ -29,7 +29,9 @@ export const completionProviderIds = [
 	'vercel',
 	'openrouter',
 	'opencode',
-	'morph'
+	'morph',
+	'google',
+	'vertex'
 ] as const;
 
 export type CompletionProvider = (typeof completionProviderIds)[number];

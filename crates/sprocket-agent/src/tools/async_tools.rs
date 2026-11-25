@@ -30,19 +30,21 @@ impl YieldMode {
 /// The longest tool wait that keeps `provider`'s prompt cache warm.
 /// `cache_write_ttl` is the catalog's gateway TTL. The gateway leaves OpenAI
 /// at its API default, so direct OpenAI requests share it. The ChatGPT
-/// backend, OpenCode and Morph document no retention.
+/// backend, OpenCode, Morph and Gemini's implicit cache document no retention.
 pub(crate) fn max_yield_ms(provider: CompletionProvider, cache_write_ttl: Option<&str>) -> u64 {
     let retention_ms = match provider {
         CompletionProvider::Spikonado
         | CompletionProvider::Openai
         | CompletionProvider::Anthropic
         | CompletionProvider::Vercel
-        | CompletionProvider::Openrouter => cache_write_ttl.and_then(ttl_ms),
+        | CompletionProvider::Openrouter
+        | CompletionProvider::Vertex => cache_write_ttl.and_then(ttl_ms),
         CompletionProvider::Chatgpt
         | CompletionProvider::Opencode
         | CompletionProvider::OpencodeGo
         | CompletionProvider::Muse
-        | CompletionProvider::Morph => None,
+        | CompletionProvider::Morph
+        | CompletionProvider::Google => None,
         // Claude Code writes its prompt cache at a one-hour TTL.
         CompletionProvider::Claude => Some(3_600_000),
     };

@@ -28,10 +28,12 @@ pub enum CompletionProvider {
     Opencode,
     Muse,
     Morph,
+    Google,
+    Vertex,
 }
 
 impl CompletionProvider {
-    const ALL: [Self; 11] = [
+    const ALL: [Self; 13] = [
         Self::Spikonado,
         Self::Openai,
         Self::Chatgpt,
@@ -43,6 +45,8 @@ impl CompletionProvider {
         Self::Opencode,
         Self::Muse,
         Self::Morph,
+        Self::Google,
+        Self::Vertex,
     ];
 
     /// The `knownProviders` argument, so Convex leaves out providers this build can't parse.
@@ -70,11 +74,16 @@ impl CompletionProvider {
             Self::Opencode => "opencode",
             Self::OpencodeGo => "opencode-go",
             Self::Morph => "morph",
+            Self::Google => "google",
+            // Vertex's other models need its OpenAI-compatible endpoint, which Sprocket doesn't call.
+            Self::Vertex if matches!(route.vendor.as_str(), "anthropic" | "google") => {
+                "google-vertex"
+            }
+            Self::Vertex => return None,
         };
-        route
-            .provider_model_ids
-            .get(models_dev_provider)
-            .map(String::as_str)
+        let id = route.provider_model_ids.get(models_dev_provider)?;
+        // models.dev names Vertex's Claude models `<id>@default`; Vertex takes the bare ID.
+        Some(id.strip_suffix("@default").unwrap_or(id))
     }
 
     pub(crate) fn fast_service_tier(self) -> Option<&'static str> {
@@ -88,7 +97,9 @@ impl CompletionProvider {
             | Self::Openrouter
             | Self::Opencode
             | Self::Muse
-            | Self::Morph => None,
+            | Self::Morph
+            | Self::Google
+            | Self::Vertex => None,
         }
     }
 
@@ -105,6 +116,8 @@ impl CompletionProvider {
             Self::Opencode => "opencode",
             Self::Muse => "muse",
             Self::Morph => "morph",
+            Self::Google => "google",
+            Self::Vertex => "vertex",
         }
     }
 
@@ -122,6 +135,8 @@ impl CompletionProvider {
             Self::Opencode => "OpenCode",
             Self::Muse => "Muse Code Subscription",
             Self::Morph => "Morph",
+            Self::Google => "Gemini API",
+            Self::Vertex => "Google Vertex AI",
         }
     }
 }
@@ -224,7 +239,7 @@ pub struct CreateRunResponse {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GatewayCredential {
+pub struct BearerCredential {
     pub token: String,
     #[serde(deserialize_with = "deserialize_convex_u64")]
     pub expires_at: u64,
@@ -239,6 +254,14 @@ pub struct ApiKeyCredential {
 #[derive(Clone, Debug, Deserialize)]
 pub struct ClaudeCredential {
     pub token: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VertexCredential {
+    #[serde(flatten)]
+    pub access: BearerCredential,
+    pub project_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

@@ -215,7 +215,9 @@ function createConvexFixtures(): ConvexTestClient {
 		openrouter: false,
 		opencode: false,
 		opencodeGo: false,
-		morph: false
+		morph: false,
+		google: false,
+		vertex: false
 	});
 	client.registerMutation(api.billing.ensureMySubscription, null);
 

@@ -32,6 +32,7 @@ use crate::context_handoff::{
 };
 use crate::convex::{ClaimStatus, ContextHandoffWrite, RuntimeClient};
 use crate::gateway::GatewayClient;
+use crate::gemini::generate_content_model;
 use crate::history::without_reasoning_traces;
 use crate::hooks::{AgentPromptHook, ToolCallTracker};
 use crate::muse::Muse;
@@ -45,6 +46,7 @@ use crate::types::{
     ProviderHandoff, RunContextResponse, UsagePricing, gateway_api_v1_url,
 };
 use crate::usage::UsageSource;
+use crate::vertex::vertex_model;
 use crate::workspace_context::{HiddenPrompt, WorkspaceContext};
 
 const AGENT_MAX_TURNS: usize = 1_000;
@@ -540,6 +542,38 @@ impl AgentProvider {
                     base_instructions,
                     self.cache_write_ttl.as_deref(),
                 ))
+            }
+            CompletionProvider::Google => {
+                let credential = runtime.issue_api_key(run_id, claim_id, provider).await?;
+                Ok(generate_content_model(
+                    credential.api_key,
+                    model,
+                    base_instructions,
+                ))
+            }
+            CompletionProvider::Vertex => {
+                let credential = runtime.issue_vertex_credential(run_id, claim_id).await?;
+                let runtime = runtime.clone();
+                let run_id = run_id.to_string();
+                let claim_id = claim_id.to_string();
+                vertex_model(
+                    credential,
+                    move || {
+                        let runtime = runtime.clone();
+                        let run_id = run_id.clone();
+                        let claim_id = claim_id.clone();
+                        async move {
+                            Ok(runtime
+                                .issue_vertex_credential(&run_id, &claim_id)
+                                .await?
+                                .access)
+                        }
+                    },
+                    &self.model_route.vendor,
+                    model,
+                    base_instructions,
+                    self.cache_write_ttl.as_deref(),
+                )
             }
             CompletionProvider::Vercel
             | CompletionProvider::Openrouter

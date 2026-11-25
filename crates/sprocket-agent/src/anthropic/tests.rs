@@ -6,10 +6,11 @@ use rig::wire::Body;
 #[test]
 fn requests_carry_instructions_summarized_thinking_and_claude_safe_tool_schemas() {
     let wire = claude_messages(
-        "key".to_string(),
+        AnthropicConfig::new("key"),
         "claude-opus-5-5",
         "Be brief.",
         Some("1h"),
+        None,
     );
     let mut request = CompletionRequest::new("next");
     request.options = GenerationOptions::default().reasoning(Effort::High);
@@ -41,4 +42,34 @@ fn requests_carry_instructions_summarized_thinking_and_claude_safe_tool_schemas(
             "not": {"not": {"anyOf": [{"required": ["cmd"]}]}},
         })
     );
+}
+
+#[test]
+fn vertex_requests_name_the_model_and_version_where_vertex_reads_them() {
+    let mut config = AnthropicConfig::new("").with_version(VERTEX_ANTHROPIC_VERSION);
+    config.addressing = Addressing::Url;
+    let models_url = "https://aiplatform.googleapis.com/v1/projects/p/locations/global/publishers/anthropic/models";
+    let wire = claude_messages(
+        config,
+        "claude-opus-5-5",
+        "Be brief.",
+        Some("1h"),
+        Some(models_url.to_string()),
+    );
+    let encoded = wire
+        .encode(CompletionRequest::new("next"), Mode::Streaming)
+        .unwrap();
+    assert_eq!(
+        encoded.request.uri().to_string(),
+        format!("{models_url}/claude-opus-5-5:streamRawPredict")
+    );
+    assert!(!encoded.request.headers().contains_key("x-api-key"));
+    let Body::Bytes(bytes) = encoded.request.into_body() else {
+        panic!("Messages uses JSON");
+    };
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["anthropic_version"], VERTEX_ANTHROPIC_VERSION);
+    assert_eq!(body.get("model"), None);
+    assert_eq!(body["stream"], true);
+    assert_eq!(body["cache_control"]["ttl"], "1h");
 }

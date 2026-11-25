@@ -103,7 +103,7 @@ async fn completion_and_stream_use_the_refreshed_credential() {
         move || {
             let number = issued.fetch_add(1, Ordering::SeqCst) + 1;
             async move {
-                Ok::<_, anyhow::Error>(GatewayCredential {
+                Ok::<_, anyhow::Error>(BearerCredential {
                     token: format!("token-{number}"),
                     expires_at: now_ms() + 36 * 60 * 60 * 1000,
                 })
@@ -155,14 +155,14 @@ async fn completion_and_stream_use_the_refreshed_credential() {
 #[tokio::test(start_paused = true)]
 async fn concurrent_requests_reuse_the_cache_and_refresh_before_expiry() {
     let issued = Arc::new(AtomicUsize::new(0));
-    let auth = GatewayAuth::new(None, {
+    let auth = BearerAuth::new(None, {
         let issued = issued.clone();
         move || {
             let issued = issued.clone();
             async move {
                 tokio::task::yield_now().await;
                 issued.fetch_add(1, Ordering::SeqCst);
-                Ok(GatewayCredential {
+                Ok(BearerCredential {
                     token: "test".into(),
                     expires_at: now_ms() + 36 * 60 * 60 * 1000,
                 })
@@ -193,7 +193,7 @@ async fn concurrent_requests_reuse_the_cache_and_refresh_before_expiry() {
 #[tokio::test]
 async fn failed_refresh_can_retry_without_using_the_stale_credential() {
     let issued = Arc::new(AtomicUsize::new(0));
-    let auth = GatewayAuth::new(None, {
+    let auth = BearerAuth::new(None, {
         let issued = issued.clone();
         move || {
             let attempt = issued.fetch_add(1, Ordering::SeqCst);
@@ -201,7 +201,7 @@ async fn failed_refresh_can_retry_without_using_the_stale_credential() {
                 if attempt == 1 {
                     anyhow::bail!("credential service unavailable");
                 }
-                Ok(GatewayCredential {
+                Ok(BearerCredential {
                     token: "test".into(),
                     expires_at: now_ms() + 3_600_000,
                 })
@@ -218,7 +218,7 @@ async fn failed_refresh_can_retry_without_using_the_stale_credential() {
 #[tokio::test]
 async fn credentials_within_the_refresh_headroom_are_rejected() {
     let issued = Arc::new(AtomicUsize::new(0));
-    let auth = GatewayAuth::new(None, {
+    let auth = BearerAuth::new(None, {
         let issued = issued.clone();
         move || {
             let issued = issued.clone();
@@ -227,7 +227,7 @@ async fn credentials_within_the_refresh_headroom_are_rejected() {
                     0 => now_ms() - 1,
                     _ => now_ms() + REFRESH_HEADROOM_MS - 1,
                 };
-                Ok(GatewayCredential {
+                Ok(BearerCredential {
                     token: "test".into(),
                     expires_at,
                 })
@@ -245,13 +245,13 @@ async fn credentials_within_the_refresh_headroom_are_rejected() {
 #[tokio::test(start_paused = true)]
 async fn wall_clock_expired_cache_entry_is_not_reused() {
     let issued = Arc::new(AtomicUsize::new(0));
-    let auth = GatewayAuth::new(None, {
+    let auth = BearerAuth::new(None, {
         let issued = issued.clone();
         move || {
             let issued = issued.clone();
             async move {
                 issued.fetch_add(1, Ordering::SeqCst);
-                Ok(GatewayCredential {
+                Ok(BearerCredential {
                     token: "test".into(),
                     expires_at: now_ms() + 3_600_000,
                 })
@@ -266,12 +266,12 @@ async fn wall_clock_expired_cache_entry_is_not_reused() {
 
 #[tokio::test]
 async fn credential_failures_reach_both_inference_paths() {
-    let expired = GatewayCredential {
+    let expired = BearerCredential {
         token: "expired".into(),
         expires_at: now_ms(),
     };
     let client = GatewayClient::new("http://127.0.0.1:1/v1".to_string(), expired, || async {
-        Err::<GatewayCredential, _>(anyhow::anyhow!("Run is no longer active."))
+        Err::<BearerCredential, _>(anyhow::anyhow!("Run is no longer active."))
     });
     let model = client.completion_model("test-model", "Base instructions.");
     let error = model.call(request()).await.unwrap_err();

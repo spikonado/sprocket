@@ -97,6 +97,11 @@ describe('provider credentials', () => {
 			provider: 'morph',
 			url: 'https://api.morphllm.com/api/v1/dedicated/endpoints',
 			headers: { authorization: 'Bearer sk-user' }
+		},
+		{
+			provider: 'google',
+			url: 'https://generativelanguage.googleapis.com/v1beta/models',
+			headers: { 'x-goog-api-key': 'sk-user' }
 		}
 	] as const)('validates and stores a $provider key without returning it', async (expected) => {
 		const t = initConvexTest();
@@ -268,7 +273,9 @@ describe('provider credentials', () => {
 			openrouter: false,
 			opencode: false,
 			opencodeGo: false,
-			morph: false
+			morph: false,
+			google: false,
+			vertex: false
 		});
 
 		const created = await insertQueuedRun(t, asUser, {
@@ -284,6 +291,7 @@ describe('provider credentials', () => {
 			claimId,
 			executionSecret
 		});
+
 		const run = { runId: created.runId, claimId, executionSecret };
 
 		await expect(t.action(api.providerCredentials.issueClaudeCredential, run)).resolves.toEqual({
@@ -311,7 +319,9 @@ describe('provider credentials', () => {
 			openrouter: false,
 			opencode: false,
 			opencodeGo: false,
-			morph: false
+			morph: false,
+			google: false,
+			vertex: false
 		});
 
 		stubVaultFetch(new Map());
@@ -328,7 +338,9 @@ describe('provider credentials', () => {
 			openrouter: true,
 			opencode: false,
 			opencodeGo: false,
-			morph: false
+			morph: false,
+			google: false,
+			vertex: false
 		});
 		expect(await asUser.query(api.uiPreferences.getMyProviderOrder, {})).toEqual([
 			{ provider: 'spikonado', enabled: true },
@@ -342,4 +354,118 @@ describe('provider credentials', () => {
 			{ provider: 'openrouter', enabled: true }
 		]);
 	});
+
+	it('stores a Vertex service account and issues signed access tokens to Vertex runs', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'executor-secret';
+		const claimId = 'claim-vertex';
+
+		const keys = await crypto.subtle.generateKey(
+			{
+				name: 'RSASSA-PKCS1-v1_5',
+				modulusLength: 2048,
+				publicExponent: new Uint8Array([1, 0, 1]),
+				hash: 'SHA-256'
+			},
+			true,
+			['sign', 'verify']
+		);
+
+		const pkcs8 = btoa(
+			String.fromCharCode(
+				...new Uint8Array(await crypto.subtle.exportKey('pkcs8', keys.privateKey))
+			)
+		);
+
+		const serviceAccount = JSON.stringify({
+			type: 'service_account',
+			project_id: 'my-project',
+			client_email: 'sprocket@my-project.iam.gserviceaccount.com',
+			private_key: `-----BEGIN PRIVATE KEY-----\n${pkcs8}\n-----END PRIVATE KEY-----\n`,
+			token_uri: 'https://attacker.example/token'
+		});
+
+		const vault = new Map<string, VaultEntry>();
+		stubVaultFetch(vault);
+
+		const stubVaultAndTokens = (tokenResponse: () => Response, assertions: string[] = []) => {
+			const vaultFetch = vi.mocked(fetch);
+			vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+				if (String(input) !== 'https://oauth2.googleapis.com/token') return vaultFetch(input, init);
+				assertions.push(new URLSearchParams(String(init?.body)).get('assertion') ?? '');
+
+				return tokenResponse();
+			});
+
+			return assertions;
+		};
+
+		stubVaultAndTokens(() => Response.json({ error: 'invalid_grant' }, { status: 400 }));
+		await expect(
+			asUser.action(api.providerCredentials.saveApiKey, {
+				provider: 'vertex',
+				apiKey: serviceAccount
+			})
+		).rejects.toThrow('Google rejected this service account key.');
+		await expect(
+			asUser.action(api.providerCredentials.saveApiKey, { provider: 'vertex', apiKey: 'AIza' })
+		).rejects.toThrow('Paste the JSON key of a Google Cloud service account.');
+
+		stubVaultFetch(vault);
+
+		const assertions = stubVaultAndTokens(() =>
+			Response.json({ access_token: 'ya29.token', expires_in: 3599, token_type: 'Bearer' })
+		);
+
+		await asUser.action(api.providerCredentials.saveApiKey, {
+			provider: 'vertex',
+			apiKey: serviceAccount
+		});
+
+		const [header, claims, signature] = assertions[0].split('.');
+
+		const fromBase64Url = (value: string) =>
+			Uint8Array.from(atob(value.replaceAll('-', '+').replaceAll('_', '/')), (char) =>
+				char.charCodeAt(0)
+			);
+
+		await expect(
+			crypto.subtle.verify(
+				'RSASSA-PKCS1-v1_5',
+				keys.publicKey,
+				fromBase64Url(signature),
+				new TextEncoder().encode(`${header}.${claims}`)
+			)
+		).resolves.toBe(true);
+		expect(JSON.parse(new TextDecoder().decode(fromBase64Url(claims)))).toMatchObject({
+			iss: 'sprocket@my-project.iam.gserviceaccount.com',
+			aud: 'https://oauth2.googleapis.com/token',
+			scope: 'https://www.googleapis.com/auth/cloud-platform'
+		});
+		expect(await asUser.query(api.uiPreferences.getMyProviderOrder, {})).toContainEqual({
+			provider: 'vertex',
+			enabled: true
+		});
+
+		const created = await insertQueuedRun(t, asUser, {
+			threadId,
+			submissionId: 'vertex-run',
+			executionSecret,
+			prompt: 'Use my project',
+			completionProvider: 'vertex'
+		});
+
+		await asUser.mutation(api.agentRuntime.start, {
+			runId: created.runId,
+			claimId,
+			executionSecret
+		});
+		const run = { runId: created.runId, claimId, executionSecret };
+
+		await expect(
+			t.action(api.providerCredentials.issueVertexCredential, run)
+		).resolves.toMatchObject({ token: 'ya29.token', projectId: 'my-project' });
+		expect(assertions).toHaveLength(2);
+	}, 30_000);
 });

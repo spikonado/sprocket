@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use rig::completion::{CacheRetention, CompletionRequest, Message, Reasoning};
 use rig::error::EncodeError;
+use rig::http_client::DynHttpClient;
 use rig::operation::Completion;
-use rig::providers::anthropic::{AnthropicConfig, Messages};
+use rig::providers::anthropic::{Addressing, AnthropicConfig, Messages};
 use rig::wire::{Descriptor, Encoded, Mode, Wire, WireFrame};
 use rig::{DynModel, Model};
 use serde_json::{Map, Value, json};
@@ -11,6 +12,7 @@ use serde_json::{Map, Value, json};
 /// Claude Code's output cap, for models Rig's catalog doesn't list.
 const DEFAULT_MAX_TOKENS: u64 = 128_000;
 const ROOT_COMBINATORS: [&str; 3] = ["anyOf", "oneOf", "allOf"];
+const VERTEX_ANTHROPIC_VERSION: &str = "vertex-2023-10-16";
 
 pub(crate) fn messages_model(
     api_key: String,
@@ -18,19 +20,44 @@ pub(crate) fn messages_model(
     instructions: &str,
     cache_write_ttl: Option<&str>,
 ) -> DynModel<Completion> {
-    let wire = claude_messages(api_key, model, instructions, cache_write_ttl);
+    let wire = claude_messages(
+        AnthropicConfig::new(api_key),
+        model,
+        instructions,
+        cache_write_ttl,
+        None,
+    );
     Model::new(wire, rig::rig_reqwest::shared()).erase()
 }
 
-fn claude_messages(
-    api_key: String,
+/// `models_url` is the Vertex `publishers/anthropic/models` URL; `http` authenticates.
+pub(crate) fn vertex_messages_model(
+    models_url: String,
+    http: DynHttpClient,
     model: &str,
     instructions: &str,
     cache_write_ttl: Option<&str>,
+) -> DynModel<Completion> {
+    let mut config = AnthropicConfig::new("").with_version(VERTEX_ANTHROPIC_VERSION);
+    config.addressing = Addressing::Url;
+    let wire = claude_messages(
+        config,
+        model,
+        instructions,
+        cache_write_ttl,
+        Some(models_url),
+    );
+    Model::new(wire, http).erase()
+}
+
+fn claude_messages(
+    config: AnthropicConfig,
+    model: &str,
+    instructions: &str,
+    cache_write_ttl: Option<&str>,
+    vertex_models_url: Option<String>,
 ) -> ClaudeMessages {
-    let mut wire = AnthropicConfig::new(api_key)
-        .completion(model)
-        .with_prompt_caching();
+    let mut wire = config.completion(model).with_prompt_caching();
     if wire.default_max_tokens.is_none() {
         wire = wire.with_default_max_tokens(DEFAULT_MAX_TOKENS);
     }
@@ -42,6 +69,7 @@ fn claude_messages(
             Some("1h") => CacheRetention::Long,
             _ => CacheRetention::Short,
         },
+        vertex_models_url,
     }
 }
 
@@ -50,6 +78,7 @@ struct ClaudeMessages {
     wire: Messages,
     instructions: String,
     cache: CacheRetention,
+    vertex_models_url: Option<String>,
 }
 
 impl Wire for ClaudeMessages {
@@ -64,6 +93,7 @@ impl Wire for ClaudeMessages {
         self.wire.describe()
     }
 
+    #[expect(clippy::result_large_err, reason = "rig's EncodeError")]
     fn encode(&self, mut request: CompletionRequest, mode: Mode) -> Result<Encoded, EncodeError> {
         request
             .chat_history
@@ -87,7 +117,22 @@ impl Wire for ClaudeMessages {
                 Arc::make_mut(tool).parameters = parameters;
             }
         }
-        self.wire.encode(request, mode)
+        let Some(models_url) = &self.vertex_models_url else {
+            return self.wire.encode(request, mode);
+        };
+        self.wire.encode_with(request, mode, |prepared| {
+            let verb = match mode {
+                Mode::Unary => "rawPredict",
+                Mode::Streaming => "streamRawPredict",
+            };
+            let mut builder =
+                http::Request::post(format!("{models_url}/{}:{verb}", prepared.model))
+                    .header(http::header::CONTENT_TYPE, "application/json");
+            if !prepared.betas.is_empty() {
+                builder = builder.header("anthropic-beta", prepared.betas.join(","));
+            }
+            Ok(builder.body(prepared.body.into_body())?)
+        })
     }
 
     fn decoder<'id>(&self) -> Self::Decoder<'id> {

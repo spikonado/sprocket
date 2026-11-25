@@ -5,6 +5,7 @@ import { getExecutionRun } from '@convex/lib/auth';
 import { runAcceptsNewWork } from '@convex/lib/runLease';
 import { agentError } from '@convex/lib/agentErrors';
 import { getProviderHandoff } from '@convex/lib/contextHandoff';
+import { mintAccessToken, parseServiceAccount } from '@convex/lib/googleServiceAccount';
 import {
 	credentialName,
 	deleteVaultObject,
@@ -20,16 +21,21 @@ const apiKeyProviderIds = [
 	'openrouter',
 	'opencode',
 	'opencode-go',
-	'morph'
+	'morph',
+	'google'
 ] as const;
 
 type ApiKeyProvider = (typeof apiKeyProviderIds)[number];
 
-type CredentialProvider = ApiKeyProvider | 'claude';
+type KeyProvider = ApiKeyProvider | 'vertex';
+
+type CredentialProvider = KeyProvider | 'claude';
 
 const vApiKeyProvider = v.union(...apiKeyProviderIds.map((provider) => v.literal(provider)));
 
-const vCredentialProvider = v.union(vApiKeyProvider, v.literal('claude'));
+const vKeyProvider = v.union(vApiKeyProvider, v.literal('vertex'));
+
+const vCredentialProvider = v.union(vKeyProvider, v.literal('claude'));
 
 function bearer(apiKey: string): HeadersInit {
 	return { authorization: `Bearer ${apiKey}` };
@@ -74,10 +80,17 @@ const apiKeyProviders: Record<
 		// `/v1/models` accepts any `sk-` key.
 		validationUrl: 'https://api.morphllm.com/api/v1/dedicated/endpoints',
 		headers: bearer
+	},
+	google: {
+		label: 'Google',
+		validationUrl: 'https://generativelanguage.googleapis.com/v1beta/models',
+		headers: (apiKey) => ({ 'x-goog-api-key': apiKey })
 	}
 };
 
 const CLAUDE_TOKEN_PATTERN = /^sk-ant-oat01-[\w-]+$/;
+
+const MAX_SERVICE_ACCOUNT_KEY_LENGTH = 16_384;
 
 function vaultName(provider: CredentialProvider, userId: string) {
 	return credentialName(`sprocket-${provider}-`, userId);
@@ -105,30 +118,56 @@ export const getMyConfiguration = action({
 		openrouter: v.boolean(),
 		opencode: v.boolean(),
 		opencodeGo: v.boolean(),
-		morph: v.boolean()
+		morph: v.boolean(),
+		google: v.boolean(),
+		vertex: v.boolean()
 	}),
 	handler: async (ctx) => {
-		const [openai, claude, anthropic, vercel, openrouter, opencode, opencodeGo, morph] =
-			await Promise.all(
-				(
-					[
-						'openai',
-						'claude',
-						'anthropic',
-						'vercel',
-						'openrouter',
-						'opencode',
-						'opencode-go',
-						'morph'
-					] as const
-				).map((provider) => isConfigured(ctx, provider))
-			);
+		const [
+			openai,
+			claude,
+			anthropic,
+			vercel,
+			openrouter,
+			opencode,
+			opencodeGo,
+			morph,
+			google,
+			vertex
+		] = await Promise.all(
+			(
+				[
+					'openai',
+					'claude',
+					'anthropic',
+					'vercel',
+					'openrouter',
+					'opencode',
+					'opencode-go',
+					'morph',
+					'google',
+					'vertex'
+				] as const
+			).map((provider) => isConfigured(ctx, provider))
+		);
 
-		return { openai, claude, anthropic, vercel, openrouter, opencode, opencodeGo, morph };
+		return {
+			openai,
+			claude,
+			anthropic,
+			vercel,
+			openrouter,
+			opencode,
+			opencodeGo,
+			morph,
+			google,
+			vertex
+		};
 	}
 });
 
-async function saveApiKeyHandler(ctx: ActionCtx, provider: ApiKeyProvider, rawApiKey: string) {
+async function saveApiKeyHandler(ctx: ActionCtx, provider: KeyProvider, rawApiKey: string) {
+	if (provider === 'vertex') return await saveVertexKey(ctx, rawApiKey);
 	const { label, validationUrl, headers } = apiKeyProviders[provider];
 	const name = await userCredentialName(ctx, provider);
 	const apiKey = rawApiKey.trim();
@@ -136,7 +175,8 @@ async function saveApiKeyHandler(ctx: ActionCtx, provider: ApiKeyProvider, rawAp
 	if (!apiKey || apiKey.length > 512) throw new ConvexError(`Enter a valid ${label} API key.`);
 	const response = await providerFetch(validationUrl, { headers: headers(apiKey) });
 
-	if (response.status === 401 || response.status === 403) {
+	// Google answers an invalid key with 400.
+	if (response.status === 400 || response.status === 401 || response.status === 403) {
 		throw new ConvexError(`${label} rejected this API key.`);
 	}
 
@@ -150,6 +190,22 @@ async function saveApiKeyHandler(ctx: ActionCtx, provider: ApiKeyProvider, rawAp
 	return null;
 }
 
+async function saveVertexKey(ctx: ActionCtx, rawKey: string) {
+	const name = await userCredentialName(ctx, 'vertex');
+
+	const account =
+		rawKey.length <= MAX_SERVICE_ACCOUNT_KEY_LENGTH ? parseServiceAccount(rawKey) : null;
+
+	if (!account) throw new ConvexError('Paste the JSON key of a Google Cloud service account.');
+	const token = await mintAccessToken(account);
+
+	if (!token) throw new ConvexError('Google rejected this service account key.');
+	await storeVaultObject(name, JSON.stringify(account));
+	await ctx.runMutation(api.uiPreferences.enableProvider, { provider: 'vertex' });
+
+	return null;
+}
+
 async function removeCredential(ctx: ActionCtx, provider: CredentialProvider) {
 	await deleteVaultObject(await userCredentialName(ctx, provider));
 	await ctx.runMutation(api.uiPreferences.removeProvider, { provider });
@@ -158,13 +214,13 @@ async function removeCredential(ctx: ActionCtx, provider: CredentialProvider) {
 }
 
 export const saveApiKey = action({
-	args: { provider: vApiKeyProvider, apiKey: v.string() },
+	args: { provider: vKeyProvider, apiKey: v.string() },
 	returns: v.null(),
 	handler: (ctx, args) => saveApiKeyHandler(ctx, args.provider, args.apiKey)
 });
 
 export const removeApiKey = action({
-	args: { provider: vApiKeyProvider },
+	args: { provider: vKeyProvider },
 	returns: v.null(),
 	handler: (ctx, args) => removeCredential(ctx, args.provider)
 });
@@ -300,5 +356,33 @@ export const issueClaudeCredential = action({
 		}
 
 		return { token };
+	}
+});
+
+export const issueVertexCredential = action({
+	args: runCredentialArgs,
+	returns: v.object({ token: v.string(), expiresAt: v.number(), projectId: v.string() }),
+	handler: async (ctx, args) => {
+		const saved = await readRunCredential(ctx, args, 'vertex');
+		const account = saved === null ? null : parseServiceAccount(saved);
+
+		if (!account) {
+			throw new ConvexError({
+				code: 'PROVIDER_NOT_CONFIGURED',
+				message: 'Google Vertex AI is no longer configured. Add a service account key in Settings.'
+			});
+		}
+
+		const token = await mintAccessToken(account);
+
+		if (!token) {
+			throw new ConvexError({
+				code: 'PROVIDER_NOT_CONFIGURED',
+				message:
+					'Google rejected the saved Vertex AI service account key. Add a new one in Settings.'
+			});
+		}
+
+		return { ...token, projectId: account.project_id };
 	}
 });
