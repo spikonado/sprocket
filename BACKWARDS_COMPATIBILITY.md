@@ -102,6 +102,10 @@ Released UIs call `githubCredentials:saveToken` and `removeToken`, and released 
 
 Released agents start `list_subagents` jobs and call `subagents:listChildren` for them, and read subagent transcripts through `subagents:transcriptPartsPage`. Current agents use `list_threads` with `threads:listForRun`, and `transcript:getPartsPageForRun` with `threadId`. Once those agents age out, delete both mutations and move `list_subagents` from `vCurrentExecutorJobKind` to the retired kinds in `vExecutorJobKind`. Stored `list_subagents` jobs stay readable, see the permanent list.
 
+### Tool image URLs
+
+Released agents send `parse_file` and `scrape_url` images to models as Convex storage URLs. They look each image up with `imageUploads:toolImageUrlsForRun` and upload missing ones through `registerToolImageForRun`, and v0.5.x agents fail the image when either call fails. Current agents send images inline as base64 and call neither. `migrations:deleteToolImages` deletes the tool-image rows, which are the ones with `sha256`, and their files. The Convex Production workflow runs it after each deploy, and released agents upload an image again on their next turn. Once those agents age out, delete both mutations, the `by_threadId_and_sha256_and_storageDeletedAt` index, the `sha256` field and the migration, after deleting the tool-image rows added since. Remove the "Convex storage image URLs" shim in spikonado/ai-gateway's `BACKWARDS_COMPATIBILITY.md` at the same time.
+
 ## Convex data shims
 
 ### Completion provider defaults

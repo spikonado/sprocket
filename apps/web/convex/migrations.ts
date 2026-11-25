@@ -206,6 +206,16 @@ export const dropShareConversationContent = migrations.define({
 	}
 });
 
+export const deleteToolImages = migrations.define({
+	table: 'imageUploads',
+	migrateOne: async (ctx, upload) => {
+		if (upload.sha256 === undefined) return;
+
+		if (upload.storageDeletedAt === undefined) await ctx.storage.delete(upload.storageId);
+		await ctx.db.delete('imageUploads', upload._id);
+	}
+});
+
 export const run = migrations.runner([
 	internal.migrations.backfillToolInvocationIds,
 	internal.migrations.backfillCompletionToolInvocationIds,
@@ -224,5 +234,6 @@ export const run = migrations.runner([
 	internal.migrations.backfillThreadCompletionProviders,
 	internal.migrations.backfillRunCompletionProviders,
 	internal.migrations.clearUsageLimitFailureKinds,
-	internal.migrations.dropShareConversationContent
+	internal.migrations.dropShareConversationContent,
+	internal.migrations.deleteToolImages
 ]);

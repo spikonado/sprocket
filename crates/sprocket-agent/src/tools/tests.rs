@@ -36,7 +36,7 @@ async fn text_only_models_do_not_replay_cached_image_results() {
             }],
         }],
     }];
-    hydrate_tool_history(&mut history, &[part], false, None).await;
+    hydrate_tool_history(&mut history, &[part], false).await;
     let serialized = serde_json::to_string(&history).unwrap();
     assert!(serialized.contains("Image omitted"));
     assert!(!serialized.contains("not available"));
@@ -70,7 +70,7 @@ async fn hydration_uses_each_calls_name_and_keeps_interrupted_results() {
     ];
     let mut history =
         crate::history::agent_history_from_parts(&TranscriptState::default(), &parts, None);
-    hydrate_tool_history(&mut history, &parts, false, None).await;
+    hydrate_tool_history(&mut history, &parts, false).await;
     let texts: Vec<_> = history
         .iter()
         .flat_map(|message| &message.contents)

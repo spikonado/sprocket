@@ -417,3 +417,48 @@ test('run removes the retired conversation sharing preference', async () => {
 	expect(preferences?.theme).toBe('dark');
 	vi.useRealTimers();
 });
+
+test('run deletes tool images and their files and keeps attachments', async () => {
+	vi.useFakeTimers();
+	const t = initConvexTest();
+	const { threadId } = await seedOwnedThread(t);
+
+	const [attachment, toolImage] = await t.run(async (ctx) => {
+		const upload = async (name: string, sha256?: string) => {
+			const storageId = await ctx.storage.store(new Blob(['png'], { type: 'image/png' }));
+
+			const id = await ctx.db.insert('imageUploads', {
+				userId: 'user-1',
+				storageId,
+				name,
+				mediaType: 'image/png',
+				size: 3,
+				attached: true,
+				threadId,
+				sha256
+			});
+
+			return { id, storageId };
+		};
+
+		return [await upload('photo.png'), await upload('tool-image', 'a'.repeat(64))];
+	});
+
+	await t.mutation(internal.migrations.run, {});
+	await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+	const [attachmentRow, attachmentFile, toolImageRow, toolImageFile] = await t.run((ctx) =>
+		Promise.all([
+			ctx.db.get('imageUploads', attachment.id),
+			ctx.storage.getUrl(attachment.storageId),
+			ctx.db.get('imageUploads', toolImage.id),
+			ctx.storage.getUrl(toolImage.storageId)
+		])
+	);
+
+	expect(attachmentRow?.name).toBe('photo.png');
+	expect(attachmentFile).not.toBeNull();
+	expect(toolImageRow).toBeNull();
+	expect(toolImageFile).toBeNull();
+	vi.useRealTimers();
+});

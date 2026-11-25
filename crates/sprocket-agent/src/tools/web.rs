@@ -170,9 +170,7 @@ impl rig::tool::Tool for ScrapeUrlTool {
             file.disable_cleanup(true);
         }
         if result.get("outputType").and_then(serde_json::Value::as_str) == Some("image") {
-            replay_tool_output(&result, Some(&self.0.image_urls()))
-                .await
-                .map_err(tool_error)
+            replay_tool_output(&result).await.map_err(tool_error)
         } else {
             Ok(ToolOutput::json(result))
         }
