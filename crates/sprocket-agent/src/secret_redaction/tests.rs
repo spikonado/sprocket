@@ -65,7 +65,11 @@ fn redacts_reply_text_and_tool_input_but_keeps_reasoning() {
     let mut items = [
         reasoning.clone(),
         json!({ "type": "text", "id": "t", "text": text }),
-        json!({ "type": "tool-call", "input": { "cmd": [text] } }),
+        json!({
+            "type": "tool-call",
+            "input": { "cmd": [text] },
+            "providerMetadata": { "rigNative": { "type": "function_call", "arguments": text } },
+        }),
     ];
     items.iter_mut().for_each(redact_completion_item);
     let redacted = "use [redacted:openai-key]";
@@ -74,7 +78,11 @@ fn redacts_reply_text_and_tool_input_but_keeps_reasoning() {
         [
             reasoning,
             json!({ "type": "text", "id": "t", "text": redacted }),
-            json!({ "type": "tool-call", "input": { "cmd": [redacted] } }),
+            json!({
+                "type": "tool-call",
+                "input": { "cmd": [redacted] },
+                "providerMetadata": { "rigNative": { "type": "function_call" } },
+            }),
         ]
     );
 }

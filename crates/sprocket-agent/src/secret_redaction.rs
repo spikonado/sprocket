@@ -129,8 +129,19 @@ pub(crate) fn redact_completion_item(item: &mut Value) {
     match item.get("type").and_then(Value::as_str) {
         Some("reasoning") => {}
         Some("tool-call") => {
-            if let Some(input) = item.get_mut("input") {
-                redact_json(input);
+            let Some(input) = item.get_mut("input") else {
+                return;
+            };
+            let original = input.clone();
+            redact_json(input);
+            // The native item keeps the model's spelling of the arguments when it differs from
+            // the canonical JSON. Replay rebuilds them from `input` once they are gone.
+            if *input != original
+                && let Some(native) = item
+                    .pointer_mut("/providerMetadata/rigNative")
+                    .and_then(Value::as_object_mut)
+            {
+                native.remove("arguments");
             }
         }
         _ => {
