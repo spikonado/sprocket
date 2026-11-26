@@ -156,11 +156,14 @@ async function applyAncestorCountChanges(
 			throw new Error('Invalid thread activity aggregate.');
 		}
 
-		await ctx.db.patch('threadHierarchyStates', state._id, {
+		const counts: Partial<Doc<'threadHierarchyStates'>> = {
 			descendantCount,
 			activeDescendantCount,
 			workingDescendantCount: workingCount
-		});
+		};
+
+		if (changes.active !== 0) counts.lastActivityAt = Date.now();
+		await ctx.db.patch('threadHierarchyStates', state._id, counts);
 	}
 
 	if (changes.active > 0) await unsettleRoot(ctx, thread);
@@ -214,15 +217,21 @@ async function countActivityChange<T>(
 	if (!before) return await change();
 
 	const wasActive = await threadOwnActivity(ctx.db, threadId);
-	await ensureHierarchyState(ctx, threadId);
+	const ownState = await ensureHierarchyState(ctx, threadId);
 
 	const result = await change();
 	const after = await ctx.db.get('threadRecords', threadId);
 
 	if (after) {
+		const active = Number(await threadOwnActivity(ctx.db, threadId)) - Number(wasActive);
+
+		if (active !== 0) {
+			await ctx.db.patch('threadHierarchyStates', ownState._id, { lastActivityAt: Date.now() });
+		}
+
 		await applyAncestorCountChanges(ctx, after, {
 			total: 0,
-			active: Number(await threadOwnActivity(ctx.db, threadId)) - Number(wasActive),
+			active,
 			working: Number(after.status === 'running') - Number(before.status === 'running')
 		});
 	}

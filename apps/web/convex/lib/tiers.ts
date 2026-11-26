@@ -22,7 +22,7 @@ export type PaidTerm = Pick<PaidSubscription, 'billingPeriodStart' | 'billingPer
 export type Plan = {
 	tier: SubscriptionTier;
 	label: string;
-	limits: Pick<Doc<'tiers'>, 'retentionDays' | 'storageBytes'> & { modelUsage: number };
+	limits: Pick<Doc<'tiers'>, 'storageBytes'> & { modelUsage: number };
 	subscription: (PaidSubscription & PaidTerm) | null;
 	legacyQuotaResetAt: number | undefined;
 };
@@ -103,7 +103,6 @@ async function planForTier(
 		label: row?.label ?? tierId,
 		limits: {
 			modelUsage: limitsRow.monthly,
-			retentionDays: limitsRow.retentionDays,
 			storageBytes: limitsRow.storageBytes
 		}
 	};

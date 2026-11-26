@@ -6,6 +6,7 @@ import type { TableNames } from '@convex/_generated/dataModel';
 import { getUserBySubject } from '@convex/lib/auth';
 import { transcriptContext } from '@convex/lib/contextHandoff';
 import { getRunExecutionState } from '@convex/lib/runExecution';
+import { findThreadRoot, hierarchyState } from '@convex/lib/threadHierarchy';
 import { getOrCreateTranscriptState, withToolInvocationIds } from '@convex/lib/transcriptParts';
 import { isRunFinalStatus } from '@convex/lib/validators';
 import schema from '@convex/schema';
@@ -254,6 +255,24 @@ export const deleteAttachmentUploads = migrations.define({
 	}
 });
 
+export const backfillTreeActivity = migrations.define({
+	table: 'threadRecords',
+	migrateOne: async (ctx, thread) => {
+		if (thread.parentThreadId === undefined) return;
+
+		const root = await findThreadRoot(ctx.db, thread);
+
+		if (!root) return;
+
+		const state = await hierarchyState(ctx.db, root._id);
+
+		if (!state || (state.lastActivityAt ?? 0) >= thread.lastMessageAt) return;
+		await ctx.db.patch('threadHierarchyStates', state._id, {
+			lastActivityAt: thread.lastMessageAt
+		});
+	}
+});
+
 export const run = migrations.runner([
 	internal.migrations.backfillToolInvocationIds,
 	internal.migrations.backfillCompletionToolInvocationIds,
@@ -277,5 +296,6 @@ export const run = migrations.runner([
 	internal.migrations.dropShareConversationContent,
 	internal.migrations.deleteToolImages,
 	internal.migrations.stripTerminalJobPayloads,
-	internal.migrations.deleteAttachmentUploads
+	internal.migrations.deleteAttachmentUploads,
+	internal.migrations.backfillTreeActivity
 ]);

@@ -72,7 +72,6 @@ export default defineSchema({
 		annualProductId: v.optional(v.string()),
 		monthlyPrice: v.optional(vPrice),
 		annualPrice: v.optional(vPrice),
-		retentionDays: v.optional(v.number()),
 		storageBytes: v.optional(v.number())
 	})
 		.index('by_tierId', ['tierId'])
@@ -219,6 +218,7 @@ export default defineSchema({
 			'parentThreadId',
 			'lastMessageAt'
 		])
+		.index('by_parentThreadId_and_lastMessageAt', ['parentThreadId', 'lastMessageAt'])
 		.index('by_userId_parentThreadId_repositoryKey_archivedAt_lastMessageAt', [
 			'userId',
 			'parentThreadId',
@@ -240,7 +240,9 @@ export default defineSchema({
 		threadId: v.id('threadRecords'),
 		workingDescendantCount: v.number(),
 		descendantCount: v.number(),
-		activeDescendantCount: v.number()
+		activeDescendantCount: v.number(),
+		// When this thread or a descendant last became active or idle. Retention reads it because replies and subagent prompts leave the root's `lastMessageAt` alone.
+		lastActivityAt: v.optional(v.number())
 	}).index('by_threadId', ['threadId']),
 
 	threadUsage: defineTable({

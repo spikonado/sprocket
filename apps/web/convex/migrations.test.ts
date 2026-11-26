@@ -1,7 +1,7 @@
 import { expect, test, vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
 import type { TranscriptCompletionItem } from '@convex/lib/validators';
-import { initConvexTest, insertUser, seedOwnedThread } from '@convex/test.setup';
+import { initConvexTest, insertUser, seedOwnedThread, seedThreadRecord } from '@convex/test.setup';
 import { getOrCreateTranscriptState, getTranscriptState } from '@convex/lib/transcriptParts';
 
 const DAY = 86_400_000;
@@ -536,5 +536,33 @@ test('run strips jobs of reconciled runs and keeps jobs of runs still reconcilin
 	expect(reconciledJob).not.toHaveProperty('payload');
 	expect(reconciledJob).not.toHaveProperty('result');
 	expect(reconcilingJob).toMatchObject({ payload: { name: 'example' }, result: 'Skill' });
+	vi.useRealTimers();
+});
+
+test('run dates each tree from its latest subagent message', async () => {
+	vi.useFakeTimers();
+	const t = initConvexTest();
+	const { subject, threadId: root } = await seedOwnedThread(t);
+	const subagent = await seedThreadRecord(t, subject, 'alpha');
+	const nested = await seedThreadRecord(t, subject, 'alpha');
+
+	const stateId = await t.run(async (ctx) => {
+		await ctx.db.patch('threadRecords', subagent, { parentThreadId: root, lastMessageAt: 20 });
+		await ctx.db.patch('threadRecords', nested, { parentThreadId: subagent, lastMessageAt: 30 });
+
+		return await ctx.db.insert('threadHierarchyStates', {
+			threadId: root,
+			descendantCount: 2,
+			activeDescendantCount: 0,
+			workingDescendantCount: 0
+		});
+	});
+
+	await t.mutation(internal.migrations.run, {});
+	await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+	expect((await t.run((ctx) => ctx.db.get('threadHierarchyStates', stateId)))?.lastActivityAt).toBe(
+		30
+	);
 	vi.useRealTimers();
 });

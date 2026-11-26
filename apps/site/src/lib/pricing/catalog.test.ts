@@ -30,7 +30,6 @@ test('buildPlanCards prices plans and lists only what each tier adds', () => {
 				monthlyUsageDollars: 5,
 				description: null,
 				features: [],
-				retentionDays: 14,
 				storageBytes: 1024 ** 3,
 				displayOrder: 0,
 				highlighted: false,
@@ -42,7 +41,6 @@ test('buildPlanCards prices plans and lists only what each tier adds', () => {
 				monthlyUsageDollars: 50,
 				description: ' For daily work ',
 				features: ['Frontier models', ' '],
-				retentionDays: 90,
 				storageBytes: 1.5 * 1024 ** 4,
 				displayOrder: 1,
 				highlighted: true,
@@ -54,7 +52,6 @@ test('buildPlanCards prices plans and lists only what each tier adds', () => {
 				monthlyUsageDollars: 300,
 				description: null,
 				features: ['Frontier models', 'Priority support'],
-				retentionDays: null,
 				storageBytes: null,
 				displayOrder: 2,
 				highlighted: false,
@@ -68,7 +65,6 @@ test('buildPlanCards prices plans and lists only what each tier adds', () => {
 	expect(free.previousPlanName).toBeNull();
 	expect(free.features.map(({ label }) => label)).toEqual([
 		'$5 of AI usage each month',
-		'Threads kept for 2 weeks after the last message',
 		'1 GB of file storage',
 		'Bring your own API keys and subscriptions',
 		'Limited context from the web',
@@ -84,7 +80,6 @@ test('buildPlanCards prices plans and lists only what each tier adds', () => {
 	});
 	expect(pro.features.map(({ label }) => label)).toEqual([
 		'$50 of AI usage each month',
-		'Threads kept for 3 months after the last message',
 		'1.5 TB of file storage',
 		'Unlimited context from the web',
 		'Frontier models'
@@ -92,7 +87,6 @@ test('buildPlanCards prices plans and lists only what each tier adds', () => {
 	expect(ultra.previousPlanName).toBe('Pro');
 	expect(ultra.features.map(({ label }) => label)).toEqual([
 		'$300 of AI usage each month',
-		'Threads kept forever',
 		'Unlimited file storage',
 		'Priority support'
 	]);

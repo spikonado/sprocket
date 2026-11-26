@@ -43,7 +43,6 @@ export const vPublicPricingPlan = v.object({
 	monthlyUsageDollars: v.number(),
 	description: v.union(v.string(), v.null()),
 	features: v.array(v.string()),
-	retentionDays: v.union(v.number(), v.null()),
 	storageBytes: v.union(v.number(), v.null()),
 	displayOrder: v.number(),
 	highlighted: v.boolean(),

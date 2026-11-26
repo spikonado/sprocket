@@ -28,4 +28,11 @@ crons.daily(
 	{}
 );
 
+crons.daily(
+	'delete threads idle for 180 days',
+	{ hourUTC: 3, minuteUTC: 40 },
+	internal.retention.sweep,
+	{}
+);
+
 export default crons;
