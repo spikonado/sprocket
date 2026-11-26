@@ -20,8 +20,8 @@ mod tests;
 
 use auth::AuthState;
 pub use decode::{
-    ConvexErrorCode, convex_error_code, decode_function_result, decode_labeled_function_result,
-    deserialize_convex_u32, deserialize_convex_u64,
+    ConvexErrorCode, convex_error_code, convex_function_error, decode_function_result,
+    decode_labeled_function_result, deserialize_convex_u32, deserialize_convex_u64,
 };
 pub use run_status::RunStatus;
 

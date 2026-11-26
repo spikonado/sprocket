@@ -3,12 +3,10 @@ import { internal } from '@convex/_generated/api';
 import { internalAction, internalMutation, mutation } from '@convex/_generated/server';
 import { getExecutionRunRecord, getUserId } from '@convex/lib/auth';
 import { addStorageBytes, deleteFile, firstFileWithBlob, storageUsage } from '@convex/lib/files';
+import { FILE_TOO_LARGE_MESSAGE, MAX_FILE_BYTES } from '@convex/lib/fileLimits';
 import { deleteObject, fileKey, presignDownload, presignUpload } from '@convex/lib/r2';
 import { resolvePlan } from '@convex/lib/tiers';
 import { registeredFileUploadError } from '@convex/lib/validators';
-
-// R2's limit for a single PUT.
-const MAX_FILE_BYTES = 5 * 1024 ** 3;
 
 const DRAFT_RETENTION_MS = 24 * 60 * 60 * 1_000;
 
@@ -45,7 +43,7 @@ export const createUpload = mutation({
 		if (!SHA256_HEX.test(args.sha256)) throw new Error('File hash must be a lowercase hex sha256.');
 
 		if (!Number.isSafeInteger(args.size) || args.size < 0 || args.size > MAX_FILE_BYTES) {
-			throw new ConvexError('Files can be at most 5 GiB.');
+			throw new ConvexError({ code: 'FILE_TOO_LARGE', message: FILE_TOO_LARGE_MESSAGE });
 		}
 
 		const sameBlob = await firstFileWithBlob(ctx, userId, args.sha256);
@@ -55,7 +53,10 @@ export const createUpload = mutation({
 			const used = (await storageUsage(ctx, userId))?.bytes ?? 0;
 
 			if (limits.storageBytes !== undefined && used + args.size > limits.storageBytes) {
-				throw new ConvexError('File storage limit reached.');
+				throw new ConvexError({
+					code: 'STORAGE_LIMIT_REACHED',
+					message: 'File storage limit reached.'
+				});
 			}
 
 			await addStorageBytes(ctx, userId, args.size);
