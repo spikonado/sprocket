@@ -3,6 +3,7 @@ mod attachments;
 mod download;
 mod live;
 pub mod monitor;
+mod retention;
 pub mod rows;
 mod store;
 mod sync;

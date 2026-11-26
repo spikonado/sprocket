@@ -74,6 +74,7 @@ where
     F: FnOnce() -> Fut,
     Fut: Future<Output = anyhow::Result<Option<String>>>,
 {
+    let _lease = store.open_thread(user_id, thread_id).await?;
     let lock = store.lock_attachment(user_id, &attachment.storage_id).await;
     let _guard = lock.lock().await;
     let path = store.attachment_path(user_id, thread_id, attachment);

@@ -71,6 +71,9 @@ use crate::transcript_watch::TranscriptWatchers;
 use crate::vercel_connector::VercelConnector;
 use crate::workspace_search::WorkspaceSearchIndex;
 
+const DAY: Duration = Duration::from_secs(24 * 60 * 60);
+const THREAD_CACHE_RETENTION: Duration = Duration::from_secs(30 * DAY.as_secs());
+
 pub fn now_ms() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
@@ -342,14 +345,20 @@ impl Host {
     pub fn start(&self) -> HostTasks {
         self.prepare_tools();
         let transcript = Arc::clone(&self.transcript);
-        let attachment_cleanup = tokio::spawn(async move {
+        let transcript_cleanup = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 interval.tick().await;
-                let cutoff = std::time::SystemTime::now() - Duration::from_secs(24 * 60 * 60);
-                if let Err(error) = transcript.prune_pending_attachments(cutoff).await {
+                let now = std::time::SystemTime::now();
+                if let Err(error) = transcript.prune_pending_attachments(now - DAY).await {
                     tracing::error!("failed to expire pending attachments: {error}");
+                }
+                if let Err(error) = transcript
+                    .remove_threads_opened_before(now - THREAD_CACHE_RETENTION)
+                    .await
+                {
+                    tracing::error!("failed to remove old cached threads: {error:#}");
                 }
             }
         });
@@ -366,7 +375,7 @@ impl Host {
             recovery: run_recovery::spawn(self.clone()),
             checkout_pulls: checkout_pulls::spawn(self.clone()),
             host: self.clone(),
-            attachment_cleanup,
+            transcript_cleanup,
             command_cleanup,
         }
     }
@@ -374,7 +383,7 @@ impl Host {
 
 pub struct HostTasks {
     host: Host,
-    attachment_cleanup: JoinHandle<()>,
+    transcript_cleanup: JoinHandle<()>,
     command_cleanup: JoinHandle<()>,
     recovery: JoinHandle<()>,
     checkout_pulls: JoinHandle<()>,
@@ -384,7 +393,7 @@ impl HostTasks {
     pub async fn shutdown(self) {
         let host = self.host;
         for task in [
-            self.attachment_cleanup,
+            self.transcript_cleanup,
             self.recovery,
             self.command_cleanup,
             self.checkout_pulls,

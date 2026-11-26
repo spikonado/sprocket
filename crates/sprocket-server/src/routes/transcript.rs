@@ -103,6 +103,12 @@ async fn attachment_handler(
     State(state): State<AppState>,
     AuthorizedJson(payload): AuthorizedJson<TranscriptAttachmentRequest>,
 ) -> Result<Response, ApiError> {
+    let _lease = state
+        .host
+        .transcript
+        .open_thread(&payload.user_id, &payload.thread_id)
+        .await
+        .map_err(|error| ApiError::internal_with("failed to open thread cache", error))?;
     if let Some(response) = serve_cached_attachment(
         &state,
         &payload.user_id,
