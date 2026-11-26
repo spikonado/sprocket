@@ -45,6 +45,14 @@ Reliability comes from fewer moving parts. Add recovery, retries, validation, or
 - Before adding a Convex function, table field, or index, check whether an existing query or mutation already serves the need. Store only the state the feature needs and derive the rest.
 - Make sure that changes are made in all the layers of the app when needed.
 
+### Tests
+
+- Before adding a test, name the product failure it catches and check whether existing coverage already catches it. Extend an existing case when possible.
+- Keep regression checks for auth, billing, recovery, concurrency, transport, parsing, filesystem behavior, and data integrity. Use verify skills for appearance and ordinary UI wiring.
+- Test Sprocket's behavior, not library guarantees, copied constants or schemas, direct fixture insert/read pairs, or implementation formulas. Assert the protocol constraints that matter instead of snapshotting whole schemas.
+- Keep tests local and deterministic. Seed caches and dependencies instead of waiting on real services and retries.
+- During review and cleanup, remove new tests that don't meet these rules.
+
 ### Backwards compatibility
 
 - The Rust server, the UI, and the CLI ship as one version, so changes between them need no compatibility.

@@ -263,7 +263,6 @@ describe('code blocks', () => {
 		}
 
 		expect(container.querySelector('pre code')).toBe(code);
-		expect(code?.classList.contains('shiki')).toBe(true);
 		expect(highlighted).toEqual(['const a = 1;\n']);
 		expect([...container.querySelectorAll('p')].map((p) => p.textContent)).toEqual([
 			'After the code.',

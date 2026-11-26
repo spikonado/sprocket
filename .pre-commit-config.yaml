@@ -33,6 +33,20 @@ repos:
 
   - repo: local
     hooks:
+      - id: no-source-text-rust-tests
+        name: Test behavior, not repository source text
+        language: pygrep
+        entry: '\b(?:include_(?:str|bytes)!|(?:std::|tokio::)?fs::read_to_string)\s*\(\s*(?:r\#*)?"(?![^"\n]*\bfixtures?/)(?:[^"\n]*\.(?:rs|[cm]?[jt]sx?)|(?:[^"\n]*/)?SKILL\.md)"\#*\s*[,)]'
+        args: [--multiline]
+        files: (^|/)(tests?|test_support)(\.rs|/.*\.rs)$
+
+      - id: no-copied-rust-test-schemas
+        name: Test schema constraints, not copied whole schemas
+        language: pygrep
+        entry: '(?s)\bassert_eq!\s*\((?:(?!;|assert_eq!).)*?,\s*(?:serde_json::)?json!\s*\(\s*\{\s*"\$schema"\s*:\s*"https?://json-schema\.org/'
+        args: [--multiline]
+        files: (^|/)(tests?|test_support)(\.rs|/.*\.rs)$
+
       - id: sync-skills
         name: sync-skills
         language: system
