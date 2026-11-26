@@ -58,7 +58,6 @@
 	},
 	"devDependencies": {
 		"@edge-runtime/vm": "^5.0.0",
-		"@posthog/cli": "catalog:",
 		"@posthog/rollup-plugin": "catalog:",
 		"@sprocket/typescript-config": "workspace:*",
 		"@tailwindcss/vite": "catalog:",
