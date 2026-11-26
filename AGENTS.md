@@ -57,18 +57,8 @@ Reliability comes from fewer moving parts. Add recovery, retries, validation, or
 ## PR Workflow
 
 - Unless requested, PRs should be made only against the default branch and should not be a draft.
-- After a PR is made, don't perform any code review using subagents; let Greptile review the code.
-
-1. When requested, push code and make a PR. The PR title should have the same format as past PR titles. Ensure that your branch is updated with the latest main.
-2. Wait for the Greptile AI code review CI to complete and give its review of your changes.
-3. Fix the actionable issues found by it:
-   - These can be inline comments on the PR or somewhere above "Important Files Changed" in the PR description.
-   - A finding is actionable when it shows the change breaks behavior the task needs.
-   - When a finding comes from a mechanism the task doesn't need, remove the mechanism.
-   - Findings that add a mechanism, UI, or handling for a scenario that doesn't occur in real use, along with false positives and outdated findings, get a reply with your reasoning in the inline thread or, for an issue in the PR description, in a top-level PR comment.
-4. Commit and push the code -> this time without asking.
-5. You should loop steps 2-4 until Greptile gives you a 5/5 confidence score or there are no remaining actionable issues. Comment `@greptileai review` when it doesn't start reviewing automatically; if the score remains below 5/5 with no actionable issues, explain why and stop.
-6. Clean up any worktrees and branches you created for this PR when you are done.
+- When requested, push code and make a PR. The PR title should have the same format as past PR titles. Ensure that your branch is updated with the latest main.
+- Clean up any worktrees and branches you created for this PR when you are done.
 
 <!-- BEGIN:turborepo-agent-rules -->
 
