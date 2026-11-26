@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { applyTheme, forceEntryTheme } from './theme';
+import { applyTheme, forceEntryTheme, resolveTheme } from './theme';
 
 function stubDocument(theme: string | undefined = undefined) {
 	const dataset: Record<string, string> = {};
@@ -45,5 +45,19 @@ describe('theme helpers', () => {
 			releaseA();
 			releaseB();
 		}
+	});
+
+	it('falls back to the last applied theme when there is no preference', () => {
+		stubDocument();
+		const storage = new Map<string, string>();
+		vi.stubGlobal('localStorage', {
+			getItem: (key: string) => storage.get(key) ?? null,
+			setItem: (key: string, value: string) => storage.set(key, value)
+		});
+
+		applyTheme('dark');
+
+		expect(resolveTheme(null)).toBe('dark');
+		expect(resolveTheme('light')).toBe('light');
 	});
 });
