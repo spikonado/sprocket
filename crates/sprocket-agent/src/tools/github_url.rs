@@ -5,8 +5,8 @@ use reqwest::Url;
 use serde_json::{Value, json};
 use sprocket_workspace::{WorkspaceCancellation, WorkspaceOperationCancelled};
 
+use super::cloud::CloudJob;
 use super::convert::{convert_document, sniff_supported_image_format};
-use super::hosted_parse::HostedParseContext;
 use super::scrape_files::MAX_SCRAPE_BYTES;
 use super::url_fetch::{download_file, persist_web_image, url_file_name};
 
@@ -44,7 +44,7 @@ pub(super) async fn fetch_github_file(
     url: Url,
     supports_images: bool,
     cache_dir: &Path,
-    hosted: Option<&HostedParseContext<'_>>,
+    hosted: Option<&CloudJob<'_>>,
     cancellation: &WorkspaceCancellation,
 ) -> anyhow::Result<Value> {
     let (url, bytes) = tokio::select! {

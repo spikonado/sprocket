@@ -350,46 +350,8 @@ export default defineSchema({
 			'sha256',
 			'storageDeletedAt'
 		]),
-	hostedParseRequests: defineTable({
-		jobId: v.id('executorJobs'),
-		runId: v.id('runs'),
-		userId: v.string(),
-		claimId: v.string(),
-		status: v.union(
-			v.literal('awaiting_upload'),
-			v.literal('pending'),
-			v.literal('completed'),
-			v.literal('failed')
-		),
-		uploadUrl: v.optional(v.string()),
-		inputStorageId: v.optional(v.id('_storage')),
-		resultStorageId: v.optional(v.id('_storage')),
-		filename: v.optional(v.string()),
-		pages: v.optional(v.boolean()),
-		error: v.optional(v.string()),
-		expiresAt: v.number()
-	})
-		.index('by_jobId', ['jobId'])
-		.index('by_inputStorageId', ['inputStorageId'])
-		.index('by_resultStorageId', ['resultStorageId'])
-		.index('by_expiresAt', ['expiresAt']),
-	webRequests: defineTable({
-		runId: v.id('runs'),
-		claimId: v.string(),
-		jobId: v.id('executorJobs'),
-		kind: v.literal('scrape'),
-		rawDocument: v.optional(v.boolean()),
-		status: v.union(
-			v.literal('queued'),
-			v.literal('running'),
-			v.literal('completed'),
-			v.literal('failed')
-		),
-		workId: v.optional(vWorkId),
-		resultStorageId: v.optional(v.id('_storage')),
-		error: v.optional(v.string()),
-		expiresAt: v.number()
-	}).index('by_runId', ['runId']),
+	hostedParseRequests: defineTable(v.any()),
+	webRequests: defineTable(v.any()),
 	executorJobs: defineTable({
 		threadId: v.id('threadRecords'),
 		runId: v.id('runs'),

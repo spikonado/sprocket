@@ -83,6 +83,7 @@ impl<S: Stream<Item = FunctionResult> + Unpin> Stream for Distinct<S> {
 struct Inner {
     convex: Mutex<Option<ConvexClient>>,
     auth: Arc<AuthState>,
+    deployment_url: String,
 }
 
 impl Drop for Inner {
@@ -105,6 +106,7 @@ impl Client {
         let inner = Arc::new(Inner {
             convex: Mutex::new(Some(client)),
             auth: AuthState::new(),
+            deployment_url: deployment_url.trim_end_matches('/').to_owned(),
         });
         let inner_weak = Arc::downgrade(&inner);
         inner.auth.set_on_apply(Arc::new(move |generation| {
@@ -124,6 +126,11 @@ impl Client {
                 ))
             }));
         Ok(Self { inner })
+    }
+
+    /// The deployment serves HTTP actions under `/http`, so they share its URL.
+    pub fn http_action_url(&self, path: &str) -> String {
+        format!("{}/http{path}", self.inner.deployment_url)
     }
 
     pub async fn set_auth_token_fetcher(&self, fetcher: AuthTokenFetcher) -> anyhow::Result<()> {

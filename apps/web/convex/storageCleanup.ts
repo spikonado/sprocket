@@ -1,7 +1,6 @@
 import { v } from 'convex/values';
 import { internal } from '@convex/_generated/api';
 import { internalMutation } from '@convex/_generated/server';
-import { registeredParseStorage } from '@convex/lib/hostedParse';
 
 const UNREGISTERED_STORAGE_TTL_MS = 24 * 60 * 60 * 1_000;
 
@@ -27,8 +26,6 @@ export const cleanupUnregistered = internalMutation({
 				.first();
 
 			if (attachment) continue;
-
-			if (await registeredParseStorage(ctx, blob._id)) continue;
 			await ctx.storage.delete(blob._id);
 			deleted += 1;
 		}

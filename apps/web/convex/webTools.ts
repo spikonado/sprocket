@@ -1,72 +1,20 @@
 'use node';
 
 import { v, type Infer } from 'convex/values';
-import { z } from 'zod';
-import { APIConnectionTimeoutError, APIError, ContextDev } from 'context.dev';
-import type { WebScrapeParams, WebScrapeResponse } from 'context.dev/resources/web';
 import { ExaClient } from '@exalabs/convex-exa';
-import { env, internalAction, type ActionCtx } from '@convex/_generated/server';
+import { internalAction, type ActionCtx } from '@convex/_generated/server';
 import { components, internal } from '@convex/_generated/api';
-import {
-	vWebSearchResult,
-	type ExecutorJobPayload,
-	type vScrapeUrlTransport
-} from '@convex/lib/validators';
+import { vWebSearchResult, type ExecutorJobPayload } from '@convex/lib/validators';
 import { RUN_NO_LONGER_ACTIVE } from '@convex/lib/agentErrors';
-import { HOSTED_PARSE_MAX_INPUT_BYTES } from '@convex/lib/hostedParse';
-import { retryAfterHeaderMs, retryRateLimited } from '@convex/lib/providerRetry';
 import { NonRetryableError } from '@convex-dev/workpool';
-import type { Doc } from '@convex/_generated/dataModel';
 
 const exa = new ExaClient(components.exa);
-
-const SCRAPE_MAX_BYTES = 64 * 1024 * 1024;
-
-export const SCRAPE_INLINE_MAX_CHARS = 20_000;
-
-export const SCRAPE_STORAGE_TTL_MS = 60 * 60 * 1_000;
-
-/** context.dev's own deadline for one scrape attempt. */
-export const SCRAPE_TIMEOUT_MS = 60_000;
-
-/** Long enough to reuse pages that sibling subagents re-read, short enough for distributor stock. */
-export const SCRAPE_CACHE_MAX_AGE_MS = 30 * 60 * 1_000;
-
-/** The SDK must outwait the API deadline so the API reports the timeout. */
-const SDK_TIMEOUT_MARGIN_MS = 10_000;
-
-const REQUEST_PUBLISH_MARGIN_MS = 30_000;
-
-export const CONTEXT_DEV_CREDITS_EXHAUSTED = 'context.dev credits are exhausted.';
-
-const RAW_DOCUMENT_TOO_LARGE = 'Document exceeds the 50 MB raw fetch limit.';
-
-const SCRAPE_MARKDOWN_BLOB_TYPE = 'text/markdown; charset=utf-8';
 
 const SEARCH_RESULT_TEXT_MAX_CHARS = 2_000;
 
 const SEARCH_TIMEOUT_MS = 30_000;
 
 class WebProviderTimeout extends Error {}
-
-const contextDevErrorBodySchema = z.object({
-	error_code: z.string().optional(),
-	code: z.string().optional(),
-	message: z.string().optional()
-});
-
-type ScrapeParams = Omit<WebScrapeParams, 'maxAgeMs' | 'timeoutOpts'>;
-
-type ScrapedPage = {
-	url: string;
-	markdown: string;
-};
-
-export type RawDocument = {
-	url: string;
-	documentUrl: string;
-	contentType?: string;
-};
 
 function isRetryableHttpStatus(status: number): boolean {
 	return status === 408 || status === 425 || status === 429 || status >= 500;
@@ -117,206 +65,6 @@ async function withTimeout<T>(label: string, timeoutMs: number, promise: Promise
 	} finally {
 		clearTimeout(timer);
 	}
-}
-
-function requireHttpUrl(urlValue: string): URL {
-	let url: URL;
-
-	try {
-		url = new URL(urlValue.trim());
-	} catch {
-		throw new Error(`Invalid URL: ${urlValue}`);
-	}
-
-	if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-		throw new Error('Only http(s) URLs can be scraped.');
-	}
-
-	return url;
-}
-
-function contextDevClient(): ContextDev {
-	const apiKey = env.CONTEXT_DEV_API_KEY?.trim();
-
-	if (!apiKey) throw new Error('CONTEXT_DEV_API_KEY is not configured.');
-
-	return new ContextDev({ apiKey, maxRetries: 0 });
-}
-
-function contextDevRetryAfterMs(error: Error): number | undefined {
-	return error instanceof APIError && error.status === 429
-		? retryAfterHeaderMs(error.headers?.get('retry-after'))
-		: undefined;
-}
-
-function contextDevFailure(error: Error): Error {
-	if (error instanceof APIConnectionTimeoutError) {
-		return new Error('context.dev scrape timed out.', { cause: error });
-	}
-
-	if (!(error instanceof APIError) || error.status === undefined) return error;
-
-	const body = contextDevErrorBodySchema.safeParse(error.error).data;
-	const code = body?.error_code ?? body?.code;
-
-	if (error.status === 401 && code === 'USAGE_EXCEEDED') {
-		return new Error(CONTEXT_DEV_CREDITS_EXHAUSTED, { cause: error });
-	}
-
-	if (error.status === 408) return new Error('context.dev scrape timed out.', { cause: error });
-
-	const detail = body?.message?.trim();
-	const suffix = [code, detail].filter(Boolean).join(': ');
-
-	return new Error(
-		suffix
-			? `context.dev scrape failed (${error.status}): ${suffix}`
-			: `context.dev scrape failed (${error.status}).`,
-		{ cause: error }
-	);
-}
-
-type ScrapeLimits = { deadline: number; shouldContinue: () => Promise<boolean> };
-
-async function requestContextDevScrape(
-	params: ScrapeParams,
-	{ deadline, shouldContinue }: ScrapeLimits
-): Promise<WebScrapeResponse> {
-	return await retryRateLimited({
-		deadline,
-		maxAttemptMs: SCRAPE_TIMEOUT_MS,
-		attempt: async (timeoutMs) =>
-			await contextDevClient().web.scrape(
-				{
-					...params,
-					maxAgeMs: SCRAPE_CACHE_MAX_AGE_MS,
-					timeoutOpts: { milliseconds: timeoutMs, behavior: 'fail' }
-				},
-				{ timeout: timeoutMs + SDK_TIMEOUT_MARGIN_MS }
-			),
-		rateLimitWaitMs: contextDevRetryAfterMs,
-		finalError: contextDevFailure,
-		shouldContinue
-	});
-}
-
-type ScrapeOutput = { success: boolean | null; error_code?: string; message?: string };
-
-/** Failed outputs arrive inside HTTP 200 responses. */
-function requireOutput(output: ScrapeOutput): void {
-	if (output.success !== false) return;
-
-	const message = output.message?.trim() || 'The page could not be scraped.';
-
-	throw new Error(`This webpage returned an error: ${message} (${output.error_code ?? 'UNKNOWN'})`);
-}
-
-async function fetchScrape(urlValue: string, limits: ScrapeLimits): Promise<ScrapedPage> {
-	const url = requireHttpUrl(urlValue);
-
-	const response = await requestContextDevScrape(
-		{
-			url: url.toString(),
-			formats: { markdown: true },
-			markdownParams: { includeImages: true },
-			sharedParams: { mainContentOnly: true }
-		},
-		limits
-	);
-
-	requireOutput(response.markdown);
-
-	return {
-		url: response.url || url.toString(),
-		markdown: response.markdown.data ?? ''
-	};
-}
-
-async function fetchRawDocument(
-	ctx: ActionCtx,
-	urlValue: string,
-	limits: ScrapeLimits
-): Promise<RawDocument> {
-	const url = requireHttpUrl(urlValue);
-
-	const response = await requestContextDevScrape(
-		{ url: url.toString(), formats: { bytes: true } },
-		limits
-	);
-
-	if (response.bytes.error_code === 'CONTENT_TOO_LARGE') throw new Error(RAW_DOCUMENT_TOO_LARGE);
-	requireOutput(response.bytes);
-
-	const document = new Uint8Array(Buffer.from(response.bytes.data?.base64 ?? '', 'base64'));
-
-	if (document.byteLength === 0) {
-		throw new Error('context.dev returned an empty document.');
-	}
-
-	if (document.byteLength > HOSTED_PARSE_MAX_INPUT_BYTES) {
-		throw new Error(RAW_DOCUMENT_TOO_LARGE);
-	}
-
-	const raw: RawDocument = {
-		url: response.url || url.toString(),
-		documentUrl: await storeTemporaryBlob(
-			ctx,
-			new Blob([document], { type: 'application/octet-stream' })
-		)
-	};
-
-	const contentType = response.bytes.data?.contentType;
-
-	if (contentType) raw.contentType = contentType;
-
-	return raw;
-}
-
-async function localScrapeTransport(
-	ctx: ActionCtx,
-	page: ScrapedPage
-): Promise<Infer<typeof vScrapeUrlTransport>> {
-	return page.markdown.length <= SCRAPE_INLINE_MAX_CHARS
-		? { url: page.url, markdown: page.markdown }
-		: {
-				url: page.url,
-				scrapeUrl: await storeTemporaryScrape(ctx, page.markdown)
-			};
-}
-
-async function storeTemporaryScrape(ctx: ActionCtx, markdown: string): Promise<string> {
-	const blob = new Blob([markdown], { type: SCRAPE_MARKDOWN_BLOB_TYPE });
-
-	if (blob.size > SCRAPE_MAX_BYTES) {
-		throw new Error('Scrape exceeds the 64 MiB download limit.');
-	}
-
-	return await storeTemporaryBlob(ctx, blob);
-}
-
-async function storeTemporaryBlob(ctx: ActionCtx, blob: Blob): Promise<string> {
-	// Node actions upload with `Content-Type: blob.type`, and Convex storage rejects an empty one.
-	const storageId = await ctx.storage.store(blob);
-
-	try {
-		await ctx.scheduler.runAfter(
-			SCRAPE_STORAGE_TTL_MS,
-			internal.hostedParse.deleteUnregisteredStorage,
-			{ storageId }
-		);
-	} catch (error) {
-		await ctx.storage.delete(storageId);
-		throw error;
-	}
-
-	const url = await ctx.storage.getUrl(storageId);
-
-	if (!url) {
-		await ctx.storage.delete(storageId);
-		throw new Error('Stored scrape is unavailable.');
-	}
-
-	return url;
 }
 
 async function runSearch(
@@ -395,24 +143,3 @@ export const executeWebSearch = internalAction({
 		return await runSearch(ctx, webSearchQuery(job.payload));
 	}
 });
-
-export async function executeQueuedWebRequest(ctx: ActionCtx, request: Doc<'webRequests'>) {
-	const job = await ctx.runMutation(internal.webRequests.requestJob, {
-		jobId: request.jobId,
-		runId: request.runId,
-		claimId: request.claimId
-	});
-
-	if (job?.kind !== 'scrape_url') throw new Error(RUN_NO_LONGER_ACTIVE);
-	const url = 'url' in job.payload ? job.payload.url : '';
-
-	const limits: ScrapeLimits = {
-		deadline: request.expiresAt - REQUEST_PUBLISH_MARGIN_MS,
-		shouldContinue: async () =>
-			await ctx.runMutation(internal.webRequests.isRunning, { id: request._id })
-	};
-
-	if (request.rawDocument) return await fetchRawDocument(ctx, url, limits);
-
-	return await localScrapeTransport(ctx, await fetchScrape(url, limits));
-}

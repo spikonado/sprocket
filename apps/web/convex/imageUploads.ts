@@ -10,7 +10,6 @@ import { getExecutionRunRecord, getUserId } from '@convex/lib/auth';
 import { agentError } from '@convex/lib/agentErrors';
 import { vRegisterFileResult } from '@convex/lib/docs';
 import { isRunFinalStatus, registeredFileUploadError } from '@convex/lib/validators';
-import { registeredParseStorage } from '@convex/lib/hostedParse';
 import { getOwnedImageUploadsByStorageIds, imageUploadByStorageId } from '@convex/lib/imageUploads';
 import { internal } from '@convex/_generated/api';
 
@@ -122,10 +121,7 @@ export const registerToolImageForRun = mutation({
 		const run = await activeRunRecord(ctx, args);
 		requireSha256(args.sha256);
 
-		if (
-			(await imageUploadByStorageId(ctx, args.storageId)) ||
-			(await registeredParseStorage(ctx, args.storageId))
-		) {
+		if (await imageUploadByStorageId(ctx, args.storageId)) {
 			throw new Error('Tool images require a dedicated upload.');
 		}
 
@@ -257,10 +253,6 @@ async function registerOwnedUpload(
 					url
 				}
 			: { error: 'Uploaded file is unavailable.' };
-	}
-
-	if (await registeredParseStorage(ctx, args.storageId)) {
-		return { error: 'Temporary parse files cannot be registered as attachments.' };
 	}
 
 	const metadata = await ctx.db.system.get('_storage', args.storageId);

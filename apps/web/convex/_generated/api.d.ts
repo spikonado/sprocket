@@ -27,7 +27,6 @@ import type * as firecrawlRequests from "../firecrawlRequests.js";
 import type * as gateway from "../gateway.js";
 import type * as githubCredentials from "../githubCredentials.js";
 import type * as hostedParse from "../hostedParse.js";
-import type * as hostedParseActions from "../hostedParseActions.js";
 import type * as http from "../http.js";
 import type * as imageUploads from "../imageUploads.js";
 import type * as inbox from "../inbox.js";
@@ -40,6 +39,7 @@ import type * as lib_auth from "../lib/auth.js";
 import type * as lib_billingWindows from "../lib/billingWindows.js";
 import type * as lib_claimedWebJob from "../lib/claimedWebJob.js";
 import type * as lib_commandToolKinds from "../lib/commandToolKinds.js";
+import type * as lib_contextDev from "../lib/contextDev.js";
 import type * as lib_contextHandoff from "../lib/contextHandoff.js";
 import type * as lib_credits from "../lib/credits.js";
 import type * as lib_docs from "../lib/docs.js";
@@ -49,7 +49,6 @@ import type * as lib_firecrawl from "../lib/firecrawl.js";
 import type * as lib_gatewayFetch from "../lib/gatewayFetch.js";
 import type * as lib_gatewayProtocol from "../lib/gatewayProtocol.js";
 import type * as lib_gatewayToken from "../lib/gatewayToken.js";
-import type * as lib_hostedParse from "../lib/hostedParse.js";
 import type * as lib_imageUploads from "../lib/imageUploads.js";
 import type * as lib_inboxState from "../lib/inboxState.js";
 import type * as lib_json from "../lib/json.js";
@@ -85,7 +84,6 @@ import type * as lib_uiModelCatalog from "../lib/uiModelCatalog.js";
 import type * as lib_uiPreferences from "../lib/uiPreferences.js";
 import type * as lib_usageMeters from "../lib/usageMeters.js";
 import type * as lib_validators from "../lib/validators.js";
-import type * as lib_webPools from "../lib/webPools.js";
 import type * as lib_wiring from "../lib/wiring.js";
 import type * as lib_workSections from "../lib/workSections.js";
 import type * as lib_workosVault from "../lib/workosVault.js";
@@ -108,9 +106,9 @@ import type * as threads from "../threads.js";
 import type * as transcript from "../transcript.js";
 import type * as uiPreferences from "../uiPreferences.js";
 import type * as usage from "../usage.js";
-import type * as webRequestActions from "../webRequestActions.js";
 import type * as webRequests from "../webRequests.js";
 import type * as webSearchPool from "../webSearchPool.js";
+import type * as webToolHttp from "../webToolHttp.js";
 import type * as webTools from "../webTools.js";
 
 import type {
@@ -139,7 +137,6 @@ declare const fullApi: ApiFromModules<{
   gateway: typeof gateway;
   githubCredentials: typeof githubCredentials;
   hostedParse: typeof hostedParse;
-  hostedParseActions: typeof hostedParseActions;
   http: typeof http;
   imageUploads: typeof imageUploads;
   inbox: typeof inbox;
@@ -152,6 +149,7 @@ declare const fullApi: ApiFromModules<{
   "lib/billingWindows": typeof lib_billingWindows;
   "lib/claimedWebJob": typeof lib_claimedWebJob;
   "lib/commandToolKinds": typeof lib_commandToolKinds;
+  "lib/contextDev": typeof lib_contextDev;
   "lib/contextHandoff": typeof lib_contextHandoff;
   "lib/credits": typeof lib_credits;
   "lib/docs": typeof lib_docs;
@@ -161,7 +159,6 @@ declare const fullApi: ApiFromModules<{
   "lib/gatewayFetch": typeof lib_gatewayFetch;
   "lib/gatewayProtocol": typeof lib_gatewayProtocol;
   "lib/gatewayToken": typeof lib_gatewayToken;
-  "lib/hostedParse": typeof lib_hostedParse;
   "lib/imageUploads": typeof lib_imageUploads;
   "lib/inboxState": typeof lib_inboxState;
   "lib/json": typeof lib_json;
@@ -197,7 +194,6 @@ declare const fullApi: ApiFromModules<{
   "lib/uiPreferences": typeof lib_uiPreferences;
   "lib/usageMeters": typeof lib_usageMeters;
   "lib/validators": typeof lib_validators;
-  "lib/webPools": typeof lib_webPools;
   "lib/wiring": typeof lib_wiring;
   "lib/workSections": typeof lib_workSections;
   "lib/workosVault": typeof lib_workosVault;
@@ -220,9 +216,9 @@ declare const fullApi: ApiFromModules<{
   transcript: typeof transcript;
   uiPreferences: typeof uiPreferences;
   usage: typeof usage;
-  webRequestActions: typeof webRequestActions;
   webRequests: typeof webRequests;
   webSearchPool: typeof webSearchPool;
+  webToolHttp: typeof webToolHttp;
   webTools: typeof webTools;
 }>;
 
@@ -258,6 +254,4 @@ export declare const components: {
   rateLimiter: import("@convex-dev/rate-limiter/_generated/component.js").ComponentApi<"rateLimiter">;
   migrations: import("@convex-dev/migrations/_generated/component.js").ComponentApi<"migrations">;
   webSearchWorkpool: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"webSearchWorkpool">;
-  contextDevWorkpool: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"contextDevWorkpool">;
-  firecrawlScrapeWorkpool: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"firecrawlScrapeWorkpool">;
 };

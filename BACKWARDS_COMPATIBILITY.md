@@ -30,9 +30,9 @@ Released clients reject unknown completion providers. `uiPreferences.getMyEnable
 
 Released UIs call `providerCredentials:saveOpenAiKey` and `removeOpenAiKey`, and released agents call `issueOpenAiCredential`. They wrap `saveApiKey`, `removeApiKey` and `issueApiKey` with `provider: 'openai'`, except that `issueOpenAiCredential` throws string `data` instead of `PROVIDER_NOT_CONFIGURED`, because v0.4 agents read only string error data. Once the UIs and agents that call them age out, remove the three actions.
 
-### Firecrawl request endpoints
+### Retired cloud request mutations
 
-Released agents call `firecrawlRequests:start`, `getResult` and `dispose`. These forward to `webRequests`, so released scrapes run on context.dev and return no `summary`. `start` rejects `kind: 'screenshot'` with "This tool is no longer supported." `getResult` and `dispose` accept any string ID, so IDs from the old table report the request as ended. Remove the module once clients that call `firecrawlRequests:*` age out.
+Released agents start cloud scrapes with `webRequests:start` or `firecrawlRequests:start` and hosted parses with `hostedParse:createUpload`. Current agents call the `/agent/scrape` and `/agent/parse` HTTP actions instead. The three mutations accept any arguments and throw "Update Sprocket to scrape pages and parse documents in the cloud.", so released agents never reach the rest of the old flows. Remove `hostedParse.ts`, `webRequests.ts`, `firecrawlRequests.ts` and `retiredCloudRequest` once clients that call them age out.
 
 ### Retired command sync
 
@@ -152,10 +152,6 @@ Older `subscriptions` rows hold the retired webhook projection, including operat
 
 `dodoWebhookEvents` keeps the retired webhook ledger so an operator can find customers it may have double-charged with `bunx convex run --prod billingAudit:listDoubleCharges`. Run it once `migrations:resyncDodoCustomers` reports done and the `dodo:syncCustomer` runs it spreads over the next hour have succeeded in the dashboard logs. Rerun any failed one by hand. After those refunds, run `bunx convex run --prod billingAudit:deleteWebhookEvents` on each deployment, then remove the table, `billingAudit.ts`, and the `billingAudit` assertions in `subscriptions.test.ts`.
 
-### Hosted parse upload URLs
-
-`hostedParseRequests` rows from before `createUpload` stopped storing upload URLs carry `uploadUrl`, so the schema keeps it optional. The hourly `hostedParse.cleanupExpired` cron deletes every row within two hours of its creation. Drop the field from the schema in any deploy that lands two hours after this one.
-
 ### Question settle timestamps
 
 Older `agentQuestions` rows carry an `answeredAt` that nothing reads, so the schema keeps it optional. `migrations:dropQuestionAnsweredAt` unsets it, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, drop the field and the migration.
@@ -171,6 +167,10 @@ Usage charged before the `usage` table lives in `modelUsageMonthly` buckets of t
 ### Retired command sync tables
 
 `commandSessions` and `commandLogChunks` are untyped tables kept only so the schema accepts their old rows. `clearCommandSessions` and `clearCommandLogChunks` in `migrations.ts` delete those rows, and the Convex Production workflow runs both after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports both done on each deployment, remove the tables and the migrations.
+
+### Retired cloud request tables
+
+`hostedParseRequests` and `webRequests` are untyped tables kept only so the schema accepts their old rows. `clearHostedParseRequests` and `clearWebRequests` in `migrations.ts` delete those rows, and the Convex Production workflow runs both after each deploy. The `storageCleanup.cleanupUnregistered` cron deletes the files they referenced. Once `bunx convex run --component migrations lib:getStatus` reports both done on each deployment, remove the tables and the migrations. Delete the unmounted `contextDevWorkpool` and `firecrawlScrapeWorkpool` components' data on each deployment at the same time.
 
 ### Stored executor job and result fields
 

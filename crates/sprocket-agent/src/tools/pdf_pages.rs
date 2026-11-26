@@ -6,8 +6,8 @@ use anyhow::anyhow;
 use lopdf::{Object, ObjectId};
 use sprocket_workspace::{WorkspaceCancellation, WorkspaceOperationCancelled};
 
+use super::cloud::{CloudJob, ParsedPage};
 use super::convert::{LocalConversionFailed, run_cancellable_blocking};
-use super::hosted_parse::{HostedParseContext, ParsedPage};
 
 const MAX_OCR_PAGES: usize = 20;
 /// Mirrors pdf-inspector's per-stream bound against decompression bombs.
@@ -25,7 +25,7 @@ const CATALOG_NAVIGATION: [&[u8]; 6] = [
 
 pub(super) async fn pdf_markdown(
     bytes: Vec<u8>,
-    hosted: Option<&HostedParseContext<'_>>,
+    hosted: Option<&CloudJob<'_>>,
     cancellation: &WorkspaceCancellation,
 ) -> anyhow::Result<String> {
     let build_ocr_input = hosted.is_some();
@@ -74,7 +74,7 @@ fn local_pdf(bytes: &[u8], build_ocr_input: bool) -> anyhow::Result<LocalPdf> {
 }
 
 async fn recognize(
-    hosted: &HostedParseContext<'_>,
+    hosted: &CloudJob<'_>,
     input: Vec<u8>,
     cancellation: &WorkspaceCancellation,
 ) -> anyhow::Result<Vec<ParsedPage>> {
@@ -87,7 +87,7 @@ async fn recognize(
         Ok(file)
     })
     .await?;
-    super::hosted_parse::parse_pages(
+    super::cloud::parse_pages(
         hosted,
         file.path(),
         Path::new("scanned-pages.pdf"),

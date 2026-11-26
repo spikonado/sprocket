@@ -80,7 +80,7 @@ describe('local scrape_url dispatch', () => {
 	it('dispatches scrape_url locally without an execution-mode flag', async () => {
 		const t = initConvexTest();
 
-		const { jobId, runId, claimId } = await seedStartedWebJob(t, {
+		const { jobId } = await seedStartedWebJob(t, {
 			executionSecret: 'local-scrape-secret',
 			kind: 'scrape_url',
 			payload: { url: 'https://example.com/page' }
@@ -89,17 +89,6 @@ describe('local scrape_url dispatch', () => {
 		const stored = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
 		expect(stored?.cloudWorkId).toBeUndefined();
 		expect(stored?.status).toBe('claimed');
-
-		const local = await t.mutation(internal.webRequests.requestJob, {
-			runId,
-			claimId,
-			jobId
-		});
-
-		expect(local).toEqual({
-			kind: 'scrape_url',
-			payload: { url: 'https://example.com/page' }
-		});
 	});
 
 	it('dispatches web_search through the cloud workpool', async () => {
@@ -113,42 +102,5 @@ describe('local scrape_url dispatch', () => {
 
 		const stored = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
 		expect(stored?.cloudWorkId).toEqual(expect.any(String));
-	});
-});
-
-describe('temporary scrape storage', () => {
-	it('deletes unregistered blobs and is a no-op after they are gone', async () => {
-		const t = initConvexTest();
-		const storageId = await t.run(async (ctx) => ctx.storage.store(new Blob(['scrape markdown'])));
-		expect(
-			await t.mutation(internal.hostedParse.deleteUnregisteredStorage, { storageId })
-		).toBeNull();
-		expect(await t.run(async (ctx) => ctx.db.system.get('_storage', storageId))).toBeNull();
-		expect(
-			await t.mutation(internal.hostedParse.deleteUnregisteredStorage, { storageId })
-		).toBeNull();
-	});
-
-	it('leaves registered attachments in place', async () => {
-		const t = initConvexTest();
-
-		const storageId = await t.run(async (ctx) => {
-			const storageId = await ctx.storage.store(new Blob(['attached']));
-			await ctx.db.insert('imageUploads', {
-				userId: 'owner',
-				storageId,
-				name: 'file.txt',
-				mediaType: 'text/plain',
-				size: 8,
-				attached: true
-			});
-
-			return storageId;
-		});
-
-		expect(
-			await t.mutation(internal.hostedParse.deleteUnregisteredStorage, { storageId })
-		).toBeNull();
-		expect(await t.run(async (ctx) => ctx.db.system.get('_storage', storageId))).not.toBeNull();
 	});
 });

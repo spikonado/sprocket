@@ -8,7 +8,6 @@ import {
 	type vRunStatus
 } from '@convex/lib/validators';
 import { reconcileTerminalRun } from '@convex/lib/runTerminal';
-import { internal } from '@convex/_generated/api';
 import { isClaimedRunStatus, isRunClaimLeaseActive } from '@convex/lib/runLease';
 import { resolveRequestedFinalizeStatus } from '@convex/lib/runCancellation';
 import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
@@ -92,7 +91,6 @@ export async function finalizeRunRecord(
 	const completedAt = run.completedAt ?? Date.now();
 	const lastError = alreadyFinal ? run.lastError : args.lastError;
 	await cancelRunLifecycleCheck(ctx, run._id);
-	await ctx.scheduler.runAfter(0, internal.webRequests.cancelRun, { runId: run._id });
 	await detachRunFromMachine(ctx, run);
 
 	if (alreadyFinal) {
