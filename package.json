@@ -18,9 +18,13 @@
 		"@convex-dev/eslint-plugin": "5.0.1",
 		"@mermaid-lint/cli": "0.53.1",
 		"@oxlint/plugins": "1.93.0",
+		"@posthog/cli": "catalog:",
 		"concurrently": "^10.0.0",
+		"convex": "catalog:",
 		"oxlint": "1.93.0",
-		"turbo": "^2.9.8"
+		"turbo": "^2.9.8",
+		"vercel": "catalog:",
+		"workos": "catalog:"
 	},
 	"engines": {
 		"bun": "^1.4.4",
@@ -46,6 +50,14 @@
 		"react-dom": "^19.3.0",
 		"tailwind-merge": "^3.5.0",
 		"tailwindcss": "^4.2.4",
+		"vercel": "^66.2.0",
+		"workos": "^0.24.0",
 		"zod": "^4.1.8"
-	}
+	},
+	"trustedDependencies": [
+		"@posthog/cli",
+		"core-js",
+		"electron-winstaller",
+		"esbuild"
+	]
 }
