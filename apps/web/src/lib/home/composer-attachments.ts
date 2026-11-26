@@ -4,7 +4,6 @@ import {
 	attachmentMediaType,
 	fallbackAttachmentName,
 	isPreviewableImageMediaType,
-	revokeAttachmentPreview,
 	type ComposerAttachment
 } from '$lib/chat/attachments';
 import { useStore, type Store } from '$lib/store';
@@ -62,9 +61,7 @@ export class ComposerAttachments implements Store<ComposerAttachment[]> {
 					name,
 					mediaType,
 					size: file.size,
-					previewUrl: isPreviewableImageMediaType(mediaType)
-						? URL.createObjectURL(file)
-						: undefined,
+					previewFile: isPreviewableImageMediaType(mediaType) ? file : undefined,
 					status: 'uploading'
 				}
 			]);
@@ -76,7 +73,6 @@ export class ComposerAttachments implements Store<ComposerAttachment[]> {
 		const attachment = this.items.find((entry) => entry.localId === localId);
 
 		if (!attachment) return;
-		revokeAttachmentPreview(attachment.previewUrl);
 		this.#setItems(this.items.filter((entry) => entry.localId !== localId));
 
 		if (attachment.fileId) {
@@ -90,12 +86,9 @@ export class ComposerAttachments implements Store<ComposerAttachment[]> {
 		const userId = options.userId === undefined ? context.userId : options.userId;
 		const threadId = options.threadId === undefined ? context.threadId : options.threadId;
 
-		// Sent attachments keep their previews because a failed send restores them with `replace`.
-		if (options.discard) {
-			for (const attachment of this.items) {
-				revokeAttachmentPreview(attachment.previewUrl);
-
-				if (attachment.fileId) this.#discard({ userId, threadId, fileId: attachment.fileId });
+		for (const attachment of this.items) {
+			if (options.discard && attachment.fileId) {
+				this.#discard({ userId, threadId, fileId: attachment.fileId });
 			}
 		}
 

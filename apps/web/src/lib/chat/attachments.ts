@@ -12,7 +12,7 @@ export type ComposerAttachment = {
 	name: string;
 	mediaType: string;
 	size: number;
-	previewUrl?: string;
+	previewFile?: File;
 	status: 'uploading' | 'ready' | 'error';
 	fileId?: Id<'files'>;
 	error?: string;
