@@ -65,9 +65,9 @@ where
         }
         let credential = (self.issue_credential)()
             .await
-            .map_err(|error| http_client::Error::Instance(error.into()))?;
+            .map_err(http_client::Error::transient)?;
         let fresh = CachedCredential::fresh(credential).ok_or_else(|| {
-            http_client::Error::Instance("The issued credential is too close to expiry.".into())
+            http_client::Error::permanent("The issued credential is too close to expiry.")
         })?;
         let token = fresh.token.clone();
         *cached = Some(fresh);
@@ -87,7 +87,8 @@ where
     ) -> WasmBoxedFuture<'a, http_client::Result<()>> {
         Box::pin(async move {
             let token = self.resolve_credential().await?;
-            let mut authorization = HeaderValue::from_str(&format!("Bearer {token}"))?;
+            let mut authorization = HeaderValue::from_str(&format!("Bearer {token}"))
+                .map_err(http_client::Error::permanent)?;
             authorization.set_sensitive(true);
             headers.insert(http::header::AUTHORIZATION, authorization);
             Ok(())

@@ -40,7 +40,7 @@ impl HttpMiddleware for ZstdResponsesRequests {
         let compressed = if is_responses_post(exchange) {
             zstd_compress(&body)
                 .map(Bytes::from)
-                .map_err(|error| http_client::Error::Instance(error.into()))
+                .map_err(http_client::Error::permanent)
         } else {
             Ok(body)
         };

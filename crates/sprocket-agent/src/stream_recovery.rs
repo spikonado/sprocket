@@ -154,8 +154,8 @@ impl StreamRecovery {
 }
 
 impl AgentHook for CompletionInput {
-    fn observes(&self, kind: StepEventKind) -> bool {
-        kind == StepEventKind::CompletionCall
+    fn observes(&self, _kind: StepEventKind) -> bool {
+        false
     }
 
     async fn on_completion_call(

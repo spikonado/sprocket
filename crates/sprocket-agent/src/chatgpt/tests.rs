@@ -80,37 +80,28 @@ struct StubResponseClient {
 }
 
 impl HttpClientExt for StubResponseClient {
-    fn send<T, U>(
+    fn send(
         &self,
-        req: Request<T>,
-    ) -> impl Future<Output = http_client::Result<Response<http_client::LazyBody<U>>>>
+        req: Request<Bytes>,
+    ) -> impl Future<Output = http_client::Result<Response<http_client::LazyBody>>>
     + WasmCompatSend
-    + 'static
-    where
-        T: Into<Bytes> + WasmCompatSend,
-        U: From<Bytes> + WasmCompatSend + 'static,
-    {
+    + 'static {
         self.http.send(req)
     }
 
-    fn send_multipart<U>(
+    fn send_multipart(
         &self,
         req: Request<rig::http_client::MultipartForm>,
-    ) -> impl Future<Output = http_client::Result<Response<http_client::LazyBody<U>>>>
+    ) -> impl Future<Output = http_client::Result<Response<http_client::LazyBody>>>
     + WasmCompatSend
-    + 'static
-    where
-        U: From<Bytes> + WasmCompatSend + 'static,
-    {
+    + 'static {
         self.http.send_multipart(req)
     }
 
-    fn send_streaming<T>(
+    fn send_streaming(
         &self,
-        req: Request<T>,
+        req: Request<Bytes>,
     ) -> impl Future<Output = http_client::Result<http_client::StreamingResponse>> + WasmCompatSend
-    where
-        T: Into<Bytes> + WasmCompatSend,
     {
         let connection = self.http.authorization.as_ref().unwrap().1.clone();
         let response_body = self.body.clone();
@@ -118,7 +109,7 @@ impl HttpClientExt for StubResponseClient {
         async move {
             assert_eq!(req.uri(), "https://api.openai.com/v1/responses");
             let body: serde_json::Value =
-                serde_json::from_slice(&rewrite_request_body(&req.into_body().into())?).unwrap();
+                serde_json::from_slice(&rewrite_request_body(req.body())?).unwrap();
             assert_eq!(body["tools"][0]["type"], "namespace");
             let response = http::Response::builder()
                 .status(status)
@@ -138,7 +129,7 @@ impl HttpClientExt for StubResponseClient {
 fn stub_model(
     status: http::StatusCode,
     body: String,
-) -> Model<StatelessResponses, StubResponseClient> {
+) -> Model<openai::responses_api::wire::Responses, StubResponseClient> {
     let (credentials, client) = stub_client("connection-1");
     let http = StubResponseClient {
         http: SiwcHttpClient {
@@ -157,7 +148,9 @@ fn stub_model(
     )
 }
 
-async fn first_stream_error(model: Model<StatelessResponses, StubResponseClient>) -> ProviderError {
+async fn first_stream_error(
+    model: Model<openai::responses_api::wire::Responses, StubResponseClient>,
+) -> ProviderError {
     model
         .stream(test_request(vec![Message::user("hello")]))
         .unwrap()

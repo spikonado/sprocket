@@ -645,11 +645,15 @@ fn generation_options(reasoning_effort: &str) -> anyhow::Result<GenerationOption
 }
 
 // Tier names differ per provider, so they bypass Rig's portable tiers.
-fn service_tier_params(provider: CompletionProvider, fast_mode: bool) -> serde_json::Value {
-    match provider.fast_service_tier() {
-        Some(tier) if fast_mode => serde_json::json!({ "service_tier": tier }),
-        _ => serde_json::json!({}),
-    }
+fn service_tier_params(
+    provider: CompletionProvider,
+    fast_mode: bool,
+) -> serde_json::Map<String, serde_json::Value> {
+    provider
+        .fast_service_tier()
+        .filter(|_| fast_mode)
+        .map(|tier| serde_json::Map::from_iter([("service_tier".to_string(), tier.into())]))
+        .unwrap_or_default()
 }
 
 #[derive(Clone, Default)]
@@ -960,7 +964,7 @@ async fn run_with_completion_model(
             let mut stream = agent
                 .prompt(prompt)
                 .options(additional_params.0.clone())
-                .replace_additional_params(additional_params.1.clone())
+                .merge_additional_params(additional_params.1.clone())
                 .history(history)
                 .max_turns(AGENT_MAX_TURNS)
                 .add_hook(completion_origin.clone())
