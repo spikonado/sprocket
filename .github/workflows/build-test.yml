@@ -62,7 +62,6 @@ jobs:
               - bunfig.toml
               - oxlint.config.ts
               - package.json
-              - turbo.json
               # The npm package build copies these.
               - deleted: '{LICENSE,README,THIRD_PARTY_NOTICES}.md'
 
