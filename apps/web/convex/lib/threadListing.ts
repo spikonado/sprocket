@@ -5,7 +5,7 @@ import { mergedStream, stream } from 'convex-helpers/server/stream';
 import type { Infer } from 'convex/values';
 import { inboxState, type InboxState } from '@convex/lib/inboxState';
 import { latestRunForThread } from '@convex/lib/runExecution';
-import { hierarchyState, threadRoot } from '@convex/lib/threadHierarchy';
+import { findThreadRoot, hierarchyState } from '@convex/lib/threadHierarchy';
 import type {
 	RepositoryScope,
 	vListThreadsResult,
@@ -141,9 +141,11 @@ export async function searchRootThreads(
 	const roots = new Map<Id<'threadRecords'>, Doc<'threadRecords'>>();
 
 	for (const match of await searchTitles(ctx, userId, query, repositoryKeys)) {
-		const root = await threadRoot(ctx.db, match);
+		const root = await findThreadRoot(ctx.db, match);
 
-		if (!roots.has(root._id) && states.includes(inboxState(root))) roots.set(root._id, root);
+		if (root && !roots.has(root._id) && states.includes(inboxState(root))) {
+			roots.set(root._id, root);
+		}
 	}
 
 	return [...roots.values()];

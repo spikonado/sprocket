@@ -14,6 +14,7 @@ import {
 	initConvexTest,
 	insertDraftFile,
 	insertQueuedRun,
+	readTranscriptState,
 	seedOwnedThread,
 	seedThreadRecord,
 	tickPastLastCommit,
@@ -528,15 +529,11 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 		expect(await t.mutation(internal.runLifecycle.forceCancelRun, { runId })).toBe(true);
 		const run = await t.run((ctx) => ctx.db.get('runs', runId));
 		expect(run?.status).toBe('cancelled');
-		expect((await asUser.query(api.transcript.getState, { threadId })).totalParts).toBeLessThan(
-			jobs.length + 1
-		);
+		expect((await readTranscriptState(asUser, threadId)).totalParts).toBeLessThan(jobs.length + 1);
 
 		await t.finishAllScheduledFunctions(vi.runAllTimers);
 		await expectCleanedJobs(t, jobs);
-		expect((await asUser.query(api.transcript.getState, { threadId })).totalParts).toBe(
-			jobs.length + 1
-		);
+		expect((await readTranscriptState(asUser, threadId)).totalParts).toBe(jobs.length + 1);
 
 		await t.mutation(internal.runCleanup.continueCleanup, {
 			runId,
@@ -545,9 +542,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 			questionCursor: -1
 		});
 		await t.finishAllScheduledFunctions(vi.runAllTimers);
-		expect((await asUser.query(api.transcript.getState, { threadId })).totalParts).toBe(
-			jobs.length + 1
-		);
+		expect((await readTranscriptState(asUser, threadId)).totalParts).toBe(jobs.length + 1);
 	});
 
 	it('registers a replacement machine atomically even when its runs have large histories', async () => {

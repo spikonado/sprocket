@@ -1080,6 +1080,18 @@ it('restores the prompt and shows the usage limit when the run ends before sendi
 	expect(alert.textContent).toContain(usageLimit);
 });
 
+it('leaves the open thread once it is deleted', async () => {
+	const { client } = await renderThreadLaunch();
+	expect(document.querySelector('[aria-current="page"]')?.textContent).toContain('Robot work');
+
+	await act(async () => {
+		client.registerQuery(api.threads.getByThreadId, null);
+	});
+
+	await waitFor(() => expect(document.querySelector('[aria-current="page"]')).toBeNull());
+	expect(screen.queryByRole('alert')).toBeNull();
+});
+
 it('keeps a failed send error when another thread is settled', async () => {
 	const { client, launch, runAgent } = await renderThreadLaunch();
 	client.registerMutation(api.threads.settle, null);

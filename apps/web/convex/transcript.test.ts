@@ -6,10 +6,12 @@ import { beginExecutorJob } from '@convex/lib/toolJobs';
 import {
 	createQueuedRun,
 	emptyCompletionAssignments,
+	expectThreadFound,
 	initConvexTest,
 	insertDraftFile,
 	insertQueuedRun,
 	readTranscriptRange,
+	readTranscriptState,
 	seedOwnedThread,
 	toolTranscriptAssignment,
 	type ConvexTestInstance
@@ -176,7 +178,7 @@ describe('numbered transcript parts', () => {
 
 		expect(retry.runId).toBe(first.runId);
 
-		const state = await asUser.query(api.transcript.getState, { threadId });
+		const state = await readTranscriptState(asUser, threadId);
 		expect(state.totalParts).toBe(1);
 		const parts = await readTranscriptRange(asUser, threadId, 0, 1);
 		expect(parts.parts).toHaveLength(1);
@@ -263,7 +265,7 @@ describe('numbered transcript parts', () => {
 		});
 
 		expect(again).toEqual(number);
-		const state = await asUser.query(api.transcript.getState, { threadId });
+		const state = await readTranscriptState(asUser, threadId);
 		expect(state.totalParts).toBe(2);
 		const parts = await readTranscriptRange(asUser, threadId, 0, 2);
 		expect(parts.parts.map((part) => part.kind)).toEqual(['prompt', 'completion']);
@@ -443,7 +445,7 @@ describe('numbered transcript parts', () => {
 			executionSecret
 		});
 
-		const afterStart = await asUser.query(api.transcript.getState, { threadId });
+		const afterStart = await readTranscriptState(asUser, threadId);
 		expect(afterStart.totalParts).toBe(2);
 		const startedParts = await readTranscriptRange(asUser, threadId, 0, 2);
 		const started = startedParts.parts[1];
@@ -476,7 +478,7 @@ describe('numbered transcript parts', () => {
 				eventsPath: '/transcripts/command/events.jsonl'
 			}
 		});
-		expect((await asUser.query(api.transcript.getState, { threadId })).totalParts).toBe(3);
+		expect((await readTranscriptState(asUser, threadId)).totalParts).toBe(3);
 		await asUser.mutation(api.executor.complete, {
 			jobId,
 			runId,
@@ -492,7 +494,7 @@ describe('numbered transcript parts', () => {
 				eventsPath: '/transcripts/command/events.jsonl'
 			}
 		});
-		expect((await asUser.query(api.transcript.getState, { threadId })).totalParts).toBe(3);
+		expect((await readTranscriptState(asUser, threadId)).totalParts).toBe(3);
 		await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
 			runId,
 			claimId: 'claim-tool-order',
@@ -651,7 +653,7 @@ describe('numbered transcript parts', () => {
 			status: 'cancelled',
 			executionSecret
 		});
-		const afterCancel = await asUser.query(api.transcript.getState, { threadId });
+		const afterCancel = await readTranscriptState(asUser, threadId);
 		expect(afterCancel.totalParts).toBe(3);
 		const finished = await readTranscriptRange(asUser, threadId, 2, 3);
 		expect(finished.parts[0]).toMatchObject({
@@ -682,7 +684,7 @@ describe('numbered transcript parts', () => {
 				eventsPath: '/transcripts/command/events.jsonl'
 			}
 		});
-		expect((await asUser.query(api.transcript.getState, { threadId })).totalParts).toBe(3);
+		expect((await readTranscriptState(asUser, threadId)).totalParts).toBe(3);
 		const job = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
 		expect(job?.status).toBe('cancelled');
 	});
@@ -917,7 +919,7 @@ describe('numbered transcript parts', () => {
 			lastError: 'boom',
 			executionSecret
 		});
-		const state = await asUser.query(api.transcript.getState, { threadId });
+		const state = await readTranscriptState(asUser, threadId);
 		expect(state.totalParts).toBe(1);
 		const parts = await readTranscriptRange(asUser, threadId, 0, 1);
 		expect(parts.parts[0]?.kind).toBe('prompt');
@@ -1107,6 +1109,8 @@ describe('transcript range reads', () => {
 				order
 			});
 
+			if (!page) throw new Error('Thread not found.');
+
 			expect(page.threadId).toBe(threadId);
 			expect(page.parts.map((part) => part.number)).toEqual(
 				Array.from({ length: 100 }, (_, index) => (order === 'asc' ? index + 1 : 102 - index))
@@ -1140,16 +1144,18 @@ describe('transcript range reads', () => {
 				'x'.repeat(400_000)
 			);
 
-			const readPage = (ctx: QueryCtx, start: number, end: number) =>
-				caller === 'owner'
-					? ctx.runQuery(api.transcript.getPartsPage, { threadId, start, end, order })
-					: ctx.runQuery(api.transcript.getPartsPageForRun, {
-							runId,
-							executionSecret,
-							start,
-							end,
-							order
-						});
+			const readPage = async (ctx: QueryCtx, start: number, end: number) =>
+				expectThreadFound(
+					caller === 'owner'
+						? await ctx.runQuery(api.transcript.getPartsPage, { threadId, start, end, order })
+						: await ctx.runQuery(api.transcript.getPartsPageForRun, {
+								runId,
+								executionSecret,
+								start,
+								end,
+								order
+							})
+				);
 
 			const measured = await asUser.query(async (ctx) => {
 				const before = await ctx.meta.getTransactionMetrics();
@@ -1255,10 +1261,10 @@ describe('transcript range reads', () => {
 		const { asUser, threadId } = await seedParts(t, [0]);
 		const args = { threadId, start: 0, end: 1 };
 
-		expect((await asUser.query(api.transcript.getPartsPage, args)).parts).toHaveLength(1);
+		expect((await readTranscriptRange(asUser, threadId, 0, 1)).parts).toHaveLength(1);
 		await expect(
 			t.withIdentity({ subject: 'bob' }).query(api.transcript.getPartsPage, args)
-		).rejects.toThrow('Thread not found.');
+		).resolves.toBeNull();
 		await expect(t.query(api.transcript.getPartsPage, args)).rejects.toThrow(
 			'Authentication required.'
 		);
@@ -1280,7 +1286,7 @@ describe('transcript attachment identity', () => {
 			executionSecret
 		});
 
-		const page = await asUser.query(api.transcript.getPartsPage, { threadId, start: 0, end: 1 });
+		const page = await readTranscriptRange(asUser, threadId, 0, 1);
 		expect(page.parts[0]?.prompt?.imageUploads).toEqual([
 			{ name: 'robot.png', mediaType: 'image/png', size: 5, fileId, storageId: fileId }
 		]);

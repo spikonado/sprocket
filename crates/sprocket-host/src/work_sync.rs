@@ -1,12 +1,13 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::Context;
 use futures::StreamExt;
 use sprocket_convex::decode_labeled_function_result;
 use sprocket_transcript::{RemoteTranscriptState, TranscriptPart, TranscriptStore};
 use tokio::sync::{OnceCell, watch};
 
-use crate::transcript_client::{UserConvexClient, thread_id_args};
+use crate::transcript_client::{THREAD_NOT_FOUND, UserConvexClient, thread_id_args};
 use crate::transcript_watch::TranscriptSyncStatus;
 
 const STARTUP_STATE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -85,9 +86,9 @@ async fn subscribe_total(
         .subscribe("transcript:getState", thread_id_args(thread))
         .await?;
     while let Some(result) = subscription.next().await {
-        let state: RemoteTranscriptState =
+        let state: Option<RemoteTranscriptState> =
             decode_labeled_function_result(result, "transcript:getState")?;
-        raise(totals, state.total_parts);
+        raise(totals, state.context(THREAD_NOT_FOUND)?.total_parts);
         status.send_replace(TranscriptSyncStatus::Ready);
     }
     anyhow::bail!("transcript state subscription ended")

@@ -26,10 +26,11 @@ export async function threadOwnActivity(
 	return (await latestRunActive(db, threadId)) || (await waitingForInput(db, threadId));
 }
 
-async function ancestorThreads(
+/** Returns null when an ancestor is missing, as it is while a deleted tree is cleaned up. */
+async function findAncestorThreads(
 	db: DatabaseReader,
 	thread: Doc<'threadRecords'>
-): Promise<Doc<'threadRecords'>[]> {
+): Promise<Doc<'threadRecords'>[] | null> {
 	const seen = new Set<string>([thread._id]);
 	const ancestors: Doc<'threadRecords'>[] = [];
 	let current = thread;
@@ -37,9 +38,7 @@ async function ancestorThreads(
 	while (current.parentThreadId !== undefined) {
 		const parent = await db.get('threadRecords', current.parentThreadId);
 
-		if (!parent || parent.userId !== thread.userId || seen.has(parent._id)) {
-			throw new Error('Thread not found.');
-		}
+		if (!parent || parent.userId !== thread.userId || seen.has(parent._id)) return null;
 
 		seen.add(parent._id);
 		ancestors.push(parent);
@@ -47,6 +46,26 @@ async function ancestorThreads(
 	}
 
 	return ancestors;
+}
+
+async function ancestorThreads(
+	db: DatabaseReader,
+	thread: Doc<'threadRecords'>
+): Promise<Doc<'threadRecords'>[]> {
+	const ancestors = await findAncestorThreads(db, thread);
+
+	if (!ancestors) throw new Error('Thread not found.');
+
+	return ancestors;
+}
+
+export async function findThreadRoot(
+	db: DatabaseReader,
+	thread: Doc<'threadRecords'>
+): Promise<Doc<'threadRecords'> | null> {
+	const ancestors = await findAncestorThreads(db, thread);
+
+	return ancestors && (ancestors.at(-1) ?? thread);
 }
 
 export async function threadRoot(

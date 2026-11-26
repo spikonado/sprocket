@@ -208,13 +208,32 @@ export async function seedOwnedThread(
 	};
 }
 
+export function expectThreadFound<T>(value: T | null): T {
+	if (!value) throw new Error('Thread not found.');
+
+	return value;
+}
+
 export async function readTranscriptRange(
 	asUser: AuthenticatedTest,
 	threadId: Id<'threadRecords'>,
 	start: number,
 	end: number
 ) {
-	return await asUser.query(api.transcript.getPartsPage, { threadId, start, end, order: 'asc' });
+	return expectThreadFound(
+		await asUser.query(api.transcript.getPartsPage, { threadId, start, end, order: 'asc' })
+	);
+}
+
+export async function readTranscriptState(
+	asUser: AuthenticatedTest,
+	threadId: Id<'threadRecords'>
+) {
+	return expectThreadFound(await asUser.query(api.transcript.getState, { threadId }));
+}
+
+export async function readThread(asUser: AuthenticatedTest, threadId: Id<'threadRecords'>) {
+	return expectThreadFound(await asUser.query(api.threads.getByThreadId, { threadId }));
 }
 
 export async function seedThreadRecord(
@@ -282,7 +301,7 @@ export async function insertQueuedRun(
 		deferPrompt?: boolean;
 	}
 ) {
-	const thread = await asUser.query(api.threads.getByThreadId, { threadId: args.threadId });
+	const thread = await readThread(asUser, args.threadId);
 
 	const request: FunctionArgs<typeof internal.agentRuntime.insertGatewayRun> = {
 		userId: thread.userId,
