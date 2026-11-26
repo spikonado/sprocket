@@ -1,13 +1,21 @@
+import { readStorage, writeStorage } from '$lib/storage';
+
 export type SprocketTheme = 'light' | 'dark';
 
 export const DEFAULT_THEME: SprocketTheme = 'light';
+
+// The preference lives in Convex; this copy themes the shell before Convex answers.
+const LAST_THEME_KEY = 'sprocket.theme';
 
 export function isSprocketTheme(value: string | null | undefined): value is SprocketTheme {
 	return value === 'light' || value === 'dark';
 }
 
 export function resolveTheme(preference: SprocketTheme | null | undefined): SprocketTheme {
-	return preference ?? DEFAULT_THEME;
+	if (preference) return preference;
+	const lastTheme = readStorage(LAST_THEME_KEY);
+
+	return isSprocketTheme(lastTheme) ? lastTheme : DEFAULT_THEME;
 }
 
 let entryThemeDepth = 0;
@@ -28,6 +36,8 @@ export function applyTheme(theme: SprocketTheme): void {
 	if (!globalThis.document) {
 		return;
 	}
+
+	writeStorage(LAST_THEME_KEY, theme);
 
 	if (entryThemeDepth > 0) {
 		themeBeforeEntry = theme;

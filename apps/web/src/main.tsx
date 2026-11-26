@@ -9,6 +9,7 @@ import Callback from './callback';
 import ErrorBoundary from './error-boundary';
 import CalmCentered from '$lib/components/home/calm-centered';
 import { installTouchLongPress } from '$lib/touch-long-press';
+import { applyTheme, resolveTheme } from '$lib/theme';
 import './app.css';
 
 const container = document.getElementById('root');
@@ -18,6 +19,8 @@ if (!container) throw new Error('Missing application root.');
 const root = createRoot(container);
 
 installTouchLongPress();
+
+applyTheme(resolveTheme(null));
 
 async function start() {
 	if (import.meta.env.DEV) {

@@ -287,12 +287,16 @@ export default function App({
 
 	const nativeSignInRequired = auth.nativeSession === 'mismatch';
 
-	const authReady =
+	const localSessionReady =
 		auth.isReady &&
 		!auth.isLoading &&
 		isSignedIn &&
-		(auth.nativeSession === 'notRequired' || auth.nativeSession === 'ready') &&
-		convexAuth.isAuthenticated;
+		(auth.nativeSession === 'notRequired' || auth.nativeSession === 'ready');
+
+	const authReady = localSessionReady && convexAuth.isAuthenticated;
+
+	// The shell's first screen needs only the local server, so it renders while Convex is still authenticating.
+	const shellReady = authReady || (localSessionReady && convexAuth.isLoading && !retryPending);
 
 	const authConnectionFailed =
 		isSignedIn &&
@@ -2410,7 +2414,7 @@ export default function App({
 		return <CalmCentered title="Connect to Sprocket" description={localConnection.error.message} />;
 	}
 
-	if (!authReady) {
+	if (!shellReady) {
 		return (
 			<div className="bg-background h-dvh overflow-hidden">
 				<AuthGate
