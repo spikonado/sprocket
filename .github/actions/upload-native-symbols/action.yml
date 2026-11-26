@@ -16,6 +16,9 @@ runs:
   using: composite
   steps:
     - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+    - name: Install dependencies
+      shell: bash
+      run: bun install --frozen-lockfile
     - name: Split debug symbols
       shell: bash
       env:
@@ -39,4 +42,4 @@ runs:
         POSTHOG_CLI_HOST: https://eu.posthog.com
         POSTHOG_CLI_API_KEY: ${{ inputs.api-key }}
         POSTHOG_CLI_PROJECT_ID: ${{ inputs.project-id }}
-      run: bunx @posthog/cli@0.19.0 symbol-sets upload --directory .native-symbols
+      run: bunx posthog-cli symbol-sets upload --directory .native-symbols
