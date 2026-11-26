@@ -29,13 +29,44 @@ function usd(dollars: number): string {
 	return formatPrice({ amountMinor: Math.round(dollars * 100), currency: 'USD' });
 }
 
-function duration({ count, unit }: PublicPricingCatalog['creditPacks'][number]['expiresAfter']) {
+function duration({ count, unit }: { count: number; unit: string }) {
 	return `${count} ${unit}${count === 1 ? '' : 's'}`;
+}
+
+function retentionPeriod(days: number): string {
+	if (days >= 28) return duration({ count: Math.round(days / 30.4375), unit: 'month' });
+
+	return days % 7 === 0
+		? duration({ count: days / 7, unit: 'week' })
+		: duration({ count: days, unit: 'day' });
+}
+
+function storageSize(bytes: number): string {
+	const units = ['bytes', 'KB', 'MB', 'GB', 'TB'];
+	let unit = 0;
+	let size = bytes;
+
+	while (size >= 1024 && unit < units.length - 1) {
+		size /= 1024;
+		unit += 1;
+	}
+
+	return `${Number(size.toFixed(1))} ${units[unit]}`;
 }
 
 function planFeatures(plan: PublicPricingCatalog['plans'][number], isFree: boolean): PlanFeature[] {
 	return [
 		{ label: `${usd(plan.monthlyUsageDollars)} of AI usage each month` },
+		{
+			label: plan.retentionDays
+				? `Threads kept for ${retentionPeriod(plan.retentionDays)} after the last message`
+				: 'Threads kept forever'
+		},
+		{
+			label: plan.storageBytes
+				? `${storageSize(plan.storageBytes)} of file storage`
+				: 'Unlimited file storage'
+		},
 		{ label: 'Bring your own API keys and subscriptions' },
 		{ label: `${isFree ? 'Limited' : 'Unlimited'} context from the web` },
 		{ label: 'Fair source', href: 'https://fsl.software/' },
