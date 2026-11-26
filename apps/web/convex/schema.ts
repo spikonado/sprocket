@@ -71,7 +71,9 @@ export default defineSchema({
 		monthlyProductId: v.optional(v.string()),
 		annualProductId: v.optional(v.string()),
 		monthlyPrice: v.optional(vPrice),
-		annualPrice: v.optional(vPrice)
+		annualPrice: v.optional(vPrice),
+		retentionDays: v.optional(v.number()),
+		storageBytes: v.optional(v.number())
 	})
 		.index('by_tierId', ['tierId'])
 		.index('by_monthlyProductId', ['monthlyProductId'])
