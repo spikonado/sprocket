@@ -252,7 +252,6 @@ fn deserializes_a_pending_prompt_from_convex_numbers() {
             "fastMode": false,
             "startedAt": 1.0
         },
-        "prompt": "hello",
         "pendingPrompt": {
             "text": "hello",
             "imageUploads": [{

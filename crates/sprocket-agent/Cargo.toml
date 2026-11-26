@@ -25,6 +25,7 @@ pdf-inspector = "1.25.2"
 percent-encoding = "2.3.2"
 posthog-rs.workspace = true
 pulldown-cmark = { version = "0.13.6", default-features = false }
+regex = "1.13.2"
 reqwest = { workspace = true, features = ["gzip", "json", "rustls", "stream"] }
 rig = { version = "0.46.0", default-features = false, features = ["agent", "reqwest", "rustls"] }
 schemars = "1"

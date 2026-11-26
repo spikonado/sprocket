@@ -104,6 +104,8 @@ pub struct SubagentLaunchRequest {
     pub submission_id: String,
     /// Child execution secret; never the parent run's secret.
     pub execution_secret: String,
+    /// The prompt as the caller wrote it. Convex stores a redacted copy.
+    pub prompt: String,
     pub workspace_path: String,
     pub selected_model: String,
     pub completion_provider: CompletionProvider,

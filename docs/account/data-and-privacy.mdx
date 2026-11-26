@@ -16,6 +16,17 @@ Read the full [privacy policy](https://spikonado.com/privacy).
 - Usage and purchase records.
 - API keys, GitHub tokens saved by older versions of Sprocket, and Claude sign-in tokens, encrypted in [WorkOS Vault](https://workos.com/vault).
 
+## Secrets in threads
+
+Before your computer uploads a prompt, reply, tool call, tool output, or context summary, Sprocket replaces secrets in it with placeholders like `[redacted:openai-key]`. It looks for known key formats, private keys, passwords in URLs and long random strings.
+
+- Model reasoning is uploaded as the provider returned it, because providers need it unchanged to continue the conversation.
+- Web search and scrape requests are uploaded as written, because Sprocket's servers run them.
+- Your `AGENTS.md` files and skill descriptions are uploaded as written, because the agent needs them in every message.
+- Questions the agent asks and the answers they get are uploaded as written, so the agent can share a callback URL or receive a key it asked for.
+- Artifact contents are uploaded as written, because an artifact is a copy of the file.
+- While the agent works on the message that brought in a secret, it uses the real value. Later messages, and work that resumes after Sprocket restarts, see the placeholders, so the agent can't read a key you pasted in an earlier message.
+
 ## Kept on your computer
 
 - Your project files. The agent reads and edits them in place.

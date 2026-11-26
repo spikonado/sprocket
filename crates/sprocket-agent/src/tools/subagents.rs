@@ -25,6 +25,7 @@ use super::job::execute_tool_job_with_id;
 use crate::catalog::{SubagentModelChoice, model_catalog};
 use crate::convex::{MutationFailure, RuntimeClient};
 use crate::run_settings::{ResolvedSettings, SettingsOverrides, resolve_settings};
+use crate::secret_redaction::redact_secrets;
 use crate::subagents::{
     CreateSubagentRunResponse, SharedSubagentLauncher, SubagentControlResponse,
     SubagentLaunchRequest, SubagentMonitorInfo, SubagentThreadSnapshot,
@@ -508,7 +509,7 @@ async fn run_subagent(
         if let Some(thread_id) = &thread_id {
             fields.insert("threadId".to_string(), thread_id.clone().into());
         }
-        fields.insert("prompt".to_string(), request.prompt.into());
+        fields.insert("prompt".to_string(), redact_secrets(&request.prompt).into());
         fields.insert("model".to_string(), resolved.model.clone().into());
         fields.insert("reasoning".to_string(), resolved.reasoning.clone().into());
         fields.insert("fast".to_string(), resolved.fast.into());
@@ -535,6 +536,7 @@ async fn run_subagent(
             launcher,
             context,
             &created,
+            &request.prompt,
             &submission_id,
             &child_execution_secret,
         )
@@ -559,6 +561,7 @@ async fn launch_queued_child(
     launcher: &SharedSubagentLauncher,
     context: &AgentToolContext,
     created: &CreateSubagentRunResponse,
+    prompt: &str,
     submission_id: &str,
     child_execution_secret: &str,
 ) -> Result<(), ToolExecutionError> {
@@ -568,6 +571,7 @@ async fn launch_queued_child(
             thread_id: created.thread_id.clone(),
             submission_id: submission_id.to_string(),
             execution_secret: child_execution_secret.to_string(),
+            prompt: prompt.to_string(),
             workspace_path: context.workspace_root.to_string_lossy().into_owned(),
             selected_model: created.settings.model.clone(),
             completion_provider: created.settings.completion_provider,
@@ -840,6 +844,7 @@ impl ControlSubagentTool {
                         require_launcher(&self.context)?,
                         &self.context,
                         &queued,
+                        "",
                         &submission_id,
                         &child_execution_secret,
                     )

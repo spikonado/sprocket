@@ -624,6 +624,7 @@ async fn load_prior_history(
     runtime: &RuntimeClient,
     store: &TranscriptStore,
     context: &RunContextResponse,
+    submitted_prompt: &str,
     run_id: &str,
     supports_images: bool,
 ) -> anyhow::Result<PriorHistory> {
@@ -648,18 +649,24 @@ async fn load_prior_history(
         },
     )
     .await?;
-    let current_prompt = match context.pending_prompt.clone() {
+    let mut current_prompt = match context.pending_prompt.clone() {
         Some(mut prompt) => {
             cache_attachments(store, user_id, thread_id, &mut prompt, |_| async {
                 Ok(None)
             })
             .await?;
-            Some(prompt.text_with_attachments())
+            Some(prompt)
         }
-        None => pending_prompt_part(&state, &parts, run_id)
-            .and_then(|part| part.prompt.as_ref())
-            .map(|prompt| prompt.text_with_attachments()),
+        None => pending_prompt_part(&state, &parts, run_id).and_then(|part| part.prompt.clone()),
     };
+    // Convex holds the prompt with secrets redacted, so the turn that submitted it reads the
+    // text this process still has. Recovered runs have none and read the redacted copy.
+    let submitted_prompt = submitted_prompt.trim();
+    if let Some(prompt) = &mut current_prompt
+        && !submitted_prompt.is_empty()
+    {
+        prompt.text = submitted_prompt.to_string();
+    }
     let mut history = agent_history_from_parts(
         &state,
         &parts,
@@ -668,7 +675,7 @@ async fn load_prior_history(
     let shown_workspace_context = shown_workspace_context(&state, &parts);
     crate::tools::hydrate_tool_history(&mut history, &parts, supports_images).await;
     Ok(PriorHistory {
-        current_prompt,
+        current_prompt: current_prompt.map(|prompt| prompt.text_with_attachments()),
         command_cursors: crate::tools::CommandCursors::from_parts(&parts),
         messages: deserialize_agent_history(history)?,
         shown_workspace_context,
@@ -803,8 +810,14 @@ pub async fn run_agent(
 
     let reasoning_effort = context.run.reasoning_effort.clone();
     let fast_mode = context.run.fast_mode && capabilities.supports_fast;
-    let prepare_history =
-        load_prior_history(&runtime, &store, &context, &run_id, history_supports_images);
+    let prepare_history = load_prior_history(
+        &runtime,
+        &store,
+        &context,
+        &request.prompt,
+        &run_id,
+        history_supports_images,
+    );
     let prior_history = {
         let mut updates = match runtime.run_finished_subscription(&run_id).await {
             Ok(updates) => updates,
@@ -848,7 +861,7 @@ pub async fn run_agent(
         let prompt_text = prior_history
             .current_prompt
             .as_deref()
-            .unwrap_or(&context.prompt)
+            .unwrap_or_default()
             .trim();
         if prompt_text.is_empty() && !is_continuation && !prior_history.continue_from_finished_turns
         {

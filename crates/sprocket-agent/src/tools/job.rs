@@ -9,6 +9,7 @@ use sprocket_workspace::WorkspaceCancellation;
 use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure};
 use crate::convex::{PartsMutationResponse, PersistedTranscriptPart, RuntimeClient};
 use crate::hooks::ToolInvocationAssignment;
+use crate::secret_redaction::{redact_json, redact_secrets};
 
 pub(super) const GET_JOB_FUNCTION: &str = "executor:getJob";
 
@@ -90,7 +91,7 @@ pub(super) async fn begin_executor_job(
     context: &AgentToolContext,
     kind: &str,
     assignment: ToolInvocationAssignment,
-    payload: &serde_json::Value,
+    mut payload: serde_json::Value,
 ) -> Result<String, ToolExecutionError> {
     let mut begin_args = BTreeMap::new();
     begin_args.insert("runId".to_string(), context.run_id.clone().into());
@@ -106,15 +107,14 @@ pub(super) async fn begin_executor_job(
         Value::Float64(assignment.attempt_seq as f64),
     );
     begin_args.insert("streamId".to_string(), assignment.stream_id.into());
-    let mut stored_payload = payload.clone();
     if matches!(kind, "bind_artifact" | "save_artifact")
-        && let Some(fields) = stored_payload.as_object_mut()
+        && let Some(fields) = payload.as_object_mut()
     {
         fields.remove("path");
     }
     begin_args.insert(
         "payload".to_string(),
-        Value::try_from(stored_payload).map_err(tool_error)?,
+        Value::try_from(payload).map_err(tool_error)?,
     );
     let BeginJobResponse { job_id, parts } = context
         .runtime
@@ -148,7 +148,8 @@ pub(super) async fn execute_cloud_tool_job(
         return Err(cancelled_error());
     }
 
-    let job_id = begin_executor_job(context, kind, assignment, &payload).await?;
+    // Convex runs cloud jobs from the stored payload, so it gets the real values.
+    let job_id = begin_executor_job(context, kind, assignment, payload).await?;
     let mut job_args = BTreeMap::new();
     job_args.insert("runId".to_string(), context.run_id.clone().into());
     job_args.insert("jobId".to_string(), job_id.clone().into());
@@ -272,7 +273,7 @@ async fn execute_tool_job_with_assignment<F, Fut>(
     context: &AgentToolContext,
     assignment: ToolInvocationAssignment,
     kind: &str,
-    payload: serde_json::Value,
+    mut payload: serde_json::Value,
     operation: F,
 ) -> Result<serde_json::Value, ToolExecutionError>
 where
@@ -295,7 +296,11 @@ where
         return Err(cancelled_error());
     }
 
-    let job_id = begin_executor_job(context, kind, assignment, &payload).await?;
+    // Convex's hosted scraper fetches the URL stored in the job, as cloud jobs do.
+    if kind != "scrape_url" {
+        redact_json(&mut payload);
+    }
+    let job_id = begin_executor_job(context, kind, assignment, payload).await?;
 
     let cancellation = WorkspaceCancellation::new();
     let operation = operation(cancellation.clone(), job_id.clone());
@@ -337,7 +342,9 @@ async fn finish_job(
     outcome: Result<serde_json::Value, ToolExecutionError>,
 ) -> Result<serde_json::Value, ToolExecutionError> {
     let outcome = outcome.and_then(|output| {
-        let result = Value::try_from(output.clone()).map_err(tool_error)?;
+        let mut stored = output.clone();
+        redact_json(&mut stored);
+        let result = Value::try_from(stored).map_err(tool_error)?;
         Ok((output, result))
     });
     let mut args = BTreeMap::new();
@@ -357,7 +364,10 @@ async fn finish_job(
         }
         Err(error) => {
             tracing::info!("failed tool {} for run {}: {}", kind, context.run_id, error);
-            args.insert("error".to_string(), error.to_string().into());
+            args.insert(
+                "error".to_string(),
+                redact_secrets(&error.to_string()).into(),
+            );
             ("executor:fail", Err(error))
         }
     };

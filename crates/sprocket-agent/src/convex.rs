@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 use tokio::time::sleep;
 
+use crate::secret_redaction::{redact_completion_item, redact_secrets};
 use crate::types::{
     ApiKeyCredential, BearerCredential, ClaudeCredential, CompletionProvider, CreateRunResponse,
     RenewClaimResponse, RunAgentRequest, RunContextResponse, StartRunResponse, VertexCredential,
@@ -103,7 +104,7 @@ pub(crate) struct ContextHandoffWrite<'a> {
 impl ContextHandoffWrite<'_> {
     fn args(&self) -> BTreeMap<String, Value> {
         let mut args = BTreeMap::new();
-        args.insert("summary".to_string(), self.summary.to_string().into());
+        args.insert("summary".to_string(), redact_secrets(self.summary).into());
         args.insert(
             "completionAttemptSeq".to_string(),
             Value::Float64(self.completion_attempt_seq as f64),
@@ -292,7 +293,7 @@ impl RuntimeClient {
         if let Some(repository_key) = &request.repository_key {
             args.insert("repositoryKey".to_string(), repository_key.clone().into());
         }
-        args.insert("prompt".to_string(), request.prompt.clone().into());
+        args.insert("prompt".to_string(), redact_secrets(&request.prompt).into());
         args.insert("storageIds".to_string(), string_array(&request.storage_ids));
         args.insert(
             "selectedModel".to_string(),
@@ -454,10 +455,11 @@ impl RuntimeClient {
         run_id: &str,
         claim_id: &str,
         attempt_seq: u64,
-        items: Vec<serde_json::Value>,
+        mut items: Vec<serde_json::Value>,
         context_tokens: Option<u64>,
     ) -> anyhow::Result<()> {
         let empty_completion = items.is_empty();
+        items.iter_mut().for_each(redact_completion_item);
         let mut args = self.run_args_with_claim(run_id, claim_id);
         args.insert("attemptSeq".to_string(), Value::Float64(attempt_seq as f64));
         args.insert(
