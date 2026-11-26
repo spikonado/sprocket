@@ -7,7 +7,7 @@ use rig::agent::{
     HookContext, ModelTurnAction, ModelTurnFinished, OutcomeAction, OutcomeEvent,
 };
 use rig::completion::{FinishReason, PromptError, ToolDefinition};
-use rig::effect::EffectId;
+use rig::effect::{EffectId, EffectKind};
 use rig::message::AssistantContent;
 use serde::Serialize;
 use serde_json::{Map, Value, json};
@@ -338,7 +338,7 @@ impl AgentHook for GenerationTracker {
         let Ok(mut state) = self.state.lock() else {
             return DispatchAction::Proceed;
         };
-        if let Some(request) = event.completion_request() {
+        if let EffectKind::Completion { request, .. } = event.kind {
             state.parameter_defaults = parameter_defaults(&request.tools);
         } else if let Some(name) = event.tool_name() {
             let changed_defaults = changed_defaults(

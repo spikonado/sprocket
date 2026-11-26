@@ -240,10 +240,7 @@ impl AgentHook for AgentPromptHook {
     }
 
     fn observes(&self, kind: StepEventKind) -> bool {
-        matches!(
-            kind,
-            StepEventKind::InvalidToolCall | StepEventKind::ToolDispatch
-        )
+        kind == StepEventKind::ToolDispatch
     }
 }
 

@@ -11,7 +11,7 @@ use rig::{DynModel, Model, ProviderError};
 use serde_json::{Map, Value, json};
 
 use crate::anthropic::claude_tool_schema;
-use crate::openai::StatelessResponses;
+use crate::openai::stateless;
 
 const APP_URL: &str = "https://usesprocket.dev";
 const APP_TITLE: &str = "Sprocket";
@@ -87,7 +87,7 @@ fn gateway_responses(
         config.dialect.quirks.responses.reasoning_ciphertext = false;
     }
     Ok(GatewayResponses {
-        wire: StatelessResponses::new(Responses::new(config, model)),
+        wire: stateless(Responses::new(config, model)),
         gateway,
         claude,
         cache_write_ttl: cache_write_ttl.map(str::to_string),
@@ -97,7 +97,7 @@ fn gateway_responses(
 
 #[derive(Clone)]
 struct GatewayResponses {
-    wire: StatelessResponses,
+    wire: Responses,
     gateway: ResponsesGateway,
     claude: bool,
     cache_write_ttl: Option<String>,

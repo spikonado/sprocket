@@ -9,7 +9,7 @@ use rig::wasm_compat::WasmCompatSend;
 use rig::{DynModel, Model};
 
 use crate::now_ms;
-use crate::openai::{StatelessResponses, transport_auth_config};
+use crate::openai::{stateless, transport_auth_config};
 use crate::request_compression::zstd_compress;
 use crate::types::ChatGptCredentials;
 
@@ -19,6 +19,7 @@ const STREAM_REQUIRED: &str =
     "ChatGPT inference requires streaming; non-streaming completion is not supported.";
 const SIWC_TOOL_NAMESPACE: &str = "sprocket";
 const OPENAI_RESPONSES_URL: &str = "https://api.openai.com/v1/responses";
+const STREAM_FRAME_LIMIT: usize = 4 * 1024 * 1024;
 const ERROR_BODY_LIMIT: usize = 64 * 1024;
 const ERROR_BODY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const SUBSCRIPTION_USAGE_LIMIT_CODE: &str = "subscription_sharing_usage_limit_exceeded";
@@ -112,15 +113,11 @@ fn lock_connection(connection: &SharedConnection) -> MutexGuard<'_, PinnedConnec
     connection.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-fn stream_error(message: impl Into<String>) -> http_client::Error {
-    http_client::Error::Instance(message.into().into())
-}
-
 #[expect(clippy::result_large_err, reason = "rig's http_client::Error")]
 fn check_connection(connection: &SharedConnection) -> http_client::Result<()> {
     lock_connection(connection)
         .check()
-        .map_err(|error| stream_error(error.to_string()))
+        .map_err(|error| http_client::Error::permanent(error.to_string()))
 }
 
 async fn access_token(
@@ -181,58 +178,46 @@ impl std::fmt::Debug for SiwcHttpClient {
 }
 
 impl HttpClientExt for SiwcHttpClient {
-    fn send<T, U>(
+    fn send(
         &self,
-        _req: Request<T>,
-    ) -> impl Future<Output = http_client::Result<Response<http_client::LazyBody<U>>>>
+        _req: Request<Bytes>,
+    ) -> impl Future<Output = http_client::Result<Response<http_client::LazyBody>>>
     + WasmCompatSend
-    + 'static
-    where
-        T: Into<Bytes>,
-        T: WasmCompatSend,
-        U: From<Bytes>,
-        U: WasmCompatSend + 'static,
-    {
-        std::future::ready(Err(stream_error(STREAM_REQUIRED)))
+    + 'static {
+        std::future::ready(Err(http_client::Error::permanent(STREAM_REQUIRED)))
     }
 
-    fn send_multipart<U>(
+    fn send_multipart(
         &self,
         _req: Request<rig::http_client::MultipartForm>,
-    ) -> impl Future<Output = http_client::Result<Response<http_client::LazyBody<U>>>>
+    ) -> impl Future<Output = http_client::Result<Response<http_client::LazyBody>>>
     + WasmCompatSend
-    + 'static
-    where
-        U: From<Bytes>,
-        U: WasmCompatSend + 'static,
-    {
-        std::future::ready(Err(stream_error(STREAM_REQUIRED)))
+    + 'static {
+        std::future::ready(Err(http_client::Error::permanent(STREAM_REQUIRED)))
     }
 
-    fn send_streaming<T>(
+    fn send_streaming(
         &self,
-        req: Request<T>,
+        req: Request<Bytes>,
     ) -> impl Future<Output = http_client::Result<http_client::StreamingResponse>> + WasmCompatSend
-    where
-        T: Into<Bytes> + WasmCompatSend,
     {
         let this = self.clone();
         async move {
             let (credentials, connection) = this
                 .authorization
                 .as_ref()
-                .ok_or_else(|| stream_error(CONNECTION_CHANGED))?;
+                .ok_or_else(|| http_client::Error::permanent(CONNECTION_CHANGED))?;
             check_connection(connection)?;
             let (parts, body) = req.into_parts();
             let endpoint = parts.uri.to_string();
             if endpoint != this.responses_url {
-                return Err(stream_error(
+                return Err(http_client::Error::permanent(
                     "ChatGPT inference requires the public Responses endpoint.",
                 ));
             }
-            let body = rewrite_request_body(&body.into())?;
+            let body = rewrite_request_body(&body)?;
             // The SIWC route's gateway resets uncompressed bodies over 1 MiB with a 503.
-            let body = zstd_compress(&body).map_err(|error| stream_error(error.to_string()))?;
+            let body = zstd_compress(&body).map_err(http_client::Error::permanent)?;
             let request = this
                 .inner
                 .request(parts.method, endpoint)
@@ -240,26 +225,26 @@ impl HttpClientExt for SiwcHttpClient {
                 .header(http::header::CONTENT_ENCODING, "zstd")
                 .body(body)
                 .build()
-                .map_err(|error| stream_error(error.to_string()))?;
+                .map_err(http_client::Error::permanent)?;
             let token = access_token(credentials, connection)
                 .await
-                .map_err(|error| stream_error(error.to_string()))?;
+                .map_err(http_client::Error::transient)?;
             let mut request = request;
             request.headers_mut().insert(
                 http::header::AUTHORIZATION,
                 HeaderValue::from_str(&format!("Bearer {token}"))
-                    .map_err(http_client::Error::from)?,
+                    .map_err(http_client::Error::permanent)?,
             );
             request.headers_mut().insert(
                 "session_id",
-                HeaderValue::from_str(&this.session_id).map_err(http_client::Error::from)?,
+                HeaderValue::from_str(&this.session_id).map_err(http_client::Error::permanent)?,
             );
             check_connection(connection)?;
             let response = this
                 .inner
                 .execute(request)
                 .await
-                .map_err(|error| stream_error(error.to_string()))?;
+                .map_err(http_client::Error::transient)?;
             if !response.status().is_success() {
                 return Err(inference_error(response, &token).await);
             }
@@ -278,6 +263,10 @@ fn streaming_response(
         .version(response.version());
     if let Some(headers) = res.headers_mut() {
         *headers = response.headers().clone();
+        // The SIWC route can omit the SSE content type.
+        headers
+            .entry(http::header::CONTENT_TYPE)
+            .or_insert(HeaderValue::from_static("text/event-stream"));
     }
     let stream: rig::http_client::BoxedStream =
         Box::pin(SiwcStreamGuard::new(response.bytes_stream(), connection));
@@ -413,7 +402,7 @@ impl<S> SiwcStreamGuard<S> {
         Self {
             inner,
             connection,
-            framing: rig::http_client::framing::SseFramer::new(),
+            framing: rig::http_client::framing::SseFramer::with_limit(STREAM_FRAME_LIMIT),
             ended: false,
             connection_changed,
         }
@@ -436,7 +425,9 @@ where
         }
         if self.connection_changed.as_mut().poll(cx).is_ready() {
             self.ended = true;
-            return std::task::Poll::Ready(Some(Err(stream_error(CONNECTION_CHANGED))));
+            return std::task::Poll::Ready(Some(Err(http_client::Error::permanent(
+                CONNECTION_CHANGED,
+            ))));
         }
         if let Err(error) = check_connection(&self.connection) {
             self.ended = true;
@@ -444,19 +435,17 @@ where
         }
         match self.inner.poll_next_unpin(cx) {
             std::task::Poll::Ready(Some(Ok(chunk))) => {
-                const FRAME_LIMIT: usize = 4 * 1024 * 1024;
-                if self.framing.pending().saturating_add(chunk.len()) > FRAME_LIMIT {
+                if self.framing.push(&chunk).any(|event| event.is_err()) {
                     self.ended = true;
-                    return std::task::Poll::Ready(Some(Err(stream_error(
+                    return std::task::Poll::Ready(Some(Err(http_client::Error::permanent(
                         "ChatGPT returned an oversized stream frame.",
                     ))));
                 }
-                self.framing.push(&chunk).for_each(drop);
                 std::task::Poll::Ready(Some(Ok(chunk)))
             }
             std::task::Poll::Ready(Some(Err(error))) => {
                 self.ended = true;
-                std::task::Poll::Ready(Some(Err(stream_error(error.to_string()))))
+                std::task::Poll::Ready(Some(Err(http_client::Error::transient(error))))
             }
             std::task::Poll::Ready(None) => {
                 self.ended = true;
@@ -469,19 +458,20 @@ where
 
 #[expect(clippy::result_large_err, reason = "rig's http_client::Error")]
 fn rewrite_request_body(body: &Bytes) -> http_client::Result<Bytes> {
-    let mut body: serde_json::Value = serde_json::from_slice(body)
-        .map_err(|error| stream_error(format!("invalid Responses request body: {error}")))?;
+    let mut body: serde_json::Value = serde_json::from_slice(body).map_err(|error| {
+        http_client::Error::permanent(format!("invalid Responses request body: {error}"))
+    })?;
     shape_siwc_body(&mut body)?;
     serde_json::to_vec(&body)
         .map(Bytes::from)
-        .map_err(|error| stream_error(error.to_string()))
+        .map_err(http_client::Error::permanent)
 }
 
 #[expect(clippy::result_large_err, reason = "rig's http_client::Error")]
 fn shape_siwc_body(body: &mut serde_json::Value) -> http_client::Result<()> {
-    let object = body
-        .as_object_mut()
-        .ok_or_else(|| stream_error("Responses request body is not a JSON object"))?;
+    let object = body.as_object_mut().ok_or_else(|| {
+        http_client::Error::permanent("Responses request body is not a JSON object")
+    })?;
     for field in UNSUPPORTED_FIELDS {
         object.remove(*field);
     }
@@ -490,9 +480,9 @@ fn shape_siwc_body(body: &mut serde_json::Value) -> http_client::Result<()> {
     let include = object
         .entry("include")
         .or_insert_with(|| serde_json::json!([]));
-    let include = include
-        .as_array_mut()
-        .ok_or_else(|| stream_error("ChatGPT response include fields must be an array."))?;
+    let include = include.as_array_mut().ok_or_else(|| {
+        http_client::Error::permanent("ChatGPT response include fields must be an array.")
+    })?;
     if !include
         .iter()
         .any(|item| item == "reasoning.encrypted_content")
@@ -510,7 +500,9 @@ fn namespace_function_tools(
         return Ok(());
     }
     if !object["tools"].is_array() {
-        return Err(stream_error("ChatGPT tool definitions must be an array."));
+        return Err(http_client::Error::permanent(
+            "ChatGPT tool definitions must be an array.",
+        ));
     }
     let tools = object
         .remove("tools")
@@ -523,15 +515,15 @@ fn namespace_function_tools(
         } else if tool["type"] == "namespace" && tool["name"] == SIWC_TOOL_NAMESPACE {
             let nested = tool["tools"]
                 .as_array()
-                .ok_or_else(|| stream_error("Invalid ChatGPT tool namespace."))?;
+                .ok_or_else(|| http_client::Error::permanent("Invalid ChatGPT tool namespace."))?;
             if nested.iter().any(|tool| tool["type"] != "function") {
-                return Err(stream_error(
+                return Err(http_client::Error::permanent(
                     "ChatGPT namespaces only support function tools.",
                 ));
             }
             functions.extend(nested.iter().cloned());
         } else {
-            return Err(stream_error(format!(
+            return Err(http_client::Error::permanent(format!(
                 "ChatGPT inference does not support the hosted {:?} tool.",
                 tool["type"].as_str().unwrap_or("unknown")
             )));
@@ -552,10 +544,11 @@ fn namespace_function_tools(
     Ok(())
 }
 
-// The SIWC route can omit the SSE content type.
-fn siwc_wire(config: openai::OpenAIConfig, model: impl Into<String>) -> StatelessResponses {
-    StatelessResponses::new(openai::responses_api::wire::Responses::new(config, model))
-        .with_relaxed_content_type()
+fn siwc_wire(
+    config: openai::OpenAIConfig,
+    model: impl Into<String>,
+) -> openai::responses_api::wire::Responses {
+    stateless(openai::responses_api::wire::Responses::new(config, model))
 }
 
 impl ChatGptClient {

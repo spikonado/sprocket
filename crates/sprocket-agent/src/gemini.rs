@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use rig::completion::{CompletionRequest, Effort, Message, Reasoning};
+use rig::completion::{CompletionRequest, Message, Reasoning};
 use rig::error::EncodeError;
 use rig::http_client::DynHttpClient;
 use rig::operation::Completion;
@@ -9,7 +9,6 @@ use rig::providers::gemini::completion::GenerateContent;
 use rig::providers::gemini::extension::GeminiOptions;
 use rig::wire::{Descriptor, Encoded, Mode, Wire, WireFrame};
 use rig::{DynModel, Model};
-use serde_json::json;
 
 pub(crate) fn generate_content_model(
     api_key: String,
@@ -68,17 +67,8 @@ impl Wire for GeminiContent {
             .chat_history
             .insert(0, Arc::new(Message::system(self.instructions.clone())));
         // Gemini omits thought summaries unless asked for them.
-        match request.options.reasoning {
-            // Rig 0.46 caps Gemini at `high`, but Gemini 4 takes `xhigh`.
-            Some(Reasoning::Effort(Effort::XHigh)) => {
-                request.options.reasoning = None;
-                request.additional_params.get_or_insert_with(|| json!({}))["generationConfig"]["thinkingConfig"] =
-                    json!({"thinkingLevel": "xhigh", "includeThoughts": true});
-            }
-            Some(Reasoning::Effort(_)) => {
-                request = request.provider_option(GeminiOptions::new().include_thoughts(true));
-            }
-            _ => {}
+        if let Some(Reasoning::Effort(_)) = request.options.reasoning {
+            request = request.provider_option(GeminiOptions::new().include_thoughts(true));
         }
         let model = request
             .model

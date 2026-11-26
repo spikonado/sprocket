@@ -16,9 +16,10 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::sync::OwnedMutexGuard;
 
+use crate::anthropic::DEFAULT_MAX_TOKENS;
+
 pub(crate) const MCP_SERVER: &str = "sprocket";
 const UNUSED_ENDPOINT: &str = "http://cli-session.invalid";
-const DEFAULT_MAX_TOKENS: u64 = 128_000;
 const TURN_END_TIMEOUT: Duration = Duration::from_secs(30);
 const IMAGE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30);
 const STDERR_TAIL_BYTES: usize = 4096;
@@ -99,10 +100,10 @@ pub(crate) fn completion_model<C: Cli>(
     cwd: &Path,
     resume: Option<ResumePoint>,
 ) -> DynModel<Completion> {
-    let wire = AnthropicConfig::new("")
+    let mut wire = AnthropicConfig::new("")
         .with_base_url(UNUSED_ENDPOINT)
-        .completion(model)
-        .with_default_max_tokens(DEFAULT_MAX_TOKENS);
+        .completion(model);
+    wire.default_max_tokens = Some(DEFAULT_MAX_TOKENS);
     let transport = CliTransport(Arc::new(Run {
         cli,
         instructions: instructions.to_string(),
@@ -589,59 +590,44 @@ impl<C: Cli> std::fmt::Debug for CliTransport<C> {
     }
 }
 
-fn transport_error(message: impl Into<String>) -> http_client::Error {
-    http_client::Error::Instance(message.into().into())
-}
-
 fn stream_required<C: Cli>() -> http_client::Error {
-    transport_error(format!("{} only streams completions.", C::NAME))
+    http_client::Error::permanent(format!("{} only streams completions.", C::NAME))
 }
 
 impl<C: Cli> HttpClientExt for CliTransport<C> {
-    fn send<T, U>(
+    fn send(
         &self,
-        _req: Request<T>,
-    ) -> impl Future<Output = http_client::Result<Response<http_client::LazyBody<U>>>>
+        _req: Request<Bytes>,
+    ) -> impl Future<Output = http_client::Result<Response<http_client::LazyBody>>>
     + WasmCompatSend
-    + 'static
-    where
-        T: Into<Bytes>,
-        T: WasmCompatSend,
-        U: From<Bytes>,
-        U: WasmCompatSend + 'static,
-    {
+    + 'static {
         std::future::ready(Err(stream_required::<C>()))
     }
 
-    fn send_multipart<U>(
+    fn send_multipart(
         &self,
         _req: Request<rig::http_client::MultipartForm>,
-    ) -> impl Future<Output = http_client::Result<Response<http_client::LazyBody<U>>>>
+    ) -> impl Future<Output = http_client::Result<Response<http_client::LazyBody>>>
     + WasmCompatSend
-    + 'static
-    where
-        U: From<Bytes>,
-        U: WasmCompatSend + 'static,
-    {
+    + 'static {
         std::future::ready(Err(stream_required::<C>()))
     }
 
-    fn send_streaming<T>(
+    fn send_streaming(
         &self,
-        req: Request<T>,
+        req: Request<Bytes>,
     ) -> impl Future<Output = http_client::Result<http_client::StreamingResponse>> + WasmCompatSend
-    where
-        T: Into<Bytes> + WasmCompatSend,
     {
         let run = Arc::clone(&self.0);
-        let body: Bytes = req.into_body().into();
+        let body = req.into_body();
         async move {
-            let turn = Turn::parse(&body, &run.instructions)
-                .map_err(|error| transport_error(format!("invalid Messages request: {error}")))?;
+            let turn = Turn::parse(&body, &run.instructions).map_err(|error| {
+                http_client::Error::permanent(format!("invalid Messages request: {error}"))
+            })?;
             let state = Arc::clone(&run.state).lock_owned().await;
             let stream = TurnStream::start(run, state, turn)
                 .await
-                .map_err(|error| transport_error(format!("{error:#}")))?;
+                .map_err(|error| http_client::Error::permanent(format!("{error:#}")))?;
             let body: http_client::BoxedStream = Box::pin(stream.into_stream());
             Response::builder()
                 .status(http::StatusCode::OK)

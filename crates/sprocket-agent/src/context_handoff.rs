@@ -220,13 +220,8 @@ impl AgentHook for ContextHandoffHook {
         self.state().finish_turn(&event)
     }
 
-    fn observes(&self, kind: StepEventKind) -> bool {
-        matches!(
-            kind,
-            StepEventKind::CompletionCall
-                | StepEventKind::ModelTurnFinished
-                | StepEventKind::InvalidToolCall
-        )
+    fn observes(&self, _kind: StepEventKind) -> bool {
+        false
     }
 }
 

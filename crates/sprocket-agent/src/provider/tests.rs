@@ -67,18 +67,12 @@ fn fast_mode_sends_each_providers_service_tier() {
         (CompletionProvider::Chatgpt, "priority"),
     ] {
         assert_eq!(
-            super::service_tier_params(provider, true),
+            serde_json::Value::Object(super::service_tier_params(provider, true)),
             serde_json::json!({ "service_tier": tier })
         );
-        assert_eq!(
-            super::service_tier_params(provider, false),
-            serde_json::json!({})
-        );
+        assert!(super::service_tier_params(provider, false).is_empty());
     }
-    assert_eq!(
-        super::service_tier_params(CompletionProvider::Claude, true),
-        serde_json::json!({})
-    );
+    assert!(super::service_tier_params(CompletionProvider::Claude, true).is_empty());
 }
 
 #[test]

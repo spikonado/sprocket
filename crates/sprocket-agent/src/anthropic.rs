@@ -10,7 +10,7 @@ use rig::{DynModel, Model};
 use serde_json::{Map, Value, json};
 
 /// Claude Code's output cap, for models Rig's catalog doesn't list.
-const DEFAULT_MAX_TOKENS: u64 = 128_000;
+pub(crate) const DEFAULT_MAX_TOKENS: u64 = 128_000;
 const ROOT_COMBINATORS: [&str; 3] = ["anyOf", "oneOf", "allOf"];
 const VERTEX_ANTHROPIC_VERSION: &str = "vertex-2023-10-16";
 
@@ -58,9 +58,7 @@ fn claude_messages(
     vertex_models_url: Option<String>,
 ) -> ClaudeMessages {
     let mut wire = config.completion(model).with_prompt_caching();
-    if wire.default_max_tokens.is_none() {
-        wire = wire.with_default_max_tokens(DEFAULT_MAX_TOKENS);
-    }
+    wire.default_max_tokens.get_or_insert(DEFAULT_MAX_TOKENS);
     ClaudeMessages {
         wire,
         instructions: instructions.to_string(),
