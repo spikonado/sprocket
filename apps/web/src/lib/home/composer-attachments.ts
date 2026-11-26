@@ -90,11 +90,12 @@ export class ComposerAttachments implements Store<ComposerAttachment[]> {
 		const userId = options.userId === undefined ? context.userId : options.userId;
 		const threadId = options.threadId === undefined ? context.threadId : options.threadId;
 
-		for (const attachment of this.items) {
-			revokeAttachmentPreview(attachment.previewUrl);
+		// Sent attachments keep their previews because a failed send restores them with `replace`.
+		if (options.discard) {
+			for (const attachment of this.items) {
+				revokeAttachmentPreview(attachment.previewUrl);
 
-			if (options.discard && attachment.fileId) {
-				this.#discard({ userId, threadId, fileId: attachment.fileId });
+				if (attachment.fileId) this.#discard({ userId, threadId, fileId: attachment.fileId });
 			}
 		}
 

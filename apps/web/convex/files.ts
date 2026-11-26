@@ -16,6 +16,10 @@ const DRAFT_CLEANUP_BATCH_SIZE = 100;
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
+const BLOB_DELETE_RETRY_MS = 60 * 1_000;
+
+const BLOB_DELETE_ATTEMPTS = 8;
+
 const vUpload = v.object({ url: v.string(), headers: v.record(v.string(), v.string()) });
 
 const vFileMetadata = v.object({
@@ -152,10 +156,21 @@ export const cleanupDrafts = internalMutation({
 });
 
 export const deleteBlob = internalAction({
-	args: { userId: v.string(), blobId: v.string() },
+	args: { userId: v.string(), blobId: v.string(), attempt: v.optional(v.number()) },
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		await deleteObject(fileKey(args.userId, args.blobId));
+		const attempt = args.attempt ?? 0;
+
+		try {
+			await deleteObject(fileKey(args.userId, args.blobId));
+		} catch (error) {
+			if (attempt + 1 >= BLOB_DELETE_ATTEMPTS) throw error;
+
+			await ctx.scheduler.runAfter(BLOB_DELETE_RETRY_MS * 2 ** attempt, internal.files.deleteBlob, {
+				...args,
+				attempt: attempt + 1
+			});
+		}
 
 		return null;
 	}

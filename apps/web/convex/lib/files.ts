@@ -4,7 +4,7 @@ import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
 import { UPLOAD_URL_TTL_SECONDS } from '@convex/lib/r2';
 
 // The extra hour covers a PUT that R2 accepted just before its URL expired and clock skew.
-export const BLOB_DELETE_DELAY_MS = (UPLOAD_URL_TTL_SECONDS + 60 * 60) * 1_000;
+const BLOB_DELETE_DELAY_MS = (UPLOAD_URL_TTL_SECONDS + 60 * 60) * 1_000;
 
 /** Prefers a sent file, since drafts have no `threadId` and sort first. */
 export async function firstFileWithBlob(

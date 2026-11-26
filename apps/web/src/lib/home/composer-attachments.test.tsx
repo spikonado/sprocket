@@ -132,6 +132,33 @@ it('keeps one stable instance across renders and notifies subscribers on change'
 	unsubscribe();
 });
 
+it('keeps previews of sent attachments for recovery and revokes discarded ones', () => {
+	const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+	const { result } = renderAttachments({ api: null, userId: 'user-a', threadId: null });
+
+	const sent = [
+		{
+			localId: 'local-1',
+			name: 'robot.png',
+			mediaType: 'image/png',
+			size: 8,
+			previewUrl: 'blob:preview',
+			status: 'ready' as const
+		}
+	];
+
+	act(() => {
+		result.current.replace(sent);
+		result.current.clear({ discard: false });
+		result.current.replace(sent);
+	});
+	expect(revoke).not.toHaveBeenCalled();
+
+	act(() => result.current.clear({ discard: true }));
+	expect(revoke).toHaveBeenCalledWith('blob:preview');
+	revoke.mockRestore();
+});
+
 it('reports a pending upload failure through the latest committed onError', async () => {
 	const gate = Promise.withResolvers<TranscriptUploadResult>();
 

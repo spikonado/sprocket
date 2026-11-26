@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
-import { BLOB_DELETE_DELAY_MS } from '@convex/lib/files';
 import {
 	finishDueScheduledFunctions,
 	initConvexTest,
@@ -141,7 +140,7 @@ describe('files', () => {
 		).rejects.toThrow('File storage limit reached.');
 	});
 
-	it('deletes the blob after its upload URLs expire once its last file is discarded', async () => {
+	it('deletes the blob after its upload URLs expire once its last file is discarded, retrying failures', async () => {
 		const t = initConvexTest();
 		const owned = await seed(t);
 		const { file: first } = await createUpload(owned);
@@ -155,11 +154,14 @@ describe('files', () => {
 		const { file: reupload } = await createUpload(owned);
 		expect(await blobPath(t, reupload.fileId)).not.toBe(path);
 
-		vi.advanceTimersByTime(BLOB_DELETE_DELAY_MS);
-		await finishDueScheduledFunctions(t);
+		fetchMock.mockRejectedValueOnce(new TypeError('fetch failed'));
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
 		expect(
 			fetchMock.mock.calls.map(([request]) => [request.method, new URL(request.url).pathname])
-		).toEqual([['DELETE', path]]);
+		).toEqual([
+			['DELETE', path],
+			['DELETE', path]
+		]);
 	});
 
 	it('sweeps drafts older than a day and keeps sent files', async () => {
