@@ -84,6 +84,13 @@ const config = {
 	overrides: [
 		{ files: ['**/*.cjs'], rules: { 'typescript/no-require-imports': 'off' } },
 		{
+			files: [
+				'**/*.{test,spec}.{js,jsx,ts,tsx,mjs,cjs}',
+				'**/{test,tests}/**/*.{js,jsx,ts,tsx,mjs,cjs}'
+			],
+			rules: { 'anti-slop/no-implementation-detail-tests': 'error' }
+		},
+		{
 			files: ['apps/web/convex/**/*.ts'],
 			rules: {
 				'@convex-dev/no-old-registered-function-syntax': 'error',
