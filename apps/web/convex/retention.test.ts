@@ -6,7 +6,6 @@ import { RETENTION_GRACE_MS } from '@convex/retention';
 import {
 	finishDueScheduledFunctions,
 	initConvexTest,
-	insertUser,
 	seedThreadRecord,
 	seedTiers,
 	type ConvexTestInstance
@@ -36,7 +35,7 @@ async function seedRoot(t: ConvexTestInstance, lastMessageAt: number) {
 
 async function sweepAt(t: ConvexTestInstance, now: number) {
 	vi.setSystemTime(now);
-	await t.mutation(internal.retention.sweep, { cursor: null });
+	await t.mutation(internal.retention.sweep, {});
 	await finishDueScheduledFunctions(t);
 }
 
@@ -74,7 +73,6 @@ describe('retention sweep', () => {
 		const start = Date.now();
 		const t = initConvexTest();
 		await seedTiers(t);
-		await t.run((ctx) => insertUser(ctx, subject));
 		await setFreeRetention(t, 30);
 
 		const old = await seedRoot(t, start - 40 * DAY_MS);

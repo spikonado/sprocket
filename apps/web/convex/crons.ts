@@ -32,7 +32,7 @@ crons.daily(
 	'delete threads past plan retention',
 	{ hourUTC: 3, minuteUTC: 40 },
 	internal.retention.sweep,
-	{ cursor: null }
+	{}
 );
 
 export default crons;

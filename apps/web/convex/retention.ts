@@ -15,8 +15,6 @@ const USER_BATCH_SIZE = 16;
 
 const THREAD_BATCH_SIZE = 16;
 
-const vCursor = v.union(v.string(), v.null());
-
 type RetentionState = WithoutSystemFields<Doc<'threadRetention'>>;
 
 /** Undefined means unlimited. A shorter limit only applies once the grace period ends. */
@@ -70,6 +68,18 @@ function staleRoots(ctx: QueryCtx, userId: string, cutoff: number) {
 		);
 }
 
+/** Thread owners need no `users` row, since CLI sign-in never creates one. */
+async function nextThreadOwner(ctx: QueryCtx, afterUserId: string | undefined) {
+	const thread = await ctx.db
+		.query('threadRecords')
+		.withIndex('by_userId_lastMessageAt', (query) =>
+			afterUserId === undefined ? query : query.gt('userId', afterUserId)
+		)
+		.first();
+
+	return thread?.userId;
+}
+
 async function isExpired(ctx: QueryCtx, root: Doc<'threadRecords'>, cutoff: number) {
 	const lastDescendantActivityAt = (await hierarchyState(ctx.db, root._id))
 		?.lastDescendantActivityAt;
@@ -80,16 +90,17 @@ async function isExpired(ctx: QueryCtx, root: Doc<'threadRecords'>, cutoff: numb
 }
 
 export const sweep = internalMutation({
-	args: { cursor: vCursor },
+	args: { afterUserId: v.optional(v.string()) },
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const now = Date.now();
+		let afterUserId = args.afterUserId;
 
-		const users = await ctx.db
-			.query('users')
-			.paginate({ cursor: args.cursor, numItems: USER_BATCH_SIZE });
+		for (let visited = 0; visited < USER_BATCH_SIZE; visited++) {
+			const userId = await nextThreadOwner(ctx, afterUserId);
 
-		for (const { subject: userId } of users.page) {
+			if (userId === undefined) return null;
+			afterUserId = userId;
 			const days = await syncRetentionDays(ctx, userId, now);
 
 			if (days === undefined) continue;
@@ -104,16 +115,14 @@ export const sweep = internalMutation({
 			}
 		}
 
-		if (!users.isDone) {
-			await ctx.scheduler.runAfter(0, internal.retention.sweep, { cursor: users.continueCursor });
-		}
+		await ctx.scheduler.runAfter(0, internal.retention.sweep, { afterUserId });
 
 		return null;
 	}
 });
 
 export const sweepUser = internalMutation({
-	args: { userId: v.string(), cutoff: v.number(), cursor: vCursor },
+	args: { userId: v.string(), cutoff: v.number(), cursor: v.union(v.string(), v.null()) },
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const roots = await staleRoots(ctx, args.userId, args.cutoff).paginate({
