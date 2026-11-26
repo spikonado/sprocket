@@ -53,9 +53,9 @@ static RULES: LazyLock<Rules> = LazyLock::new(|| Rules {
         format!("${{1}}{}@", placeholder("password")),
     ),
     // Lockfile and Nix integrity hashes are long and random but not secret, so they are
-    // matched whole and kept. `=` only ends a candidate, as base64 padding, so the value of
-    // `NAME=value` starts its own.
-    candidate: Regex::new(r"(sha(?:1|256|384|512)-[A-Za-z0-9+/]+=*)|[A-Za-z0-9_+]+=*")
+    // matched whole and kept. `_` splits candidates and `=` only ends one, as base64 padding,
+    // so `lin_api_<key>` and `NAME=<key>` are scored on the key.
+    candidate: Regex::new(r"(sha(?:1|256|384|512)-[A-Za-z0-9+/]+=*)|[A-Za-z0-9+]+=*")
         .expect("candidate pattern is valid"),
 });
 
@@ -89,15 +89,12 @@ fn is_high_entropy(token: &str) -> bool {
         && entropy(token) >= ((token.len() as f64).log2() - 0.6).min(4.5)
 }
 
-// Only the part before the first `_` is scored, so prefixed IDs such as `user_01KX…` stay
-// intact.
 fn redact_candidate(captures: &Captures<'_>) -> String {
     let token = &captures[0];
-    let head = token.split('_').next().unwrap_or_default();
-    if captures.get(1).is_some() || head.len() < 24 || !is_high_entropy(head) {
+    if captures.get(1).is_some() || token.len() < 24 || !is_high_entropy(token) {
         return token.to_string();
     }
-    format!("{}{}", placeholder("high-entropy"), &token[head.len()..])
+    placeholder("high-entropy")
 }
 
 fn replace_all(text: &mut String, pattern: &Regex, replacement: impl Replacer) {

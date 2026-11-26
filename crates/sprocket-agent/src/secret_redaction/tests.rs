@@ -27,6 +27,10 @@ fn redacts_known_formats_and_random_tokens() {
             "CUSTOM_API_KEY=[redacted:high-entropy]",
         ),
         (
+            "lin_api_8f3kQ9xLm2Zp7VvN4tRy6WbC1dHj5Gs",
+            "lin_api_[redacted:high-entropy]",
+        ),
+        (
             "-----BEGIN RSA PRIVATE KEY-----\nMIIE\n-----END RSA PRIVATE KEY-----",
             "[redacted:private-key]",
         ),
