@@ -127,10 +127,10 @@ const softwareLd = {
 	operatingSystem: 'Windows, macOS, Linux',
 	url: `${SITE_URL}/`,
 	description: DEFAULT_DESCRIPTION,
-	downloadUrl: release?.htmlUrl ?? SPROCKET_RELEASES_LATEST_URL,
+	downloadUrl: release.htmlUrl,
 	installUrl: SPROCKET_NPM_URL,
 	featureList: capabilities.map(({ name, body }) => `${name}: ${body}`),
-	softwareVersion: release?.version,
+	softwareVersion: release.version,
 	publisher: { '@id': ORGANIZATION_ID }
 };
 

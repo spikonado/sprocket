@@ -23,23 +23,28 @@ export function initAnalytics(config: RuntimeConfig): void {
 		mask_all_element_attributes: true,
 		session_recording: { maskAllInputs: true, maskTextSelector: '*' }
 	});
+	registerSuperProperties(config);
+
+	syncAnalyticsUser(config);
+	authState.subscribe(() => syncAnalyticsUser(config));
+}
+
+function registerSuperProperties(config: RuntimeConfig): void {
 	posthog.register({
 		site: 'sprocket_app',
 		client: window.sprocketDesktopBridge ? 'desktop' : 'web',
 		app_version: config.version ?? null
 	});
-
-	syncAnalyticsUser();
-	authState.subscribe(syncAnalyticsUser);
 }
 
-function syncAnalyticsUser(): void {
+function syncAnalyticsUser(config: RuntimeConfig): void {
 	const { user, isReady, isLoading } = authState.getSnapshot();
 
 	if (user) {
 		if (posthog.get_distinct_id() !== user.id) posthog.identify(user.id, { email: user.email });
 	} else if (isReady && !isLoading && posthog.get_property('$user_state') === 'identified') {
 		posthog.reset();
+		registerSuperProperties(config);
 	}
 }
 
