@@ -49,6 +49,7 @@ jobs:
               - tools/gh/*.json
               - tools/git/*.json
               - tools/kicad/{releases.json,requirements.txt}
+              - tools/node/*.json
               - tools/uv/*.json
             web:
               - *ci

@@ -59,9 +59,10 @@ Sprocket downloads these tools into its [data directory](/reference/configuratio
 | [agent-desktop](https://github.com/vercel-labs/agent-desktop)              | Operating desktop apps through accessibility trees |
 | [GitHub CLI](https://cli.github.com)                                       | Pull requests and other GitHub work                |
 | [Bun](https://bun.sh)                                                      | Running JavaScript and TypeScript                  |
+| [Node.js](https://nodejs.org) and npm                                      | Running JavaScript tools that need Node or npm     |
 | [uv](https://docs.astral.sh/uv/) and Python                                | Running Python                                     |
 | Git for Windows                                                            | Git and Git Bash, on Windows only                  |
 
-If you have your own Bun, uv, Python, or Git installed, the agent uses yours. Each thread gets its own browser session, so parallel agents don't share tabs.
+If you have your own Bun, Node.js, uv, Python, or Git installed, the agent uses yours. Each thread gets its own browser session, so parallel agents don't share tabs.
 
 The [KiCad connector](/use/hardware) is the one tool you install yourself.
