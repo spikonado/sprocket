@@ -1,5 +1,6 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { QueryCtx } from '@convex/_generated/server';
+import type { ExecutorJobPayload } from '@convex/lib/validators';
 import { isSettledExecutorJobStatus } from '@convex/lib/runs';
 import { runAcceptsNewWork } from '@convex/lib/runLease';
 import { getRunWithExecution, type ExecutionRun } from '@convex/lib/runExecution';
@@ -7,13 +8,24 @@ import { getRunWithExecution, type ExecutionRun } from '@convex/lib/runExecution
 export async function claimedJobForActiveRun(
 	ctx: Pick<QueryCtx, 'db'>,
 	args: { jobId: Id<'executorJobs'>; runId: Id<'runs'>; claimId: string }
-): Promise<{ job: Doc<'executorJobs'>; run: ExecutionRun } | null> {
+): Promise<{
+	job: Doc<'executorJobs'> & { payload: ExecutorJobPayload };
+	run: ExecutionRun;
+} | null> {
 	const job = await ctx.db.get('executorJobs', args.jobId);
 
-	if (!job || job.runId !== args.runId || isSettledExecutorJobStatus(job.status)) return null;
+	if (
+		!job ||
+		job.runId !== args.runId ||
+		isSettledExecutorJobStatus(job.status) ||
+		job.payload === undefined
+	) {
+		return null;
+	}
+
 	const run = await getRunWithExecution(ctx.db, args.runId);
 
 	if (!run || !runAcceptsNewWork(run, args.claimId, Date.now())) return null;
 
-	return { job, run };
+	return { job: { ...job, payload: job.payload }, run };
 }

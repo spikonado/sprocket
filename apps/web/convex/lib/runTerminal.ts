@@ -58,29 +58,31 @@ export async function reconcileTerminalRun(
 		);
 
 	for await (const job of jobs) {
-		await cancelWebSearchWork(ctx, job);
+		if (job.payload !== undefined) {
+			await cancelWebSearchWork(ctx, job);
 
-		const [finalizedJob] = cancelExecutorJobsForTerminalRun({
-			jobs: [job],
-			runStatus: run.status,
-			lastError: run.lastError,
-			completedAt: args.completedAt
-		});
+			const [finalizedJob] = cancelExecutorJobsForTerminalRun({
+				jobs: [job],
+				runStatus: run.status,
+				lastError: run.lastError,
+				completedAt: args.completedAt
+			});
 
-		if (finalizedJob !== job) {
+			await recordToolTranscript(ctx, {
+				threadId: run.threadId,
+				runId: run._id,
+				job: finalizedJob,
+				preserveExistingDisplay: finalizedJob === job
+			});
 			await ctx.db.patch('executorJobs', job._id, {
 				status: finalizedJob.status,
 				error: finalizedJob.error,
-				completedAt: finalizedJob.completedAt
+				completedAt: finalizedJob.completedAt,
+				payload: undefined,
+				result: undefined
 			});
 		}
 
-		await recordToolTranscript(ctx, {
-			threadId: run.threadId,
-			runId: run._id,
-			job: finalizedJob,
-			preserveExistingDisplay: finalizedJob === job
-		});
 		jobCursor = job.sequence;
 		processed++;
 

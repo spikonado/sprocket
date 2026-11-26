@@ -362,7 +362,8 @@ export default defineSchema({
 		sectionOrdinal: v.optional(v.number()),
 		attemptSeq: v.optional(v.number()),
 		streamId: v.optional(v.string()),
-		payload: vExecutorJobPayload,
+		// Cleared with `result` once the terminal run's reconciliation has written the tool's transcript part.
+		payload: v.optional(vExecutorJobPayload),
 		hidden: v.optional(v.boolean()),
 		status: vExecutorJobStatus,
 		enqueuedAt: v.number(),

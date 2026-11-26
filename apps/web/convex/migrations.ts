@@ -5,6 +5,7 @@ import type { MutationCtx } from '@convex/_generated/server';
 import type { TableNames } from '@convex/_generated/dataModel';
 import { getUserBySubject } from '@convex/lib/auth';
 import { transcriptContext } from '@convex/lib/contextHandoff';
+import { getRunExecutionState } from '@convex/lib/runExecution';
 import { getOrCreateTranscriptState, withToolInvocationIds } from '@convex/lib/transcriptParts';
 import { isRunFinalStatus } from '@convex/lib/validators';
 import schema from '@convex/schema';
@@ -226,6 +227,19 @@ export const deleteToolImages = migrations.define({
 	}
 });
 
+// Jobs can near the 1 MiB document limit, so the default 100-row batch could pass the 16 MiB read limit.
+export const stripTerminalJobPayloads = migrations.define({
+	table: 'executorJobs',
+	batchSize: 10,
+	migrateOne: async (ctx, job) => {
+		if (job.payload === undefined) return;
+
+		if ((await getRunExecutionState(ctx.db, job.runId))?.terminalJobsReconciled !== true) return;
+
+		return { payload: undefined, result: undefined };
+	}
+});
+
 export const run = migrations.runner([
 	internal.migrations.backfillToolInvocationIds,
 	internal.migrations.backfillCompletionToolInvocationIds,
@@ -247,5 +261,6 @@ export const run = migrations.runner([
 	internal.migrations.backfillRunCompletionProviders,
 	internal.migrations.clearUsageLimitFailureKinds,
 	internal.migrations.dropShareConversationContent,
-	internal.migrations.deleteToolImages
+	internal.migrations.deleteToolImages,
+	internal.migrations.stripTerminalJobPayloads
 ]);

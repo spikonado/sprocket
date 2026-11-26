@@ -468,3 +468,73 @@ test('run deletes tool images of idle threads and their files and keeps attachme
 	expect(runningFile).not.toBeNull();
 	vi.useRealTimers();
 });
+
+test('run strips jobs of reconciled runs and keeps jobs of runs still reconciling', async () => {
+	vi.useFakeTimers();
+	const t = initConvexTest();
+	const { threadId } = await seedOwnedThread(t);
+
+	const [reconciledJobId, reconcilingJobId] = await t.run(async (ctx) => {
+		const reconciledRun = await ctx.db
+			.query('runs')
+			.withIndex('by_threadId', (q) => q.eq('threadId', threadId))
+			.unique();
+
+		if (!reconciledRun) throw new Error('Missing fixture run.');
+
+		const reconcilingRunId = await ctx.db.insert('runs', {
+			threadId,
+			userId: reconciledRun.userId,
+			submissionId: 'reconciling-submission',
+			status: 'completed',
+			executionSecretHash: 'fixture',
+			selectedModel: reconciledRun.selectedModel,
+			reasoningEffort: reconciledRun.reasoningEffort,
+			fastMode: false
+		});
+
+		await ctx.db.insert('runExecutionStates', {
+			runId: reconcilingRunId,
+			completionAttemptSeq: 0,
+			terminalJobsReconciled: false
+		});
+
+		const job = {
+			threadId,
+			kind: 'read_skill' as const,
+			payload: { name: 'example' },
+			status: 'completed' as const,
+			result: 'Skill',
+			enqueuedAt: 1,
+			sequence: 0
+		};
+
+		return Promise.all([
+			ctx.db.insert('executorJobs', {
+				...job,
+				runId: reconciledRun._id,
+				toolInvocationId: 'reconciled'
+			}),
+			ctx.db.insert('executorJobs', {
+				...job,
+				runId: reconcilingRunId,
+				toolInvocationId: 'reconciling'
+			})
+		]);
+	});
+
+	await t.mutation(internal.migrations.run, {});
+	await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+	const [reconciledJob, reconcilingJob] = await t.run((ctx) =>
+		Promise.all([
+			ctx.db.get('executorJobs', reconciledJobId),
+			ctx.db.get('executorJobs', reconcilingJobId)
+		])
+	);
+
+	expect(reconciledJob).not.toHaveProperty('payload');
+	expect(reconciledJob).not.toHaveProperty('result');
+	expect(reconcilingJob).toMatchObject({ payload: { name: 'example' }, result: 'Skill' });
+	vi.useRealTimers();
+});

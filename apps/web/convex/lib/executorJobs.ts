@@ -56,7 +56,7 @@ export async function applyExecutorJobSuccess(
 	}
 
 	const skill =
-		args.job.kind === 'read_skill' && 'name' in args.job.payload
+		args.job.kind === 'read_skill' && args.job.payload && 'name' in args.job.payload
 			? args.job.payload.name
 			: undefined;
 

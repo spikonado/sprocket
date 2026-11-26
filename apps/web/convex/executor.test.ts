@@ -5,7 +5,7 @@ import { getRunWithExecution, patchRunExecution } from '@convex/lib/runExecution
 import { commandToolDisplayInput } from '@convex/lib/transcriptWrites';
 import { beginExecutorJob } from '@convex/lib/toolJobs';
 import { toolSourceKey } from '@convex/lib/transcriptParts';
-import { api } from '@convex/_generated/api';
+import { api, internal } from '@convex/_generated/api';
 import {
 	createQueuedRun,
 	initConvexTest,
@@ -856,6 +856,24 @@ describe('executor', () => {
 				executionSecret
 			})
 		).resolves.toBe(true);
+		expect(await t.run(async (ctx) => (await ctx.db.get('runs', runId))?.status)).toBe('running');
+
+		await t.run((ctx) => ctx.db.patch('runs', runId, { status: 'completed', completedAt: 2 }));
+		await t.mutation(internal.runCleanup.continueCleanup, {
+			runId,
+			completedAt: 2,
+			jobCursor: -1,
+			questionCursor: null
+		});
+		await expect(
+			asUser.mutation(api.executor.complete, {
+				jobId,
+				result: commandResult,
+				runId,
+				claimId,
+				executionSecret
+			})
+		).resolves.toBe(true);
 
 		const {
 			asUser: asUser2,
@@ -880,7 +898,6 @@ describe('executor', () => {
 		expect(await t.run(async (ctx) => (await ctx.db.get('runs', terminalRunId))?.status)).toBe(
 			'completed'
 		);
-		expect(await t.run(async (ctx) => (await ctx.db.get('runs', runId))?.status)).toBe('running');
 	});
 
 	it('fails a job and clears activeJobId only when it matches', async () => {
