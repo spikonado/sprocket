@@ -265,6 +265,15 @@ export class DemoState implements Store<number> {
 		this.#patch(threadId, { title });
 	}
 
+	delete(threadId: string) {
+		for (const id of [threadId, ...this.#descendants(threadId)]) {
+			for (const runId of this.#threads.get(id)?.runIds ?? []) this.#runs.delete(runId);
+			this.#threads.delete(id);
+		}
+
+		this.#changed();
+	}
+
 	open(threadId: string) {
 		const run = this.run(threadId);
 

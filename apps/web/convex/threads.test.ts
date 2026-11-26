@@ -151,6 +151,10 @@ describe('thread deletion', () => {
 
 			await ctx.db.patch('threadRecords', grandchild, { parentThreadId: children[0] });
 
+			for (const id of [other, grandchild]) {
+				await ctx.db.patch('threadRecords', id, { title: 'Fix the radio' });
+			}
+
 			const run = await ctx.db
 				.query('runs')
 				.withIndex('by_threadId', (q) => q.eq('threadId', grandchild))
@@ -188,6 +192,15 @@ describe('thread deletion', () => {
 		await expect(createQueuedRun(t, asUser, children[1]!, 'orphan', 'orphan')).rejects.toThrow(
 			'Thread not found.'
 		);
+
+		const search = await asUser.query(api.inbox.list, {
+			state: 'unsettled',
+			repositoryKeys: ['alpha'],
+			query: 'radio',
+			paginationOpts: { numItems: 10, cursor: null }
+		});
+
+		expect(search.page.map((thread) => thread._id)).toEqual([other]);
 
 		await finishDueScheduledFunctions(t);
 
