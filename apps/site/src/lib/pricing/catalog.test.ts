@@ -30,6 +30,7 @@ test('buildPlanCards prices plans and lists only what each tier adds', () => {
 				monthlyUsageDollars: 5,
 				description: null,
 				features: [],
+				retentionDays: 14,
 				displayOrder: 0,
 				highlighted: false,
 				prices: { monthly: null, annual: null }
@@ -40,6 +41,7 @@ test('buildPlanCards prices plans and lists only what each tier adds', () => {
 				monthlyUsageDollars: 50,
 				description: ' For daily work ',
 				features: ['Frontier models', ' '],
+				retentionDays: 90,
 				displayOrder: 1,
 				highlighted: true,
 				prices: { monthly: usdPrice(2000), annual: usdPrice(20_000) }
@@ -50,6 +52,7 @@ test('buildPlanCards prices plans and lists only what each tier adds', () => {
 				monthlyUsageDollars: 300,
 				description: null,
 				features: ['Frontier models', 'Priority support'],
+				retentionDays: null,
 				displayOrder: 2,
 				highlighted: false,
 				prices: { monthly: null, annual: null }
@@ -62,6 +65,7 @@ test('buildPlanCards prices plans and lists only what each tier adds', () => {
 	expect(free.previousPlanName).toBeNull();
 	expect(free.features.map(({ label }) => label)).toEqual([
 		'$5 of AI usage each month',
+		'Threads kept for 2 weeks after the last message',
 		'Bring your own API keys and subscriptions',
 		'Limited context from the web',
 		'Fair source',
@@ -76,6 +80,7 @@ test('buildPlanCards prices plans and lists only what each tier adds', () => {
 	});
 	expect(pro.features.map(({ label }) => label)).toEqual([
 		'$50 of AI usage each month',
+		'Threads kept for 3 months after the last message',
 		'Unlimited context from the web',
 		'Frontier models'
 	]);

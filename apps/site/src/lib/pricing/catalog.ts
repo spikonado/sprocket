@@ -29,13 +29,26 @@ function usd(dollars: number): string {
 	return formatPrice({ amountMinor: Math.round(dollars * 100), currency: 'USD' });
 }
 
-function duration({ count, unit }: PublicPricingCatalog['creditPacks'][number]['expiresAfter']) {
+function duration({ count, unit }: { count: number; unit: string }) {
 	return `${count} ${unit}${count === 1 ? '' : 's'}`;
+}
+
+function retentionPeriod(days: number): string {
+	if (days >= 28) return duration({ count: Math.round(days / 30.4375), unit: 'month' });
+
+	return days % 7 === 0
+		? duration({ count: days / 7, unit: 'week' })
+		: duration({ count: days, unit: 'day' });
 }
 
 function planFeatures(plan: PublicPricingCatalog['plans'][number], isFree: boolean): PlanFeature[] {
 	return [
 		{ label: `${usd(plan.monthlyUsageDollars)} of AI usage each month` },
+		{
+			label: plan.retentionDays
+				? `Threads kept for ${retentionPeriod(plan.retentionDays)} after the last message`
+				: ''
+		},
 		{ label: 'Bring your own API keys and subscriptions' },
 		{ label: `${isFree ? 'Limited' : 'Unlimited'} context from the web` },
 		{ label: 'Fair source', href: 'https://fsl.software/' },
