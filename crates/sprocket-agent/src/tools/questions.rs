@@ -17,6 +17,7 @@ use super::async_tools::{YieldMode, default_yield_ms, is_default_yield_ms, yield
 use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure};
 use super::job::{execute_serialized_tool_job, execute_tool_job_with_id};
 use crate::convex::RuntimeClient;
+use crate::secret_redaction::redact_secrets;
 
 pub(super) const MAX_QUESTION_CHARS: usize = 2000;
 pub(super) const MAX_OPTION_ID_CHARS: usize = 20;
@@ -333,10 +334,17 @@ async fn create_agent_question(
     args.insert("runId".to_string(), run_id.to_string().into());
     args.insert("claimId".to_string(), claim_id.to_string().into());
     args.insert("jobId".to_string(), job_id.to_string().into());
-    args.insert("question".to_string(), question.to_string().into());
+    args.insert("question".to_string(), redact_secrets(question).into());
+    let options: Vec<_> = options
+        .iter()
+        .map(|option| AskQuestionOption {
+            id: option.id.clone(),
+            label: redact_secrets(&option.label),
+        })
+        .collect();
     args.insert(
         "options".to_string(),
-        Value::try_from(serde_json::to_value(options).map_err(|e| tool_error(e.into()))?)
+        Value::try_from(serde_json::to_value(&options).map_err(|e| tool_error(e.into()))?)
             .map_err(tool_error)?,
     );
     if let Some(timeout_ms) = timeout_ms {

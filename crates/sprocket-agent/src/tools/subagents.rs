@@ -754,7 +754,7 @@ impl ControlSubagentTool {
             fields.insert("optionId".to_string(), option_id.clone().into());
         }
         if let Some(text) = &args.text {
-            fields.insert("text".to_string(), text.clone().into());
+            fields.insert("text".to_string(), redact_secrets(text).into());
         }
         let response = match args.action {
             SubagentControlAction::Send => unreachable!(),

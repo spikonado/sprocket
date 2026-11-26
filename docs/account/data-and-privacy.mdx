@@ -22,6 +22,7 @@ Before your computer uploads a prompt, reply, tool call, tool output, or context
 
 - Model reasoning is uploaded as the provider returned it, because providers need it unchanged to continue the conversation.
 - Web search and scrape requests are uploaded as written, because Sprocket's servers run them.
+- Your `AGENTS.md` files and skill descriptions are uploaded as written, because the agent needs them in every message.
 - While the agent works on the message that brought in a secret, it uses the real value. Later messages, and work that resumes after Sprocket restarts, see the placeholders, so the agent can't read a key you pasted in an earlier message.
 
 ## Kept on your computer
