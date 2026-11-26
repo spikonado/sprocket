@@ -16,6 +16,8 @@ pub enum ConvexErrorCode {
     MachineNotActive,
     UsageLimitReached,
     ProviderNotConfigured,
+    FileTooLarge,
+    StorageLimitReached,
 }
 
 static CODE_MESSAGES: LazyLock<Vec<(ConvexErrorCode, String)>> = LazyLock::new(|| {
@@ -39,26 +41,41 @@ fn code_for_message(message: &str) -> Option<ConvexErrorCode> {
         .map(|(code, _)| *code)
 }
 
-/// A Convex function failure. Its `Display` is the cleaned message.
+/// A Convex function failure. Its `Display` is the cleaned message, prefixed with the function
+/// path when it was decoded as labeled.
 #[derive(Debug)]
 pub struct ConvexFunctionError {
     pub code: Option<ConvexErrorCode>,
+    function: Option<String>,
     message: String,
+}
+
+impl ConvexFunctionError {
+    /// The message the function threw, without the function path.
+    pub fn message(&self) -> &str {
+        &self.message
+    }
 }
 
 impl std::fmt::Display for ConvexFunctionError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.message)
+        match &self.function {
+            Some(function) => write!(formatter, "{function}: {}", self.message),
+            None => formatter.write_str(&self.message),
+        }
     }
 }
 
 impl std::error::Error for ConvexFunctionError {}
 
-pub fn convex_error_code(error: &anyhow::Error) -> Option<ConvexErrorCode> {
+pub fn convex_function_error(error: &anyhow::Error) -> Option<&ConvexFunctionError> {
     error
         .chain()
         .find_map(|cause| cause.downcast_ref::<ConvexFunctionError>())
-        .and_then(|failure| failure.code)
+}
+
+pub fn convex_error_code(error: &anyhow::Error) -> Option<ConvexErrorCode> {
+    convex_function_error(error).and_then(|failure| failure.code)
 }
 
 /// Failures are `ConvexFunctionError`s whose messages are cleaned of Convex transport noise
@@ -102,12 +119,16 @@ fn decode<T: for<'de> Deserialize<'de>>(
             )
         }
     };
-    let message = match message {
-        Some(message) if labeled => format!("{function}: {message}"),
-        Some(message) => message,
-        None => format!("{function} failed without a readable error."),
+    let (function, message) = match message {
+        Some(message) => (labeled.then(|| function.to_string()), message),
+        None => (None, format!("{function} failed without a readable error.")),
     };
-    Err(ConvexFunctionError { code, message }.into())
+    Err(ConvexFunctionError {
+        code,
+        function,
+        message,
+    }
+    .into())
 }
 
 /// Application payload for a `ConvexError`. Production redacts `message` to a

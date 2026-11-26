@@ -1,5 +1,6 @@
 import { act, renderHook } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
+import { FILE_TOO_LARGE_MESSAGE, MAX_FILE_BYTES } from '@convex/lib/fileLimits';
 import {
 	useComposerAttachments,
 	type ComposerAttachmentApi,
@@ -74,6 +75,27 @@ it('reports an unavailable server when the context is still the unconnected one'
 
 	expect(onError).toHaveBeenCalledWith('Connect to a running Sprocket server to use this project.');
 	expect(result.current.items[0]?.status).toBe('error');
+});
+
+it('rejects files over the upload limit without sending them to the server', async () => {
+	const api: ComposerAttachmentApi = {
+		uploadTranscriptAttachment: vi.fn(),
+		discardTranscriptAttachment: vi.fn()
+	};
+
+	const file = textFile();
+	Object.defineProperty(file, 'size', { value: MAX_FILE_BYTES + 1 });
+	const { result } = renderAttachments({ api, userId: 'user-a', threadId: null });
+
+	await act(async () => {
+		result.current.add([file]);
+	});
+
+	expect(api.uploadTranscriptAttachment).not.toHaveBeenCalled();
+	expect(result.current.items[0]).toMatchObject({
+		status: 'error',
+		error: FILE_TOO_LARGE_MESSAGE
+	});
 });
 
 it('discards a late upload under the account that owned it, not the current one', async () => {

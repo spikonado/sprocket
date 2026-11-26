@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { Id } from '@convex/_generated/dataModel';
+import { FILE_TOO_LARGE_MESSAGE, MAX_FILE_BYTES } from '@convex/lib/fileLimits';
 import {
 	attachmentMediaType,
 	fallbackAttachmentName,
@@ -146,6 +147,8 @@ export class ComposerAttachments implements Store<ComposerAttachment[]> {
 		const { api, userId, threadId } = this.dependencies.getContext();
 
 		try {
+			if (file.size > MAX_FILE_BYTES) throw new Error(FILE_TOO_LARGE_MESSAGE);
+
 			if (!api) throw new Error(this.dependencies.localServerRequiredMessage);
 
 			if (!userId) throw new Error('Sign in to attach files.');

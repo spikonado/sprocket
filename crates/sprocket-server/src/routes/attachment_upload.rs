@@ -2,14 +2,15 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
-use anyhow::Context;
+use anyhow::{Context, anyhow};
 use axum::Json;
 use axum::extract::{Request, State};
-use axum::http::{HeaderMap, header};
+use axum::http::{HeaderMap, StatusCode, header};
 use convex::Value;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use sprocket_convex::{ConvexErrorCode, convex_function_error};
 use sprocket_host::transcript_client::UserConvexClient;
 use tokio::io::AsyncWriteExt;
 use tokio_util::io::ReaderStream;
@@ -69,7 +70,19 @@ pub(super) async fn upload_handler(
     upload(&state, query, media_type, request)
         .await
         .map(Json)
-        .map_err(|error| ApiError::internal_with("attachment upload failed", error))
+        .map_err(upload_error)
+}
+
+fn upload_error(error: anyhow::Error) -> ApiError {
+    let Some(failure) = convex_function_error(&error) else {
+        return ApiError::internal_with("attachment upload failed", error);
+    };
+    let status = match failure.code {
+        Some(ConvexErrorCode::FileTooLarge) => StatusCode::PAYLOAD_TOO_LARGE,
+        Some(ConvexErrorCode::StorageLimitReached) => StatusCode::INSUFFICIENT_STORAGE,
+        _ => return ApiError::internal_with("attachment upload failed", error),
+    };
+    ApiError::with_status(status, anyhow!("{}", failure.message()))
 }
 
 async fn upload(

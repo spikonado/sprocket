@@ -1,6 +1,31 @@
 use super::*;
 use axum::body::{Body, Bytes};
+use convex::{ConvexError, FunctionResult};
 use tokio::io::AsyncReadExt;
+
+#[test]
+fn storage_limit_rejections_keep_the_plain_message() {
+    let data = Value::Object(
+        [
+            ("code", "STORAGE_LIMIT_REACHED"),
+            ("message", "File storage limit reached."),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.to_string(), value.into()))
+        .collect(),
+    );
+    let error = sprocket_convex::decode_labeled_function_result::<()>(
+        FunctionResult::ConvexError(ConvexError {
+            message: "[Request ID: 0d45611fde71c0f2] Server Error".to_string(),
+            data,
+        }),
+        "files:createUpload",
+    )
+    .unwrap_err();
+    let error = upload_error(error);
+    assert_eq!(error.status(), StatusCode::INSUFFICIENT_STORAGE);
+    assert_eq!(error.to_string(), "File storage limit reached.");
+}
 
 #[tokio::test]
 async fn stages_large_binary_uploads_without_a_body_size_limit() {
