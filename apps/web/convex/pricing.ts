@@ -33,6 +33,7 @@ export const getPublicCatalog = query({
 				description: tier.description ?? null,
 				features: tier.features ?? [],
 				retentionDays: tier.retentionDays ?? null,
+				storageBytes: tier.storageBytes ?? null,
 				displayOrder: tier.displayOrder ?? (tier.tierId === 'free' ? 0 : 100),
 				highlighted: tier.highlighted ?? false,
 				prices: {

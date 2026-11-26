@@ -39,7 +39,8 @@ describe('public pricing catalog', () => {
 				tierId: 'free',
 				label: 'Free',
 				monthly: 15 * MODEL_USAGE_UNITS_PER_DOLLAR,
-				retentionDays: 14
+				retentionDays: 14,
+				storageBytes: 1024 ** 3
 			});
 			await ctx.db.insert('tiers', {
 				tierId: 'pro',
@@ -69,6 +70,7 @@ describe('public pricing catalog', () => {
 					description: null,
 					features: [],
 					retentionDays: 14,
+					storageBytes: 1024 ** 3,
 					displayOrder: 0,
 					highlighted: false,
 					prices: { monthly: null, annual: null }
@@ -80,6 +82,7 @@ describe('public pricing catalog', () => {
 					description: 'For teams shipping hardware.',
 					features: ['Shared projects'],
 					retentionDays: null,
+					storageBytes: null,
 					displayOrder: 20,
 					highlighted: true,
 					prices: { monthly: null, annual: null }
@@ -91,6 +94,7 @@ describe('public pricing catalog', () => {
 					description: null,
 					features: [],
 					retentionDays: null,
+					storageBytes: null,
 					displayOrder: 100,
 					highlighted: false,
 					prices: { monthly: null, annual: null }
