@@ -97,9 +97,7 @@ impl rig::tool::Tool for ParseFileTool {
             },
         )
         .await?;
-        replay_tool_output(&persisted, Some(&self.0.image_urls()))
-            .await
-            .map_err(tool_error)
+        replay_tool_output(&persisted).await.map_err(tool_error)
     }
 }
 

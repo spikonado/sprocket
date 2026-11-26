@@ -2,15 +2,15 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, anyhow, bail};
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use rig::message::{ImageMediaType, MimeType, ToolResultContent};
 use rig::tool::ToolOutput;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use sprocket_workspace::{WorkspaceCancellation, WorkspaceOperationCancelled};
 use tokio::io::AsyncReadExt;
 
 use super::hosted_parse::HostedParseContext;
-use super::image_urls::{ConvexImageUrls, ImageUrlMap};
 use crate::types::AgentHistoryToolResultItem;
 
 pub(crate) const MAX_PARSE_FILE_IMAGE_BYTES: usize = 20 * 1024 * 1024;
@@ -433,9 +433,8 @@ pub(super) async fn run_cancellable_blocking<T: Send + 'static>(
 }
 
 pub(super) struct ReplayedImage {
-    pub(super) path: String,
-    pub(super) image: ModelImage,
-    pub(super) sha256: String,
+    path: String,
+    image: ModelImage,
     show_path: bool,
 }
 
@@ -445,28 +444,19 @@ pub(super) enum ReplayedOutput {
 }
 
 impl ReplayedOutput {
-    pub(super) fn image(&self) -> Option<&ReplayedImage> {
+    fn into_content(self) -> Vec<ToolResultContent> {
         match self {
-            Self::Image(image) => Some(image),
-            Self::Text(_) => None,
-        }
-    }
-
-    fn into_content(self, urls: &ImageUrlMap) -> anyhow::Result<Vec<ToolResultContent>> {
-        Ok(match self {
             Self::Text(text) => vec![ToolResultContent::text(text)],
             Self::Image(ReplayedImage {
                 path,
                 image,
-                sha256,
                 show_path,
             }) => {
-                let url = match urls.get(&sha256) {
-                    Some(Ok(url)) => url.clone(),
-                    Some(Err(error)) => bail!("no model URL for image {path}: {error}"),
-                    None => bail!("no model URL for image {path}"),
-                };
-                let image = ToolResultContent::image_url(url, Some(image.media_type), None);
+                let image = ToolResultContent::image_base64(
+                    STANDARD.encode(image.bytes),
+                    Some(image.media_type),
+                    None,
+                );
                 if show_path {
                     vec![
                         ToolResultContent::text(format!("Image saved to: {path}")),
@@ -476,14 +466,11 @@ impl ReplayedOutput {
                     vec![image]
                 }
             }
-        })
+        }
     }
 
-    pub(super) fn into_history_items(
-        self,
-        urls: &ImageUrlMap,
-    ) -> anyhow::Result<Vec<AgentHistoryToolResultItem>> {
-        self.into_content(urls)?
+    pub(super) fn into_history_items(self) -> anyhow::Result<Vec<AgentHistoryToolResultItem>> {
+        self.into_content()
             .into_iter()
             .map(|content| match content {
                 ToolResultContent::Image(image) => Ok(AgentHistoryToolResultItem::Image {
@@ -526,17 +513,9 @@ async fn replay_image_output(
             && bytes.len() as u64 == byte_size,
         "cached image {path} does not match persisted metadata"
     );
-    let (image, sha256) = tokio::task::spawn_blocking(move || {
-        let image = fit_image_for_model(bytes)?;
-        let sha256 = hex::encode(Sha256::digest(&image.bytes));
-        anyhow::Ok((image, sha256))
-    })
-    .await
-    .context("image downscaling worker failed")??;
     Ok(ReplayedImage {
         path: path.to_string(),
-        image,
-        sha256,
+        image: fit_image_for_model_blocking(bytes).await?,
         show_path,
     })
 }
@@ -622,14 +601,7 @@ pub(super) async fn replay_local_tool_output(
     }
 }
 
-pub(super) async fn replay_tool_output(
-    output: &serde_json::Value,
-    image_urls: Option<&ConvexImageUrls<'_>>,
-) -> anyhow::Result<ToolOutput> {
+pub(super) async fn replay_tool_output(output: &serde_json::Value) -> anyhow::Result<ToolOutput> {
     let replayed = replay_local_tool_output(output).await?;
-    let urls = match (image_urls, replayed.image()) {
-        (Some(source), Some(image)) => source.urls(&[image]).await,
-        _ => ImageUrlMap::new(),
-    };
-    Ok(ToolOutput::content(replayed.into_content(&urls)?)?)
+    Ok(ToolOutput::content(replayed.into_content())?)
 }

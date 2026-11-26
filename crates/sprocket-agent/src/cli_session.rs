@@ -510,13 +510,6 @@ fn render_block(block: &Value, text: &mut String, content: &mut Vec<Value>) {
     }
 }
 
-/// MCP carries images only as base64, while tool images usually arrive as uploaded URLs.
-async fn inline_image_urls(result: &mut Value) {
-    for item in result["content"].as_array_mut().into_iter().flatten() {
-        inline_image_url(item).await;
-    }
-}
-
 pub(crate) async fn inline_image_url(block: &mut Value) {
     if block["type"] != "image" || block["source"]["type"] != "url" {
         return;
@@ -685,17 +678,14 @@ impl<C: Cli> TurnStream<C> {
         let resumed = matches!(planned, Plan::Resume { .. });
         match planned {
             Plan::AnswerTools(results) => {
-                let mut answers = Vec::with_capacity(results.len());
-                for (tool_use_id, mut result) in results {
-                    inline_image_urls(&mut result).await;
-                    answers.push((tool_use_id, mcp_tool_result(&result)));
-                }
                 let session = state
                     .session
                     .as_mut()
                     .expect("a planned answer has a live session");
-                for (tool_use_id, answer) in answers {
-                    session.process.answer(&tool_use_id, answer);
+                for (tool_use_id, result) in results {
+                    session
+                        .process
+                        .answer(&tool_use_id, mcp_tool_result(&result));
                 }
                 session.live.expect_turn(&turn);
             }

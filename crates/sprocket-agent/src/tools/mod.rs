@@ -6,7 +6,6 @@ mod convert;
 mod cwd;
 mod github_url;
 mod hosted_parse;
-mod image_urls;
 mod job;
 mod markdown_url;
 mod parse_file;
@@ -31,8 +30,6 @@ pub(crate) use self::commands::CommandCursors;
 use self::commands::{ControlCmdTool, ExecCmdTool, PollCmdTool};
 use self::context::{AgentToolContext, WorkingDirectory};
 use self::cwd::SetCwdTool;
-pub(crate) use self::image_urls::ConvexImageUrls;
-use self::image_urls::ImageUrlMap;
 use self::parse_file::ParseFileTool;
 use self::parts::LookupPartsTool;
 use self::patch::ApplyPatchTool;
@@ -129,7 +126,6 @@ pub(crate) async fn hydrate_tool_history(
     history: &mut [crate::types::AgentHistoryMessage],
     parts: &[sprocket_transcript::TranscriptPart],
     supports_images: bool,
-    image_urls: Option<&ConvexImageUrls<'_>>,
 ) {
     use crate::types::{AgentHistoryContent, AgentHistoryToolResultItem};
     let calls = crate::history::ToolCallIndex::new(parts);
@@ -150,7 +146,6 @@ pub(crate) async fn hydrate_tool_history(
             results.entry(id).or_insert((tool, name));
         }
     }
-    let mut replays = Vec::new();
     for message in history {
         for content in &mut message.contents {
             let AgentHistoryContent::ToolResult { id, items, .. } = content else {
@@ -176,32 +171,18 @@ pub(crate) async fn hydrate_tool_history(
                 }];
                 continue;
             }
-            replays.push((
-                items,
-                output,
-                convert::replay_local_tool_output(output).await,
-            ));
+            *items = match convert::replay_local_tool_output(output)
+                .await
+                .and_then(convert::ReplayedOutput::into_history_items)
+            {
+                Ok(items) => items,
+                Err(error) => vec![AgentHistoryToolResultItem::Text {
+                    text: format!(
+                        "Previous tool output is not available in the local cache: {error}. Original result: {output}"
+                    ),
+                }],
+            };
         }
-    }
-    let images: Vec<_> = replays
-        .iter()
-        .filter_map(|(_, _, replayed)| replayed.as_ref().ok()?.image())
-        .collect();
-    let urls = match image_urls {
-        Some(source) => source.urls(&images).await,
-        None => ImageUrlMap::new(),
-    };
-    let text_item = |text| vec![AgentHistoryToolResultItem::Text { text }];
-    for (items, output, replayed) in replays {
-        *items = match replayed.map(|replayed| replayed.into_history_items(&urls)) {
-            Ok(Ok(items)) => items,
-            Ok(Err(error)) => text_item(format!(
-                "Previous tool output could not be sent to the model: {error:#}. Original result: {output}"
-            )),
-            Err(error) => text_item(format!(
-                "Previous tool output is not available in the local cache: {error}. Original result: {output}"
-            )),
-        };
     }
 }
 

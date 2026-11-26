@@ -666,9 +666,7 @@ async fn load_prior_history(
         context.pending_prompt.is_none().then_some(run_id),
     );
     let shown_workspace_context = shown_workspace_context(&state, &parts);
-    let image_urls = crate::tools::ConvexImageUrls::new(runtime, run_id);
-    crate::tools::hydrate_tool_history(&mut history, &parts, supports_images, Some(&image_urls))
-        .await;
+    crate::tools::hydrate_tool_history(&mut history, &parts, supports_images).await;
     Ok(PriorHistory {
         current_prompt,
         command_cursors: crate::tools::CommandCursors::from_parts(&parts),

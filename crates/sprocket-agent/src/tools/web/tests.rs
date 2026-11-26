@@ -102,8 +102,8 @@ async fn image_without_extension_is_saved_locally_and_validated_by_signature() {
 }
 
 async fn assert_image_history(name: &str, mut metadata: serde_json::Value, cache: &Path) {
-    use super::super::image_urls::ImageUrlMap;
-    use crate::types::AgentHistoryToolResultItem;
+    use crate::types::{AgentHistoryContent, AgentHistoryToolResultItem};
+    use base64::Engine;
     use rig::message::{ImageMediaType, ToolResultContent};
 
     let path = Path::new(metadata["path"].as_str().unwrap());
@@ -113,29 +113,6 @@ async fn assert_image_history(name: &str, mut metadata: serde_json::Value, cache
     let saved_path = format!("Image saved to: {}", path.display());
 
     metadata["url"] = json!("http://127.0.0.1:1/unavailable");
-    let url = "https://example.convex.cloud/api/storage/image";
-    let stored = ImageUrlMap::from([(
-        hex::encode(<sha2::Sha256 as sha2::Digest>::digest(png())),
-        Ok(url.to_string()),
-    )]);
-    let items = super::super::convert::replay_local_tool_output(&metadata)
-        .await
-        .unwrap()
-        .into_history_items(&stored)
-        .unwrap();
-    let ToolResultContent::Image(by_url) =
-        ToolResultContent::image_url(url, Some(ImageMediaType::PNG), None)
-    else {
-        unreachable!()
-    };
-    assert!(matches!(
-        items.as_slice(),
-        [
-            AgentHistoryToolResultItem::Text { text },
-            AgentHistoryToolResultItem::Image { image_json },
-        ] if text == &saved_path && image_json == &serde_json::to_string(&by_url).unwrap()
-    ));
-
     let parts: [sprocket_transcript::TranscriptPart; 2] = [
         serde_json::from_value(json!({
             "number": 0, "sourceKey": "completion:run", "kind": "completion", "runId": "run",
@@ -151,12 +128,31 @@ async fn assert_image_history(name: &str, mut metadata: serde_json::Value, cache
         &parts,
         None,
     );
-    super::super::hydrate_tool_history(&mut history, &parts, true, None).await;
-    let serialized = serde_json::to_string(&history).unwrap();
-    assert!(serialized.contains("could not be sent to the model"));
-    assert!(!serialized.contains("imageJson"));
+    super::super::hydrate_tool_history(&mut history, &parts, true).await;
+    let ToolResultContent::Image(inline) = ToolResultContent::image_base64(
+        base64::engine::general_purpose::STANDARD.encode(png()),
+        Some(ImageMediaType::PNG),
+        None,
+    ) else {
+        unreachable!()
+    };
+    let items = history
+        .iter()
+        .flat_map(|message| &message.contents)
+        .find_map(|content| match content {
+            AgentHistoryContent::ToolResult { items, .. } => Some(items),
+            _ => None,
+        })
+        .unwrap();
+    assert!(matches!(
+        items.as_slice(),
+        [
+            AgentHistoryToolResultItem::Text { text },
+            AgentHistoryToolResultItem::Image { image_json },
+        ] if text == &saved_path && image_json == &serde_json::to_string(&inline).unwrap()
+    ));
 
-    super::super::hydrate_tool_history(&mut history, &parts, false, None).await;
+    super::super::hydrate_tool_history(&mut history, &parts, false).await;
     let serialized = serde_json::to_string(&history).unwrap();
     assert!(serialized.contains("Image omitted"));
     assert!(!serialized.contains("imageJson"));
@@ -164,7 +160,7 @@ async fn assert_image_history(name: &str, mut metadata: serde_json::Value, cache
     tokio::fs::remove_file(metadata["path"].as_str().unwrap())
         .await
         .unwrap();
-    super::super::hydrate_tool_history(&mut history, &parts, true, None).await;
+    super::super::hydrate_tool_history(&mut history, &parts, true).await;
     let serialized = serde_json::to_string(&history).unwrap();
     assert!(serialized.contains("not available in the local cache"));
     assert!(!serialized.contains("imageJson"));

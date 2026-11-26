@@ -6,6 +6,7 @@ import type { TableNames } from '@convex/_generated/dataModel';
 import { getUserBySubject } from '@convex/lib/auth';
 import { transcriptContext } from '@convex/lib/contextHandoff';
 import { getOrCreateTranscriptState, withToolInvocationIds } from '@convex/lib/transcriptParts';
+import { isRunFinalStatus } from '@convex/lib/validators';
 import schema from '@convex/schema';
 
 export const migrations = new Migrations(components.migrations, { schema, internalMutation });
@@ -206,6 +207,21 @@ export const dropShareConversationContent = migrations.define({
 	}
 });
 
+export const deleteToolImages = migrations.define({
+	table: 'imageUploads',
+	migrateOne: async (ctx, upload) => {
+		if (upload.sha256 === undefined) return;
+
+		// Released agents reuse a tool image's URL until their run ends.
+		const thread = upload.threadId && (await ctx.db.get('threadRecords', upload.threadId));
+
+		if (thread && !isRunFinalStatus(thread.status)) return;
+
+		if (upload.storageDeletedAt === undefined) await ctx.storage.delete(upload.storageId);
+		await ctx.db.delete('imageUploads', upload._id);
+	}
+});
+
 export const run = migrations.runner([
 	internal.migrations.backfillToolInvocationIds,
 	internal.migrations.backfillCompletionToolInvocationIds,
@@ -224,5 +240,6 @@ export const run = migrations.runner([
 	internal.migrations.backfillThreadCompletionProviders,
 	internal.migrations.backfillRunCompletionProviders,
 	internal.migrations.clearUsageLimitFailureKinds,
-	internal.migrations.dropShareConversationContent
+	internal.migrations.dropShareConversationContent,
+	internal.migrations.deleteToolImages
 ]);

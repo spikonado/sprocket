@@ -82,10 +82,6 @@ impl AgentToolContext {
     pub(super) fn workspace_relative_path(&self, path: &str) -> String {
         rebase_onto_cwd(&self.workspace_root, &self.cwd.get(), path)
     }
-
-    pub(super) fn image_urls(&self) -> super::image_urls::ConvexImageUrls<'_> {
-        super::image_urls::ConvexImageUrls::new(&self.runtime, &self.run_id)
-    }
 }
 
 fn rebase_onto_cwd(workspace_root: &Path, cwd: &Path, path: &str) -> String {

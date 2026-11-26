@@ -1,13 +1,13 @@
 use super::super::convert::{
     LocalConversionFailed, MAX_MODEL_IMAGE_BYTES, MAX_PARSE_FILE_IMAGE_BYTES,
     MAX_PARSE_FILE_IMAGE_DIMENSION, MAX_PARSE_FILE_PREVIEW_CHARS, ParseFilePersistedOutput,
-    ReplayedOutput, decode_image_info, detect_anydoc_format, ensure_image_within_model_bounds,
-    fit_image_for_model, flatten_onto_white, replay_local_tool_output, replay_tool_output,
+    decode_image_info, detect_anydoc_format, ensure_image_within_model_bounds, fit_image_for_model,
+    flatten_onto_white, replay_local_tool_output, replay_tool_output,
 };
-use super::super::image_urls::ImageUrlMap;
 use super::*;
 use crate::types::AgentHistoryToolResultItem;
-use rig::message::{ImageMediaType, ToolResultContent};
+use base64::Engine;
+use rig::message::{DocumentSourceKind, ImageMediaType, ToolResultContent};
 use sprocket_workspace::WorkspaceOperationCancelled;
 use std::io::Cursor;
 
@@ -57,11 +57,16 @@ fn png_of_size(width: u32, height: u32) -> Vec<u8> {
 }
 
 async fn replayed_image_bytes(value: &serde_json::Value) -> Vec<u8> {
-    let ReplayedOutput::Image(replayed) = replay_local_tool_output(value).await.expect("replay")
-    else {
-        panic!("expected an image");
+    let output = replay_tool_output(value).await.expect("replay");
+    let [ToolResultContent::Image(image)] = output.as_content() else {
+        panic!("expected only an image block");
     };
-    replayed.image.bytes
+    let DocumentSourceKind::Base64(data) = &image.data else {
+        panic!("expected a base64 image");
+    };
+    base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .expect("base64")
 }
 
 fn assert_text_contains(output: &ToolOutput, needle: &str) {
@@ -324,10 +329,6 @@ async fn persist_and_replay_round_trip_from_a_local_path() {
     assert_eq!(value["mediaType"], "image/png");
 
     assert_eq!(replayed_image_bytes(&value).await, png);
-    let error = replay_tool_output(&value, None)
-        .await
-        .expect_err("an image without a URL");
-    assert!(error.to_string().contains("no model URL"), "{error}");
 
     let _ = tokio::fs::remove_dir_all(workspace).await;
     let _ = tokio::fs::remove_dir_all(cache).await;
@@ -362,13 +363,13 @@ async fn rtf_converts_through_anydoc() {
 
     let value = serde_json::to_value(&persisted).expect("value");
     assert_eq!(value["outputType"], "text");
-    let output = replay_tool_output(&value, None).await.expect("replay");
+    let output = replay_tool_output(&value).await.expect("replay");
     assert_text_contains(&output, "Hello from RTF");
 
     let history = replay_local_tool_output(&value)
         .await
         .expect("history")
-        .into_history_items(&ImageUrlMap::new())
+        .into_history_items()
         .expect("history");
     match &history[0] {
         AgentHistoryToolResultItem::Text { text } => {
@@ -501,7 +502,7 @@ async fn long_text_is_cached_in_full_and_previewed_for_convex() {
     assert!(!value.to_string().contains(tail));
     assert_eq!(value["truncated"], true);
 
-    let output = replay_tool_output(&value, None).await.expect("replay");
+    let output = replay_tool_output(&value).await.expect("replay");
     match output.as_content() {
         [ToolResultContent::Text(text)] => {
             assert!(text.text.contains("...[truncated]"));
@@ -526,9 +527,7 @@ async fn missing_replay_cache_reports_missing_files() {
         "width": 1,
         "height": 1
     });
-    let error = replay_tool_output(&value, None)
-        .await
-        .expect_err("missing cache");
+    let error = replay_tool_output(&value).await.expect_err("missing cache");
     let message = format!("{error:#}");
     assert!(
         message.contains("cached image") || message.contains("failed to open"),
@@ -544,7 +543,7 @@ async fn missing_replay_cache_reports_missing_files() {
         "preview": "name",
         "truncated": false
     });
-    let text_error = replay_tool_output(&text, None)
+    let text_error = replay_tool_output(&text)
         .await
         .expect_err("missing text cache");
     let text_message = format!("{text_error:#}");
@@ -666,7 +665,7 @@ async fn local_and_replay_reads_are_bounded_without_trusting_size_metadata() {
         "width": 1,
         "height": 1
     });
-    let replay = replay_tool_output(&spoofed, None)
+    let replay = replay_tool_output(&spoofed)
         .await
         .expect_err("replay oversize");
     assert!(
