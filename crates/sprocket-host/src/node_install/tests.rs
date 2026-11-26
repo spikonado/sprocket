@@ -1,31 +1,63 @@
 use std::io::Write;
 
 use super::*;
-use crate::tool_install::test_support::write_tar_gz;
 
+#[cfg(unix)]
 #[test]
-fn tarball_keeps_the_tree_without_its_top_directory_or_headers() {
+fn tarball_keeps_links_and_modes_without_its_top_directory_or_headers() {
+    use std::os::unix::fs::PermissionsExt;
+
     let directory = tempfile::tempdir().unwrap();
     let archive = directory.path().join("node.tar.gz");
-    write_tar_gz(
-        &archive,
-        &[
-            ("node-v1/bin/node", b"node".as_slice()),
-            ("node-v1/lib/node_modules/npm/bin/npm-cli.js", b"npm"),
-            ("node-v1/include/node/node.h", b"header"),
-            ("node-v1/share/man/node.1", b"man"),
-        ],
-    );
+    let mut builder = tar::Builder::new(flate2::write::GzEncoder::new(
+        File::create(&archive).unwrap(),
+        flate2::Compression::fast(),
+    ));
+    for (name, contents) in [
+        ("node-v1/bin/node", "node"),
+        ("node-v1/lib/node_modules/npm/bin/npm-cli.js", "npm"),
+        ("node-v1/include/node/node.h", "header"),
+        ("node-v1/share/man/node.1", "man"),
+    ] {
+        let mut header = tar::Header::new_gnu();
+        header.set_size(contents.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, name, contents.as_bytes())
+            .unwrap();
+    }
+    for command in ["npm", "npx"] {
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Symlink);
+        header.set_size(0);
+        header.set_mode(0o777);
+        builder
+            .append_link(
+                &mut header,
+                format!("node-v1/bin/{command}"),
+                "../lib/node_modules/npm/bin/npm-cli.js",
+            )
+            .unwrap();
+    }
+    builder.into_inner().unwrap().finish().unwrap();
     let root = directory.path().join("root");
     std::fs::create_dir(&root).unwrap();
 
     unpack_tar_gz(&archive, &root).unwrap();
 
     assert_eq!(std::fs::read(root.join("bin/node")).unwrap(), b"node");
-    assert_eq!(
-        std::fs::read(root.join("lib/node_modules/npm/bin/npm-cli.js")).unwrap(),
-        b"npm"
-    );
+    let mode = std::fs::metadata(root.join("bin/node"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o111, 0o111);
+    for command in ["npm", "npx"] {
+        assert_eq!(
+            std::fs::read(root.join("bin").join(command)).unwrap(),
+            b"npm"
+        );
+    }
     assert!(!root.join("include").exists());
     assert!(!root.join("share").exists());
 }
