@@ -72,7 +72,6 @@ export default defineSchema({
 		annualProductId: v.optional(v.string()),
 		monthlyPrice: v.optional(vPrice),
 		annualPrice: v.optional(vPrice),
-		retentionDays: v.optional(v.number()),
 		storageBytes: v.optional(v.number())
 	})
 		.index('by_tierId', ['tierId'])
@@ -219,6 +218,7 @@ export default defineSchema({
 			'parentThreadId',
 			'lastMessageAt'
 		])
+		.index('by_parentThreadId_and_lastMessageAt', ['parentThreadId', 'lastMessageAt'])
 		.index('by_userId_parentThreadId_repositoryKey_archivedAt_lastMessageAt', [
 			'userId',
 			'parentThreadId',
@@ -241,8 +241,8 @@ export default defineSchema({
 		workingDescendantCount: v.number(),
 		descendantCount: v.number(),
 		activeDescendantCount: v.number(),
-		// Retention dates a tree from this too, since prompts to a subagent leave its root's `lastMessageAt`.
-		lastDescendantActivityAt: v.optional(v.number())
+		// When this thread or a descendant last became active or idle. Retention reads it because replies and subagent prompts leave the root's `lastMessageAt` alone.
+		lastActivityAt: v.optional(v.number())
 	}).index('by_threadId', ['threadId']),
 
 	threadUsage: defineTable({
@@ -368,13 +368,6 @@ export default defineSchema({
 	storageUsage: defineTable({
 		userId: v.string(),
 		bytes: v.number()
-	}).index('by_userId', ['userId']),
-	// No row means unlimited retention. `previousDays` is unset when the earlier limit was unlimited.
-	threadRetention: defineTable({
-		userId: v.string(),
-		days: v.number(),
-		previousDays: v.optional(v.number()),
-		changedAt: v.number()
 	}).index('by_userId', ['userId']),
 	hostedParseRequests: defineTable(v.any()),
 	webRequests: defineTable(v.any()),

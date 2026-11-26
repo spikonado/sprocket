@@ -122,7 +122,7 @@ Released v0.5.x clients attach files through Convex storage. `imageUploads:gener
 
 ### Subagent activity on thread trees
 
-`threadHierarchyStates` rows from before thread retention lack `lastDescendantActivityAt`, so the retention sweep would date those trees from the root's `lastMessageAt` alone. `migrations:backfillDescendantActivity` sets it on each root from its subagents' `lastMessageAt`, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, remove the migration.
+`threadHierarchyStates` rows from before thread retention lack `lastActivityAt`, so the retention sweep would date those trees from the root's `lastMessageAt` alone. `migrations:backfillTreeActivity` sets it on each root from its subagents' `lastMessageAt`, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, remove the migration.
 
 ### Completion provider defaults
 

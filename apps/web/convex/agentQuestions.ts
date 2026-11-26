@@ -257,8 +257,6 @@ export async function answerPendingQuestion(
 	await changeThreadActivity(ctx, args.threadId, () =>
 		ctx.db.patch('agentQuestions', question._id, questionPatch)
 	);
-	// Retention counts an answer as a message, even when its continuation never starts.
-	await ctx.db.patch('threadRecords', args.threadId, { lastMessageAt: Date.now() });
 
 	return {
 		kind: 'answered',

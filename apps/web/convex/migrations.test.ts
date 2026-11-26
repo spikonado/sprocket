@@ -561,8 +561,8 @@ test('run dates each tree from its latest subagent message', async () => {
 	await t.mutation(internal.migrations.run, {});
 	await t.finishAllScheduledFunctions(vi.runAllTimers);
 
-	expect(
-		(await t.run((ctx) => ctx.db.get('threadHierarchyStates', stateId)))?.lastDescendantActivityAt
-	).toBe(30);
+	expect((await t.run((ctx) => ctx.db.get('threadHierarchyStates', stateId)))?.lastActivityAt).toBe(
+		30
+	);
 	vi.useRealTimers();
 });

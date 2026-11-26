@@ -32,7 +32,6 @@ export const getPublicCatalog = query({
 				monthlyUsageDollars: tier.monthly / MODEL_USAGE_UNITS_PER_DOLLAR,
 				description: tier.description ?? null,
 				features: tier.features ?? [],
-				retentionDays: tier.retentionDays ?? null,
 				storageBytes: tier.storageBytes ?? null,
 				displayOrder: tier.displayOrder ?? (tier.tierId === 'free' ? 0 : 100),
 				highlighted: tier.highlighted ?? false,

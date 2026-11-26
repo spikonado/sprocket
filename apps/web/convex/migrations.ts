@@ -6,7 +6,7 @@ import type { TableNames } from '@convex/_generated/dataModel';
 import { getUserBySubject } from '@convex/lib/auth';
 import { transcriptContext } from '@convex/lib/contextHandoff';
 import { getRunExecutionState } from '@convex/lib/runExecution';
-import { hierarchyState } from '@convex/lib/threadHierarchy';
+import { findThreadRoot, hierarchyState } from '@convex/lib/threadHierarchy';
 import { getOrCreateTranscriptState, withToolInvocationIds } from '@convex/lib/transcriptParts';
 import { isRunFinalStatus } from '@convex/lib/validators';
 import schema from '@convex/schema';
@@ -255,26 +255,20 @@ export const deleteAttachmentUploads = migrations.define({
 	}
 });
 
-export const backfillDescendantActivity = migrations.define({
+export const backfillTreeActivity = migrations.define({
 	table: 'threadRecords',
 	migrateOne: async (ctx, thread) => {
-		let root = thread;
+		if (thread.parentThreadId === undefined) return;
 
-		while (root.parentThreadId !== undefined) {
-			const parent = await ctx.db.get('threadRecords', root.parentThreadId);
+		const root = await findThreadRoot(ctx.db, thread);
 
-			// A tree that is being deleted.
-			if (!parent) return;
-			root = parent;
-		}
-
-		if (root === thread) return;
+		if (!root) return;
 
 		const state = await hierarchyState(ctx.db, root._id);
 
-		if (!state || (state.lastDescendantActivityAt ?? 0) >= thread.lastMessageAt) return;
+		if (!state || (state.lastActivityAt ?? 0) >= thread.lastMessageAt) return;
 		await ctx.db.patch('threadHierarchyStates', state._id, {
-			lastDescendantActivityAt: thread.lastMessageAt
+			lastActivityAt: thread.lastMessageAt
 		});
 	}
 });
@@ -303,5 +297,5 @@ export const run = migrations.runner([
 	internal.migrations.deleteToolImages,
 	internal.migrations.stripTerminalJobPayloads,
 	internal.migrations.deleteAttachmentUploads,
-	internal.migrations.backfillDescendantActivity
+	internal.migrations.backfillTreeActivity
 ]);
