@@ -7,6 +7,13 @@ Sprocket bundles the `frontend-design` skill from
 It is licensed under
 [Apache-2.0](https://github.com/anthropics/skills/blob/main/skills/frontend-design/LICENSE.txt).
 
+## UI SDK skill
+
+Sprocket bundles the `ui-sdk` skill from
+[vercel-labs/ui](https://github.com/vercel-labs/ui/tree/main/packages/core/skills/ui-sdk).
+It is licensed under
+[Apache-2.0](https://github.com/vercel-labs/ui/blob/main/LICENSE).
+
 ## Managed browser tools
 
 Sprocket downloads unmodified native releases of

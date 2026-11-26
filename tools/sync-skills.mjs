@@ -19,6 +19,11 @@ const SKILLS = {
 		upstream: 'anthropics/skills/main/skills/frontend-design/SKILL.md',
 		description:
 			"Guidance for distinctive, intentional visual design when building new UI or reshaping an existing one. Helps with aesthetic direction, typography, and making choices that don't read as templated defaults."
+	},
+	'ui-sdk': {
+		upstream: 'vercel-labs/ui/main/packages/core/skills/ui-sdk/SKILL.md',
+		description:
+			"Builds interfaces with ui-sdk in React, Vue, Svelte, Solid or web components. Covers choosing and composing its components, building a component or behavior it doesn't ship from @ui-sdk/core (like a stepper, splitter, transfer list or emoji picker), making the interface usable by agents through createAgent, agent tools and WebMCP, and testing keyboard, focus, ARIA, server rendering and right to left, including writing tests for an existing component. Use whenever a project has @ui-sdk/* installed or the user mentions ui-sdk."
 	}
 };
 
@@ -49,6 +54,9 @@ for (const [name, { upstream, description }] of Object.entries(SKILLS)) {
 	await writeFile(
 		join(root, 'crates/sprocket-workspace/skills', name, 'SKILL.md'),
 		`---\nname: ${name}\ndescription: ${description}\n---\n` +
-			(await response.text()).replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '')
+			// Built-in skills ship as one file, so links to sibling files must point at upstream.
+			(await response.text())
+				.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '')
+				.replaceAll('](references/', `](${url.replace(/\/SKILL\.md$/, '')}/references/`)
 	);
 }
