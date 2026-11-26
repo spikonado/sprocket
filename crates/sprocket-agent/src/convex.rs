@@ -12,8 +12,8 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 use crate::types::{
-    ApiKeyCredential, ClaudeCredential, CompletionProvider, CreateRunResponse, GatewayCredential,
-    RenewClaimResponse, RunAgentRequest, RunContextResponse, StartRunResponse,
+    ApiKeyCredential, BearerCredential, ClaudeCredential, CompletionProvider, CreateRunResponse,
+    RenewClaimResponse, RunAgentRequest, RunContextResponse, StartRunResponse, VertexCredential,
 };
 use crate::workspace_context::HiddenPrompt;
 
@@ -376,7 +376,7 @@ impl RuntimeClient {
         &self,
         run_id: &str,
         claim_id: &str,
-    ) -> anyhow::Result<GatewayCredential> {
+    ) -> anyhow::Result<BearerCredential> {
         self.mutation_json(
             "agentRuntime:issueGatewayCredential",
             self.run_args_with_claim(run_id, claim_id),
@@ -403,6 +403,18 @@ impl RuntimeClient {
     ) -> anyhow::Result<ClaudeCredential> {
         self.action_json(
             "providerCredentials:issueClaudeCredential",
+            self.run_args_with_claim(run_id, claim_id),
+        )
+        .await
+    }
+
+    pub(crate) async fn issue_vertex_credential(
+        &self,
+        run_id: &str,
+        claim_id: &str,
+    ) -> anyhow::Result<VertexCredential> {
+        self.action_json(
+            "providerCredentials:issueVertexCredential",
             self.run_args_with_claim(run_id, claim_id),
         )
         .await

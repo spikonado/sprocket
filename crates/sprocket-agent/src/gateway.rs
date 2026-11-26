@@ -14,7 +14,7 @@ use tokio::time::Instant;
 use crate::now_ms;
 use crate::openai::{developer_messages, transport_auth_config};
 use crate::request_compression::ZstdResponsesRequests;
-use crate::types::GatewayCredential;
+use crate::types::BearerCredential;
 
 const REFRESH_HEADROOM_MS: u64 = 60_000;
 pub(crate) const AT_CAPACITY_CODE: &str = "spikonado_at_capacity";
@@ -26,7 +26,7 @@ struct CachedCredential {
 }
 
 impl CachedCredential {
-    fn fresh(credential: GatewayCredential) -> Option<Self> {
+    fn fresh(credential: BearerCredential) -> Option<Self> {
         let remaining_ms = credential.expires_at.saturating_sub(now_ms());
         (remaining_ms > REFRESH_HEADROOM_MS).then(|| Self {
             token: credential.token,
@@ -37,17 +37,17 @@ impl CachedCredential {
 }
 
 #[derive(Clone)]
-struct GatewayAuth<F> {
+pub(crate) struct BearerAuth<F> {
     issue_credential: F,
     cached: Arc<Mutex<Option<CachedCredential>>>,
 }
 
-impl<F, Fut> GatewayAuth<F>
+impl<F, Fut> BearerAuth<F>
 where
     F: Fn() -> Fut,
-    Fut: Future<Output = anyhow::Result<GatewayCredential>>,
+    Fut: Future<Output = anyhow::Result<BearerCredential>>,
 {
-    fn new(credential: Option<GatewayCredential>, issue_credential: F) -> Self {
+    pub(crate) fn new(credential: Option<BearerCredential>, issue_credential: F) -> Self {
         Self {
             issue_credential,
             cached: Arc::new(Mutex::new(credential.and_then(CachedCredential::fresh))),
@@ -67,9 +67,7 @@ where
             .await
             .map_err(|error| http_client::Error::Instance(error.into()))?;
         let fresh = CachedCredential::fresh(credential).ok_or_else(|| {
-            http_client::Error::Instance(
-                "Gateway returned a credential too close to expiry.".into(),
-            )
+            http_client::Error::Instance("The issued credential is too close to expiry.".into())
         })?;
         let token = fresh.token.clone();
         *cached = Some(fresh);
@@ -77,10 +75,10 @@ where
     }
 }
 
-impl<F, Fut> HttpMiddleware for GatewayAuth<F>
+impl<F, Fut> HttpMiddleware for BearerAuth<F>
 where
     F: Fn() -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = anyhow::Result<GatewayCredential>> + Send + 'static,
+    Fut: Future<Output = anyhow::Result<BearerCredential>> + Send + 'static,
 {
     fn before_request_headers<'a>(
         &'a self,
@@ -106,14 +104,14 @@ pub(crate) struct GatewayClient {
 impl GatewayClient {
     pub(crate) fn new<F, Fut>(
         base_url: String,
-        credential: GatewayCredential,
+        credential: BearerCredential,
         issue_credential: F,
     ) -> Self
     where
         F: Fn() -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = anyhow::Result<GatewayCredential>> + Send + 'static,
+        Fut: Future<Output = anyhow::Result<BearerCredential>> + Send + 'static,
     {
-        let auth = GatewayAuth::new(Some(credential), issue_credential);
+        let auth = BearerAuth::new(Some(credential), issue_credential);
         let http = DynHttpClient::new(ReqwestClient::from(reqwest::Client::new()))
             .with_middleware(auth)
             .with_middleware(ZstdResponsesRequests);

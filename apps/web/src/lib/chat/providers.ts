@@ -11,5 +11,7 @@ export const completionProviderLabels: Record<CompletionProvider, string> = {
 	opencode: 'OpenCode',
 	'opencode-go': 'OpenCode Go',
 	muse: 'Muse Code Subscription',
-	morph: 'Morph'
+	morph: 'Morph',
+	google: 'Gemini API',
+	vertex: 'Google Vertex AI'
 };

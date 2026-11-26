@@ -40,6 +40,8 @@ A provider is where Sprocket sends model requests. Spikonado, Sprocket's own pro
 | OpenCode               | API key                                                                                             |
 | OpenCode Go            | API key                                                                                             |
 | Morph                  | API key. See [Morph](#morph).                                                                       |
+| Gemini API             | API key from [Google AI Studio](https://aistudio.google.com/apikey)                                 |
+| Google Vertex AI       | Service account JSON key. See [Google Vertex AI](#google-vertex-ai).                                |
 | Muse Code Subscription | Sign in with Muse through the Muse CLI. Sprocket can install the Muse CLI for you.                  |
 
 Add keys and subscriptions in **Settings → Providers**.
@@ -47,6 +49,18 @@ Add keys and subscriptions in **Settings → Providers**.
 ### Morph
 
 Morph serves Kimi K3.1 Pro and DeepSeek V4.1 Flash 1017. Pay-as-you-go keys and [Ultra plan](https://docs.morphllm.com/ultra-plan) keys connect the same way. On Ultra, neither model has a token meter, but each has a per-minute limit on uncached input and output tokens. Kimi K3.1 Pro's output limit is lower than one nonstop stream, so threads with several agents hit it quickly. Keep another provider enabled after Morph so those requests [fall back](#provider-order-and-fallback) instead of failing.
+
+### Google Vertex AI
+
+<Snippet file="unreleased.mdx" />
+
+Vertex AI serves Claude and Gemini models from your Google Cloud project and bills that project. To connect it:
+
+1. In the Google Cloud console, enable the Vertex AI API and the Claude models you want in Model Garden.
+2. Create a service account with the **Vertex AI User** role.
+3. Create a JSON key for it and paste the whole file into the Google Vertex AI card.
+
+Sprocket sends requests to Vertex's global endpoint.
 
 ### Provider order and fallback
 

@@ -15,6 +15,8 @@ export const apiKeyProviders: readonly ApiKeyProvider[] = [
 	'opencode-go',
 	'morph',
 	'anthropic',
+	'google',
+	'vertex',
 	'openai',
 	'opencode',
 	'openrouter',
@@ -36,8 +38,14 @@ const keyPlaceholders: Record<ApiKeyProvider, string> = {
 	openrouter: 'sk-or-…',
 	opencode: 'oc_sk_…',
 	'opencode-go': 'oc_sk_…',
-	morph: 'sk-…'
+	morph: 'sk-…',
+	google: 'AIza…',
+	vertex: '{"type": "service_account", …}'
 };
+
+function credentialNoun(provider: ApiKeyProvider) {
+	return provider === 'vertex' ? 'service account key' : 'API key';
+}
 
 const caughtError = z.instanceof(Error).catch(new Error());
 
@@ -61,6 +69,7 @@ export default function ApiKeyCard({
 	const [error, setError] = useState<string | null>(null);
 	const [saved, setSaved] = useState(false);
 	const title = completionProviderLabels[provider];
+	const noun = credentialNoun(provider);
 
 	async function saveKey(event: FormEvent) {
 		event.preventDefault();
@@ -118,7 +127,9 @@ export default function ApiKeyCard({
 
 			<form className="mt-5 space-y-3" onSubmit={(event) => void saveKey(event)}>
 				<label className="block space-y-1.5">
-					<span className="text-muted-foreground text-[12px]">API key</span>
+					<span className="text-muted-foreground text-[12px]">
+						{noun.charAt(0).toUpperCase() + noun.slice(1)}
+					</span>
 					<div className="relative">
 						<input
 							type={showKey ? 'text' : 'password'}
@@ -133,7 +144,7 @@ export default function ApiKeyCard({
 						<button
 							type="button"
 							className="text-muted-foreground hover:text-foreground absolute inset-y-0 right-0 flex w-10 items-center justify-center"
-							aria-label={showKey ? 'Hide API key' : 'Show API key'}
+							aria-label={showKey ? `Hide ${noun}` : `Show ${noun}`}
 							disabled={pending || loading}
 							onClick={() => setShowKey((visible) => !visible)}
 						>
@@ -142,9 +153,16 @@ export default function ApiKeyCard({
 					</div>
 				</label>
 
+				{provider === 'vertex' && (
+					<p className="text-muted-foreground text-[12px] leading-5">
+						Give the service account the Vertex AI User role. Sprocket sends requests to the global
+						endpoint.
+					</p>
+				)}
+
 				<div className="flex flex-wrap items-center gap-3">
 					<Button type="submit" disabled={pending || loading || !apiKey.trim()}>
-						{pending ? 'Saving…' : configured ? 'Replace key' : 'Connect API key'}
+						{pending ? 'Saving…' : configured ? 'Replace key' : `Connect ${noun}`}
 					</Button>
 					{configured && !confirmRemove ? (
 						<Button

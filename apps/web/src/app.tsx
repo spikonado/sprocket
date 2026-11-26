@@ -365,7 +365,9 @@ export default function App({
 			openrouter: saved('openrouter'),
 			opencode: saved('opencode'),
 			'opencode-go': saved('opencode-go'),
-			morph: saved('morph')
+			morph: saved('morph'),
+			google: saved('google'),
+			vertex: saved('vertex')
 		};
 	}, [savedProviders]);
 

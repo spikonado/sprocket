@@ -7,6 +7,7 @@ mod cli_session;
 mod context_handoff;
 mod convex;
 mod gateway;
+mod gemini;
 mod history;
 mod hooks;
 mod models_dev;
@@ -25,6 +26,7 @@ mod submission;
 mod tools;
 mod types;
 mod usage;
+mod vertex;
 mod workspace_context;
 
 pub use catalog::model_catalog;

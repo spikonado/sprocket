@@ -14,7 +14,9 @@ const noApiKeysSaved = {
 	openrouter: false,
 	opencode: false,
 	'opencode-go': false,
-	morph: false
+	morph: false,
+	google: false,
+	vertex: false
 };
 
 const loginWindow = {

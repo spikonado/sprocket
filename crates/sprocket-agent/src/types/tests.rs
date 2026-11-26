@@ -13,6 +13,7 @@ fn providers_address_catalog_models_by_their_own_ids() {
     route.provider_model_ids = [
         ("anthropic", "claude-opus-5-5".to_string()),
         ("vercel", "anthropic/claude-opus-5.5".to_string()),
+        ("google-vertex", "claude-opus-5-5@default".to_string()),
     ]
     .into();
     let id = |provider: CompletionProvider| provider.model_id("opus-5.5", &route);
@@ -26,6 +27,11 @@ fn providers_address_catalog_models_by_their_own_ids() {
     assert_eq!(id(CompletionProvider::Openrouter), None);
     assert_eq!(id(CompletionProvider::Openai), None);
     assert_eq!(id(CompletionProvider::Muse), None);
+    assert_eq!(id(CompletionProvider::Vertex), Some("claude-opus-5-5"));
+    assert_eq!(id(CompletionProvider::Google), None);
+
+    route.vendor = "deepseek".to_string();
+    assert!(!CompletionProvider::Vertex.serves(&route));
 
     let meta: ModelRoute = serde_json::from_value(serde_json::json!({
         "provider": "meta",

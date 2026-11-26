@@ -12,6 +12,8 @@ const PROVIDER_LABELS = new Map([
 	['opencode', 'OpenCode'],
 	['opencode-go', 'OpenCode'],
 	['morph', 'Morph'],
+	['google', 'Google'],
+	['vertex', 'Google Cloud'],
 	['xai', 'xAI'],
 	['zai', 'Z.AI'],
 	['deepseek', 'DeepSeek'],
@@ -72,6 +74,34 @@ export default function ProviderLogo({
 				fill="currentColor"
 			>
 				<path d="m12 1.608 12 20.784H0Z" />
+			</svg>
+		);
+	}
+
+	if (label === 'Google') {
+		return (
+			<svg
+				viewBox="0 0 24 24"
+				className={cn('size-4 text-[#3186FF]', className)}
+				role="img"
+				aria-label={label}
+				fill="currentColor"
+			>
+				<path d="M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81" />
+			</svg>
+		);
+	}
+
+	if (label === 'Google Cloud') {
+		return (
+			<svg
+				viewBox="0 0 24 24"
+				className={cn('size-4 text-[#4285F4]', className)}
+				role="img"
+				aria-label={label}
+				fill="currentColor"
+			>
+				<path d="M12.19 2.38a9.344 9.344 0 0 0-9.234 6.893c.053-.02-.055.013 0 0-3.875 2.551-3.922 8.11-.247 10.941l.006-.007-.007.03a6.717 6.717 0 0 0 4.077 1.356h5.173l.03.03h5.192c6.687.053 9.376-8.605 3.835-12.35a9.365 9.365 0 0 0-2.821-4.552l-.043.043.006-.05A9.344 9.344 0 0 0 12.19 2.38zm-.358 4.146c1.244-.04 2.518.368 3.486 1.15a5.186 5.186 0 0 1 1.862 4.078v.518c3.53-.07 3.53 5.262 0 5.193h-5.193l-.008.009v-.04H6.785a2.59 2.59 0 0 1-1.067-.23h.001a2.597 2.597 0 1 1 3.437-3.437l3.013-3.012A6.747 6.747 0 0 0 8.11 8.24c.018-.01.04-.026.054-.023a5.186 5.186 0 0 1 3.67-1.69z" />
 			</svg>
 		);
 	}

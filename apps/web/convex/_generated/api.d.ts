@@ -49,6 +49,7 @@ import type * as lib_firecrawl from "../lib/firecrawl.js";
 import type * as lib_gatewayFetch from "../lib/gatewayFetch.js";
 import type * as lib_gatewayProtocol from "../lib/gatewayProtocol.js";
 import type * as lib_gatewayToken from "../lib/gatewayToken.js";
+import type * as lib_googleServiceAccount from "../lib/googleServiceAccount.js";
 import type * as lib_imageUploads from "../lib/imageUploads.js";
 import type * as lib_inboxState from "../lib/inboxState.js";
 import type * as lib_json from "../lib/json.js";
@@ -159,6 +160,7 @@ declare const fullApi: ApiFromModules<{
   "lib/gatewayFetch": typeof lib_gatewayFetch;
   "lib/gatewayProtocol": typeof lib_gatewayProtocol;
   "lib/gatewayToken": typeof lib_gatewayToken;
+  "lib/googleServiceAccount": typeof lib_googleServiceAccount;
   "lib/imageUploads": typeof lib_imageUploads;
   "lib/inboxState": typeof lib_inboxState;
   "lib/json": typeof lib_json;
