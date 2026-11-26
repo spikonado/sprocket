@@ -489,18 +489,34 @@ fn is_sprocket_fixable(error: &anyhow::Error) -> bool {
             .any(|cause| cause.is::<ChatGptNotConnected>() || is_provider_failure_cause(cause))
 }
 
+/// PostHog names an issue after the captured error's static type, which for
+/// `dyn Error` is the trait itself, so every run failure would share one name.
+#[derive(Debug)]
+struct AgentRunFailed<'a>(&'a anyhow::Error);
+
+impl std::fmt::Display for AgentRunFailed<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::error::Error for AgentRunFailed<'_> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        AsRef::<dyn std::error::Error>::as_ref(self.0).source()
+    }
+}
+
 pub(crate) async fn capture_run_failure(error: &anyhow::Error, user_id: &str, run_id: &str) {
     if !is_sprocket_fixable(error) {
         return;
     }
-    let source: &(dyn std::error::Error + Send + Sync + 'static) = error.as_ref();
     let Ok(options) = posthog_rs::CaptureExceptionOptions::new()
         .distinct_id(user_id)
         .property("run_id", run_id)
     else {
         return;
     };
-    let _ = posthog_rs::capture_exception_with(source, options).await;
+    let _ = posthog_rs::capture_exception_with(&AgentRunFailed(error), options).await;
 }
 
 #[cfg(test)]

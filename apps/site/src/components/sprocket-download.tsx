@@ -13,7 +13,7 @@ import { marketingButtonSecondaryClass, marketingTextLinkClass } from '@/styles/
 import { cn } from '@/utils';
 
 interface Props {
-	release: SprocketRelease | null;
+	release: SprocketRelease;
 	showAlternates: boolean;
 	className: string;
 }
@@ -25,17 +25,16 @@ export default function SprocketDownload({ release, showAlternates, className }:
 		void detectBrowserDesktopTarget().then(setTarget);
 	}, []);
 
-	const assets = release?.assets ?? [];
-	const primaryAsset = assets.find((asset) => asset.platform === target?.platform);
-	const alternateAssets = assets.filter((asset) => asset.platform !== target?.platform);
+	const primaryAsset = release.assets.find((asset) => asset.platform === target?.platform);
+	const alternateAssets = release.assets.filter((asset) => asset.platform !== target?.platform);
 
 	function trackDownload(
 		event: MouseEvent<HTMLAnchorElement>,
-		download: Omit<AnalyticsEvents['sprocket_download_clicked'], 'release_tag'>
+		download: Pick<AnalyticsEvents['sprocket_download_clicked'], 'variant' | 'platform'>
 	) {
 		track(
 			'sprocket_download_clicked',
-			{ ...download, release_tag: release?.tagName },
+			{ ...download, os: target?.osFamily ?? 'unknown', release_tag: release.tagName },
 			event.currentTarget
 		);
 	}
@@ -47,11 +46,7 @@ export default function SprocketDownload({ release, showAlternates, className }:
 				className={cn(marketingButtonSecondaryClass, 'gap-3', className)}
 				download={primaryAsset?.filename}
 				onClick={(event) =>
-					trackDownload(event, {
-						variant: 'primary',
-						platform: primaryAsset?.platform ?? target?.osFamily ?? 'unknown',
-						filename: primaryAsset?.filename
-					})
+					trackDownload(event, { variant: 'primary', platform: primaryAsset?.platform })
 				}
 			>
 				{target?.osFamily ? (
@@ -84,32 +79,13 @@ export default function SprocketDownload({ release, showAlternates, className }:
 								className={cn(marketingTextLinkClass, 'text-xs')}
 								download={asset.filename}
 								onClick={(event) =>
-									trackDownload(event, {
-										variant: 'alternate',
-										platform: asset.platform,
-										filename: asset.filename
-									})
+									trackDownload(event, { variant: 'alternate', platform: asset.platform })
 								}
 							>
 								{asset.shortLabel}
 							</a>
 						</span>
 					))}
-				</p>
-			)}
-
-			{showAlternates && target && !release && (
-				<p className="text-muted-foreground order-last mt-1 basis-full text-center font-sans text-xs">
-					<a
-						href={SPROCKET_RELEASES_LATEST_URL}
-						className={cn(marketingTextLinkClass, 'text-xs')}
-						onClick={(event) =>
-							trackDownload(event, { variant: 'all_releases', platform: 'unknown' })
-						}
-					>
-						All desktop builds
-					</a>{' '}
-					on GitHub Releases
 				</p>
 			)}
 		</>

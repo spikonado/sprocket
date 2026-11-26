@@ -1,4 +1,5 @@
 import type { BillingInterval } from '@/lib/pricing/convex-types';
+import type { SprocketDesktopPlatform, SprocketOsFamily } from '@/lib/sprocket-releases';
 
 type Checkout = { plan: string; interval: BillingInterval } | { pack: string };
 
@@ -6,10 +7,11 @@ type Checkout = { plan: string; interval: BillingInterval } | { pack: string };
 export type AnalyticsEvents = {
 	section_viewed: { section: string };
 	sprocket_download_clicked: {
-		variant: 'primary' | 'alternate' | 'all_releases';
-		platform: string;
-		filename?: string;
-		release_tag?: string;
+		variant: 'primary' | 'alternate';
+		os: SprocketOsFamily | 'unknown';
+		/** Absent when the link opens the releases page instead of a download. */
+		platform?: SprocketDesktopPlatform;
+		release_tag: string;
 	};
 	install_command_copied: { command: string };
 	pricing_interval_selected: { interval: BillingInterval };
