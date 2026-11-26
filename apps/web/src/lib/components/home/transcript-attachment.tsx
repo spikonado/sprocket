@@ -1,9 +1,9 @@
 import { FileText } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import type { Id } from '@convex/_generated/dataModel';
 import {
 	isPreviewableImageMediaType,
 	revokeAttachmentPreview,
-	shouldEagerLoadAttachmentPreview,
 	triggerAttachmentDownload
 } from '$lib/chat/attachments';
 import type { ViewerImage } from '$lib/components/image-viewer';
@@ -12,50 +12,45 @@ import { useLatest } from '$lib/use-latest';
 
 type Props = {
 	attachment: MessageAttachment;
-	loadAttachment?: (storageId: MessageAttachment['storageId']) => Promise<string | null>;
+	loadAttachment?: (fileId: Id<'files'>) => Promise<string | null>;
 	onOpen: (image: ViewerImage) => void;
 };
 
 const fileChipClass =
 	'border-border hover:border-border focus-visible:ring-ring/40 text-foreground inline-flex h-14 max-w-56 items-center gap-2 rounded-xl border px-3 py-2 text-xs transition focus-visible:ring-2 focus-visible:outline-none';
 
+const unavailableChipClass =
+	'text-muted-foreground border-hairline bg-hover-fill inline-flex items-center rounded-xl border px-3 py-2 text-xs';
+
 export default function TranscriptAttachment({ attachment, loadAttachment, onOpen }: Props) {
-	const [ownedUrl, setOwnedUrl] = useState<string | null>(null);
+	const [url, setUrl] = useState<string | null>(null);
 	const [loadFailed, setLoadFailed] = useState(false);
 	const [downloadPending, setDownloadPending] = useState(false);
 	const downloadGeneration = useRef(0);
 	const loadAttachmentRef = useLatest(loadAttachment);
-
-	const url = ownedUrl ?? attachment.url ?? null;
+	const fileId = attachment.fileId;
 	const previewable = isPreviewableImageMediaType(attachment.mediaType);
 
 	useEffect(() => {
-		const current = ownedUrl;
+		const current = url;
 
 		return () => {
 			revokeAttachmentPreview(current ?? undefined);
 			// A hidden <Activity> runs this cleanup but keeps state, so drop the revoked URL.
-			setOwnedUrl((value) => (value === current ? null : value));
+			setUrl((value) => (value === current ? null : value));
 		};
-	}, [ownedUrl]);
+	}, [url]);
 
 	useEffect(() => {
-		const storageId = attachment.storageId;
-		const mediaType = attachment.mediaType;
-
-		if (!shouldEagerLoadAttachmentPreview({ mediaType, url: attachment.url })) {
-			return;
-		}
-
 		const loader = loadAttachmentRef.current;
 
-		if (!loader) {
+		if (!fileId || !previewable || !loader) {
 			return;
 		}
 
 		let cancelled = false;
 		setLoadFailed(false);
-		void loader(storageId)
+		void loader(fileId)
 			.then((next) => {
 				if (cancelled) {
 					revokeAttachmentPreview(next ?? undefined);
@@ -63,7 +58,7 @@ export default function TranscriptAttachment({ attachment, loadAttachment, onOpe
 					return;
 				}
 
-				setOwnedUrl(next);
+				setUrl(next);
 				setLoadFailed(next == null);
 			})
 			.catch(() => {
@@ -75,7 +70,7 @@ export default function TranscriptAttachment({ attachment, loadAttachment, onOpe
 		return () => {
 			cancelled = true;
 		};
-	}, [attachment.storageId, attachment.mediaType, attachment.url, loadAttachmentRef]);
+	}, [fileId, previewable, loadAttachmentRef]);
 
 	useEffect(() => {
 		return () => {
@@ -84,21 +79,13 @@ export default function TranscriptAttachment({ attachment, loadAttachment, onOpe
 		};
 	}, []);
 
-	async function downloadFile() {
+	async function downloadFile(fileId: Id<'files'>, loader: NonNullable<Props['loadAttachment']>) {
 		if (downloadPending) {
 			return;
 		}
 
-		const existing = url;
-
-		if (existing?.startsWith('blob:')) {
-			triggerAttachmentDownload(existing, attachment.name);
-
-			return;
-		}
-
-		if (!loadAttachment && !existing) {
-			setLoadFailed(true);
+		if (url) {
+			triggerAttachmentDownload(url, attachment.name);
 
 			return;
 		}
@@ -108,16 +95,7 @@ export default function TranscriptAttachment({ attachment, loadAttachment, onOpe
 		setLoadFailed(false);
 
 		try {
-			let next: string | null = null;
-
-			if (loadAttachment) {
-				next = await loadAttachment(attachment.storageId);
-			} else if (existing) {
-				const response = await fetch(existing);
-
-				if (!response.ok) throw new Error('Download failed');
-				next = URL.createObjectURL(await response.blob());
-			}
+			const next = await loader(fileId);
 
 			if (generation !== downloadGeneration.current) {
 				revokeAttachmentPreview(next ?? undefined);
@@ -131,7 +109,7 @@ export default function TranscriptAttachment({ attachment, loadAttachment, onOpe
 				return;
 			}
 
-			setOwnedUrl(next);
+			setUrl(next);
 			triggerAttachmentDownload(next, attachment.name);
 		} catch {
 			if (generation === downloadGeneration.current) {
@@ -142,6 +120,10 @@ export default function TranscriptAttachment({ attachment, loadAttachment, onOpe
 				setDownloadPending(false);
 			}
 		}
+	}
+
+	if (!fileId) {
+		return <span className={unavailableChipClass}>{`${attachment.name} (deleted)`}</span>;
 	}
 
 	if (url && previewable) {
@@ -164,20 +146,16 @@ export default function TranscriptAttachment({ attachment, loadAttachment, onOpe
 		);
 	}
 
-	if (previewable && loadAttachment && !loadFailed) {
+	if (!loadAttachment || (previewable && loadFailed)) {
+		return <span className={unavailableChipClass}>{`${attachment.name} (unavailable)`}</span>;
+	}
+
+	if (previewable) {
 		return (
 			<span
 				className="border-hairline bg-hover-fill inline-flex size-14 animate-pulse rounded-xl border"
 				aria-label={`Loading ${attachment.name}`}
 			></span>
-		);
-	}
-
-	if (previewable) {
-		return (
-			<span className="text-muted-foreground border-hairline bg-hover-fill inline-flex items-center rounded-xl border px-3 py-2 text-xs">
-				{`${attachment.name} (unavailable)`}
-			</span>
 		);
 	}
 
@@ -194,43 +172,20 @@ export default function TranscriptAttachment({ attachment, loadAttachment, onOpe
 		);
 	}
 
-	if (loadFailed) {
-		return (
-			<button
-				type="button"
-				className={`${fileChipClass} cursor-pointer`}
-				aria-label={`Retry download of ${attachment.name}`}
-				title={attachment.name}
-				onClick={() => {
-					void downloadFile();
-				}}
-			>
-				<FileText className="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
-				<span className="min-w-0 truncate">{`${attachment.name} (unavailable)`}</span>
-			</button>
-		);
-	}
-
-	if (loadAttachment || url) {
-		return (
-			<button
-				type="button"
-				className={`${fileChipClass} cursor-pointer`}
-				aria-label={`Download ${attachment.name}`}
-				title={attachment.name}
-				onClick={() => {
-					void downloadFile();
-				}}
-			>
-				<FileText className="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
-				<span className="min-w-0 truncate">{attachment.name}</span>
-			</button>
-		);
-	}
-
 	return (
-		<span className="text-muted-foreground border-hairline bg-hover-fill inline-flex items-center rounded-xl border px-3 py-2 text-xs">
-			{`${attachment.name} (unavailable)`}
-		</span>
+		<button
+			type="button"
+			className={`${fileChipClass} cursor-pointer`}
+			aria-label={`${loadFailed ? 'Retry download of' : 'Download'} ${attachment.name}`}
+			title={attachment.name}
+			onClick={() => {
+				void downloadFile(fileId, loadAttachment);
+			}}
+		>
+			<FileText className="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
+			<span className="min-w-0 truncate">
+				{loadFailed ? `${attachment.name} (unavailable)` : attachment.name}
+			</span>
+		</button>
 	);
 }

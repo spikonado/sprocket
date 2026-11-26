@@ -6,8 +6,9 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use serde::{Deserialize, Serialize};
+use sprocket_host::transcript_client::FileDownload;
 use sprocket_transcript::rows::TranscriptRow;
-use sprocket_transcript::{AttachmentUnavailable, TranscriptAttachmentMeta, cache_attachment};
+use sprocket_transcript::{TranscriptAttachmentMeta, cache_attachment};
 use tokio_util::io::ReaderStream;
 
 use crate::AppState;
@@ -23,7 +24,7 @@ struct TranscriptAttachmentRequest {
     user_id: String,
     #[serde(deserialize_with = "deserialize_path_safe_id")]
     thread_id: String,
-    storage_id: String,
+    file_id: String,
 }
 
 impl UserScoped for TranscriptAttachmentRequest {
@@ -103,96 +104,64 @@ async fn attachment_handler(
     State(state): State<AppState>,
     AuthorizedJson(payload): AuthorizedJson<TranscriptAttachmentRequest>,
 ) -> Result<Response, ApiError> {
-    let _lease = state
-        .host
-        .transcript
-        .open_thread(&payload.user_id, &payload.thread_id)
+    let TranscriptAttachmentRequest {
+        user_id,
+        thread_id,
+        file_id,
+    } = &payload;
+    let store = &state.host.transcript;
+    let _lease = store
+        .open_thread(user_id, thread_id)
         .await
         .map_err(|error| ApiError::internal_with("failed to open thread cache", error))?;
-    if let Some(response) = serve_cached_attachment(
-        &state,
-        &payload.user_id,
-        &payload.thread_id,
-        &payload.storage_id,
-    )
-    .await?
-    {
-        return Ok(response);
-    }
-
-    let client = state
-        .host
-        .convex_client_for(&payload.user_id)
+    let cached = store
+        .attachment_metadata(user_id, thread_id, file_id)
         .await
-        .map_err(|error| ApiError::internal_with("failed to connect to Convex", error))?;
-    let Some(remote) = client
-        .attachment_download_by_storage_id(&payload.storage_id)
-        .await
-        .map_err(|error| ApiError::internal_with("failed to resolve attachment", error))?
-    else {
-        return Err(ApiError::with_status(
-            StatusCode::NOT_FOUND,
-            anyhow!("attachment not found"),
-        ));
+        .map_err(|error| ApiError::internal_with("failed to read cached attachment", error))?;
+    let (attachment, url) = match cached {
+        Some(meta) => (meta, None),
+        None => {
+            let remote = file_download(&state, user_id, file_id).await?;
+            let meta = TranscriptAttachmentMeta {
+                name: remote.name,
+                media_type: remote.media_type,
+                size: remote.size,
+                file_id: Some(file_id.clone()),
+                local_path: None,
+            };
+            (meta, Some(remote.url))
+        }
     };
-    let attachment = TranscriptAttachmentMeta {
-        storage_id: remote.storage_id,
-        name: remote.name,
-        media_type: remote.media_type,
-        size: remote.size,
-        url: Some(remote.url),
-        local_path: None,
-    };
-    let path = match cache_attachment(
-        &state.host.transcript,
-        &payload.user_id,
-        &payload.thread_id,
-        &attachment,
-    )
+    let path = cache_attachment(store, user_id, thread_id, &attachment, || async {
+        match url {
+            Some(url) => Ok(url),
+            None => Ok(file_download(&state, user_id, file_id).await?.url),
+        }
+    })
     .await
-    {
-        Ok(path) => path,
-        Err(error) if error.is::<AttachmentUnavailable>() => {
-            return Err(ApiError::with_status(
-                StatusCode::NOT_FOUND,
-                anyhow!("attachment not found"),
-            ));
-        }
-        Err(error) => {
-            return Err(ApiError::internal_with("failed to cache attachment", error));
-        }
-    };
+    .map_err(|error| match error.downcast::<ApiError>() {
+        Ok(error) => error,
+        Err(error) => ApiError::internal_with("failed to cache attachment", error),
+    })?;
     attachment_response(&path, &attachment.media_type).await
 }
 
-async fn serve_cached_attachment(
+async fn file_download(
     state: &AppState,
     user_id: &str,
-    thread_id: &str,
-    storage_id: &str,
-) -> Result<Option<Response>, ApiError> {
-    let meta = state
+    file_id: &str,
+) -> Result<FileDownload, ApiError> {
+    state
         .host
-        .transcript
-        .attachment_metadata(user_id, thread_id, storage_id)
+        .convex_client_for(user_id)
         .await
-        .map_err(|error| {
-            ApiError::internal_with(
-                &format!("failed to read cached attachment for thread {thread_id}"),
-                error,
-            )
-        })?;
-    let Some(meta) = meta else {
-        return Ok(None);
-    };
-    match cache_attachment(&state.host.transcript, user_id, thread_id, &meta).await {
-        Ok(path) => attachment_response(&path, &meta.media_type).await.map(Some),
-        Err(error) if error.is::<AttachmentUnavailable>() => Ok(None),
-        Err(error) => Err(ApiError::internal_with(
-            "failed to migrate cached attachment",
-            error,
-        )),
-    }
+        .map_err(|error| ApiError::internal_with("failed to connect to Convex", error))?
+        .file_download(file_id)
+        .await
+        .map_err(|error| ApiError::internal_with("failed to resolve attachment", error))?
+        .ok_or_else(|| {
+            ApiError::with_status(StatusCode::NOT_FOUND, anyhow!("attachment not found"))
+        })
 }
 
 async fn attachment_response(

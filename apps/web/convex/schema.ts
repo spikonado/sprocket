@@ -344,12 +344,29 @@ export default defineSchema({
 	})
 		.index('by_userId', ['userId'])
 		.index('by_storageId', ['storageId'])
-		.index('by_attached_and_storageDeletedAt', ['attached', 'storageDeletedAt'])
 		.index('by_threadId_and_sha256_and_storageDeletedAt', [
 			'threadId',
 			'sha256',
 			'storageDeletedAt'
 		]),
+	files: defineTable({
+		userId: v.string(),
+		// Unset while the file is a composer draft.
+		threadId: v.optional(v.id('threadRecords')),
+		sha256: v.string(),
+		// Shared by files with the same bytes. A re-upload after the last one is deleted gets a
+		// new ID, so a delayed delete of the old object can't remove it.
+		blobId: v.string(),
+		name: v.string(),
+		mediaType: v.string(),
+		size: v.number()
+	})
+		.index('by_userId_and_sha256_and_threadId', ['userId', 'sha256', 'threadId'])
+		.index('by_threadId', ['threadId']),
+	storageUsage: defineTable({
+		userId: v.string(),
+		bytes: v.number()
+	}).index('by_userId', ['userId']),
 	hostedParseRequests: defineTable(v.any()),
 	webRequests: defineTable(v.any()),
 	executorJobs: defineTable({

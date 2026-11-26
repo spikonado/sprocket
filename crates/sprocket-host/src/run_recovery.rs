@@ -37,7 +37,7 @@ impl RecoveryRecord {
         allow_interaction: bool,
     ) -> Self {
         request.prompt.clear();
-        request.storage_ids.clear();
+        request.file_ids.clear();
         Self {
             request,
             workspace_access,

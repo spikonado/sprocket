@@ -42,6 +42,10 @@ type Env = {
   readonly MODEL_GATEWAY_TOKEN_SECRET: string | undefined;
   readonly MODEL_GATEWAY_URL: string | undefined;
   readonly POSTHOG_PROJECT_TOKEN: string;
+  readonly R2_ACCESS_KEY_ID: string | undefined;
+  readonly R2_ACCOUNT_ID: string | undefined;
+  readonly R2_BUCKET: string | undefined;
+  readonly R2_SECRET_ACCESS_KEY: string | undefined;
   readonly SPROCKET_MARKETING_ORIGIN: string | undefined;
   readonly WORKOS_API_KEY: string | undefined;
   readonly WORKOS_CLIENT_ID: string;

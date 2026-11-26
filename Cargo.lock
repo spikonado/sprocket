@@ -9577,6 +9577,7 @@ dependencies = [
  "cookie",
  "dotenvy",
  "futures",
+ "hex",
  "hmac 0.13.0",
  "keyring",
  "libc",

@@ -126,20 +126,13 @@ const agentRunStartSchema = z.object({
 });
 
 const localTranscriptAttachmentSchema = z.object({
-	storageId: convexId<'_storage'>(),
+	fileId: convexId<'files'>().optional(),
 	name: z.string(),
 	mediaType: z.string(),
-	size: z.int(),
-	url: z.url().optional()
+	size: z.int()
 });
 
-const transcriptUploadSuccessSchema = z.object({
-	storageId: convexId<'_storage'>(),
-	name: z.string(),
-	mediaType: z.string(),
-	size: z.number(),
-	url: z.string()
-});
+const transcriptUploadSuccessSchema = localTranscriptAttachmentSchema.required();
 
 const transcriptUploadResultSchema = z.union([
 	transcriptUploadSuccessSchema,
@@ -687,7 +680,7 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				method: 'POST',
 				body: JSON.stringify({
 					userId: requestBody.userId,
-					storageId: requestBody.storageId,
+					fileId: requestBody.fileId,
 					threadId: requestBody.threadId
 				})
 			}),

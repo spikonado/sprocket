@@ -26,7 +26,8 @@ import {
 	type TranscriptStore
 } from '$lib/home/transcript-store';
 import { TranscriptActiveRunContext, useTranscriptRunRow } from '$lib/home/transcript-run';
-import type { Project, MessageAttachment } from '$lib/types/sprocket';
+import type { Id } from '@convex/_generated/dataModel';
+import type { Project } from '$lib/types/sprocket';
 import '$lib/components/home/thread-transcript.css';
 
 type Props = {
@@ -38,7 +39,7 @@ type Props = {
 	loadingOlder?: boolean;
 	nextBefore?: number;
 	onLoadOlder?: () => void;
-	loadAttachment?: (storageId: MessageAttachment['storageId']) => Promise<string | null>;
+	loadAttachment?: (fileId: Id<'files'>) => Promise<string | null>;
 	artifacts?: ArtifactEntry[];
 	onOpenArtifact?: (artifactId: string) => void;
 	renderRunFooter?: (runId: string) => ReactNode;

@@ -110,7 +110,15 @@ Released agents start `list_subagents` jobs and call `subagents:listChildren` fo
 
 Released agents send `parse_file` and `scrape_url` images to models as Convex storage URLs. They look each image up with `imageUploads:toolImageUrlsForRun` and upload missing ones through `registerToolImageForRun`, and v0.5.x agents fail the image when either call fails. Current agents send images inline as base64 and call neither. `migrations:deleteToolImages` deletes the tool-image rows, which are the ones with `sha256`, and their files, skipping threads with an active run because released agents reuse an image's URL until their run ends. The Convex Production workflow runs it after each deploy, and released agents upload an image again on their next turn. Once those agents age out, delete both mutations, the `by_threadId_and_sha256_and_storageDeletedAt` index, the `sha256` field and the migration, after deleting the tool-image rows added since. Remove the "Convex storage image URLs" shim in spikonado/ai-gateway's `BACKWARDS_COMPATIBILITY.md` at the same time.
 
+### Convex storage attachments
+
+Released v0.5.x clients attach files through Convex storage. `imageUploads:generateUploadUrl` throws "Update Sprocket to attach files.", and `agentRuntime.createGatewayRun` still accepts `storageIds` but rejects a non-empty list. `transcript:attachmentUrlForRun` and `attachmentDownloadByStorageId` take any string and return `null`, so those clients show every attachment as unavailable. Their `TranscriptAttachmentMeta` requires `storageId`, so file attachments repeat `fileId` there. Once those clients age out, remove `generateUploadUrl`, the `storageIds` argument and both queries, make `fileIds` required, stop writing the repeated `storageId`, and migrate it off `threadTranscriptParts` and `runs.pendingPrompt`.
+
 ## Convex data shims
+
+### Convex storage attachment rows
+
+`imageUploads` rows without `sha256` are user attachments from before R2. `migrations:deleteAttachmentUploads` deletes them with their `_storage` files, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --component migrations lib:getStatus` reports it done on production, remove the migration.
 
 ### Completion provider defaults
 
@@ -191,6 +199,10 @@ Each of these Convex variants goes once a full production scan confirms no retai
 
 ## Local data directory shims
 
+### Saved run requests with storage IDs
+
+Run recovery records saved by released servers carry `storageIds`, so `AgentLaunchRequest.file_ids` accepts it as an alias. Remove the alias once releases through v0.5.x are outside the direct-upgrade window.
+
 ### Call item invocation IDs in local transcripts
 
 Parts that released clients saved locally keep tool invocation IDs in `work.toolInvocations` instead of on their call items. `TranscriptPart` deserialization and `to_local_part` in `crates/sprocket-transcript` copy them onto the items with `normalize_legacy_tool_invocations`. Remove it once old local transcript caches are deleted and downloaded again, and `migrations:backfillCompletionToolInvocationIds` reports done on production.
@@ -247,3 +259,4 @@ Stored executor jobs, transcripts and local data files keep accepting these hist
 - Local readers of `scrape_url` and `read_skill` `truncated`, `jobId` pairing and command parts without input.
 - `project-attachments.json` records without `lastMessageSentAt`, which load as 0 so those projects sort by `lastUsedAt`.
 - Tool-output images cached before they were fitted for models, which `replay_image_output` fits on replay.
+- Prompt attachments with only a Convex `storageId`, and sometimes a `url`, from before attachments moved to R2. Convex and local transcript caches keep them, and the UI and agent treat them as deleted files.

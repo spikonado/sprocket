@@ -36,6 +36,7 @@
 		"@posthog/convex": "2.1.9",
 		"@sprocket/error-tracking": "workspace:*",
 		"@workos-inc/authkit-js": "^0.20.0",
+		"aws4fetch": "^1.0.20",
 		"clsx": "catalog:",
 		"codemirror": "^6.0.2",
 		"context.dev": "^3.6.0",

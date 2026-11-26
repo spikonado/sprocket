@@ -10,7 +10,7 @@ import {
 import type { LocalApi, ProjectAttachment } from '$lib/types/sprocket';
 import { fixtureId } from '$lib/convex-test-client';
 
-const storageId = fixtureId<'_storage'>;
+const fileId = fixtureId<'files'>;
 
 const threadRecordId = fixtureId<'threadRecords'>;
 
@@ -22,7 +22,7 @@ function unusedDesktopCall(): Promise<never> {
 
 const recoveredSubmission = {
 	prompt: 'Inspect the robot',
-	storageIds: [storageId('storage-1')],
+	fileIds: [fileId('file-1')],
 	reasoningEffort: 'medium' as const,
 	fastMode: false,
 	selectedModel: 'gpt-5.6-sol' as const,
@@ -130,7 +130,7 @@ function launchArgs(
 		onStarted: vi.fn(),
 		threadId: threadRecordId('thread-1'),
 		prompt: 'Inspect src/lib.rs',
-		storageIds: [storageId('storage-1')],
+		fileIds: [fileId('file-1')],
 		selectedModel: 'gpt-5.6-sol',
 		reasoningEffort: 'medium',
 		fastMode: false,
@@ -163,7 +163,7 @@ function resolveRecoveredSubmission(
 		latestRun: null,
 		newSubmissionId: 'new-id',
 		prompt: recoveredSubmission.prompt,
-		storageIds: recoveredSubmission.storageIds,
+		fileIds: recoveredSubmission.fileIds,
 		reasoningEffort: recoveredSubmission.reasoningEffort,
 		fastMode: recoveredSubmission.fastMode,
 		continuationOfRunId: recoveredSubmission.continuationOfRunId,
@@ -185,7 +185,7 @@ describe('launchAgentRun', () => {
 			userId: 'user-1',
 			threadId: 'thread-1',
 			prompt: 'Inspect src/lib.rs',
-			storageIds: ['storage-1'],
+			fileIds: ['file-1'],
 			selectedModel: 'gpt-5.6-sol',
 			submissionId: 'submission-1',
 			reasoningEffort: 'medium',
@@ -203,7 +203,7 @@ describe('launchAgentRun', () => {
 			launchArgs({
 				localApi,
 				prompt: '',
-				storageIds: [],
+				fileIds: [],
 				continuationOfRunId: runId('run-1')
 			})
 		);
@@ -212,7 +212,7 @@ describe('launchAgentRun', () => {
 			userId: 'user-1',
 			threadId: 'thread-1',
 			prompt: '',
-			storageIds: [],
+			fileIds: [],
 			selectedModel: 'gpt-5.6-sol',
 			submissionId: 'submission-1',
 			reasoningEffort: 'medium',
@@ -243,11 +243,11 @@ describe('resolveSubmissionId', () => {
 	});
 
 	it('reuses a submission only when its attachments are unchanged', () => {
-		expect(resolveRecoveredSubmission({ storageIds: [] })).toBe('new-id');
-		expect(resolveRecoveredSubmission({ storageIds: [storageId('storage-2')] })).toBe('new-id');
+		expect(resolveRecoveredSubmission({ fileIds: [] })).toBe('new-id');
+		expect(resolveRecoveredSubmission({ fileIds: [fileId('file-2')] })).toBe('new-id');
 		expect(
 			resolveRecoveredSubmission({
-				storageIds: [storageId('storage-1'), storageId('storage-2')]
+				fileIds: [fileId('file-1'), fileId('file-2')]
 			})
 		).toBe('new-id');
 	});

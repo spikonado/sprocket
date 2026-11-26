@@ -33,11 +33,11 @@ export type ThreadSummary = {
 };
 
 export type MessageAttachment = {
-	storageId: Id<'_storage'>;
+	/** Missing once the file is deleted. */
+	fileId?: Id<'files'>;
 	name: string;
 	mediaType: string;
 	size: number;
-	url: string | null;
 };
 
 export type AgentRunRequest = {
@@ -46,7 +46,7 @@ export type AgentRunRequest = {
 	threadId?: Id<'threadRecords'>;
 	repositoryKey?: string;
 	prompt: string;
-	storageIds: Id<'_storage'>[];
+	fileIds: Id<'files'>[];
 	selectedModel: string;
 	reasoningEffort: string;
 	fastMode: boolean;
@@ -70,19 +70,11 @@ export type TranscriptUploadRequest = {
 	threadId?: Id<'threadRecords'>;
 };
 
-export type TranscriptUploadResult =
-	| {
-			storageId: Id<'_storage'>;
-			name: string;
-			mediaType: string;
-			size: number;
-			url: string;
-	  }
-	| { error: string };
+export type TranscriptUploadResult = Required<MessageAttachment> | { error: string };
 
 export type TranscriptDiscardRequest = {
 	userId: string;
-	storageId: Id<'_storage'>;
+	fileId: Id<'files'>;
 	threadId?: Id<'threadRecords'>;
 };
 
@@ -91,10 +83,8 @@ export type TranscriptScopeRequest = {
 	threadId: Id<'threadRecords'>;
 };
 
-export type TranscriptAttachment = Omit<MessageAttachment, 'url'> & { url?: string };
-
 export type TranscriptRow = { id: string; runId: string } & (
-	| { kind: 'prompt'; text: string; attachments: TranscriptAttachment[] }
+	| { kind: 'prompt'; text: string; attachments: MessageAttachment[] }
 	| { kind: 'text'; text: string; running: boolean }
 	| { kind: 'work'; toolCounts: Record<string, number>; running: boolean }
 	| { kind: 'reasoning'; label: string; running: boolean; text?: string }
@@ -406,7 +396,7 @@ export type LocalApi = {
 		handlers: WatchHandlers<TranscriptEvent>
 	) => Promise<void>;
 	fetchTranscriptAttachment: (
-		request: TranscriptScopeRequest & { storageId: Id<'_storage'> }
+		request: TranscriptScopeRequest & { fileId: Id<'files'> }
 	) => Promise<Blob | null>;
 	uploadTranscriptAttachment: (request: TranscriptUploadRequest) => Promise<TranscriptUploadResult>;
 	discardTranscriptAttachment: (request: TranscriptDiscardRequest) => Promise<boolean>;

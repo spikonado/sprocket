@@ -1,7 +1,5 @@
 import type { Id } from '@convex/_generated/dataModel';
 
-export { areStorageIdsEqual } from '@convex/lib/imageUploads';
-
 const PREVIEWABLE_IMAGE_MEDIA_TYPES = new Set([
 	'image/jpeg',
 	'image/png',
@@ -14,11 +12,21 @@ export type ComposerAttachment = {
 	name: string;
 	mediaType: string;
 	size: number;
-	previewUrl?: string;
+	previewFile?: File;
 	status: 'uploading' | 'ready' | 'error';
-	storageId?: Id<'_storage'>;
+	fileId?: Id<'files'>;
 	error?: string;
 };
+
+export function areFileIdsEqual(
+	left: readonly Id<'files'>[] | undefined,
+	right: readonly Id<'files'>[] | undefined
+): boolean {
+	const leftIds = left ?? [];
+	const rightIds = right ?? [];
+
+	return leftIds.length === rightIds.length && leftIds.every((id, index) => id === rightIds[index]);
+}
 
 export function isPreviewableImageMediaType(mediaType: string) {
 	return PREVIEWABLE_IMAGE_MEDIA_TYPES.has(mediaType.toLowerCase());
@@ -52,13 +60,6 @@ export function revokeAttachmentPreview(previewUrl: string | undefined) {
 	if (previewUrl?.startsWith('blob:')) {
 		URL.revokeObjectURL(previewUrl);
 	}
-}
-
-export function shouldEagerLoadAttachmentPreview(attachment: {
-	mediaType: string;
-	url?: string | null;
-}) {
-	return !attachment.url && isPreviewableImageMediaType(attachment.mediaType);
 }
 
 export function triggerAttachmentDownload(url: string, name: string) {

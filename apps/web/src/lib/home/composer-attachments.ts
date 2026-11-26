@@ -4,7 +4,6 @@ import {
 	attachmentMediaType,
 	fallbackAttachmentName,
 	isPreviewableImageMediaType,
-	revokeAttachmentPreview,
 	type ComposerAttachment
 } from '$lib/chat/attachments';
 import { useStore, type Store } from '$lib/store';
@@ -62,9 +61,7 @@ export class ComposerAttachments implements Store<ComposerAttachment[]> {
 					name,
 					mediaType,
 					size: file.size,
-					previewUrl: isPreviewableImageMediaType(mediaType)
-						? URL.createObjectURL(file)
-						: undefined,
+					previewFile: isPreviewableImageMediaType(mediaType) ? file : undefined,
 					status: 'uploading'
 				}
 			]);
@@ -76,12 +73,11 @@ export class ComposerAttachments implements Store<ComposerAttachment[]> {
 		const attachment = this.items.find((entry) => entry.localId === localId);
 
 		if (!attachment) return;
-		revokeAttachmentPreview(attachment.previewUrl);
 		this.#setItems(this.items.filter((entry) => entry.localId !== localId));
 
-		if (attachment.storageId) {
+		if (attachment.fileId) {
 			const { userId, threadId } = this.dependencies.getContext();
-			this.#discard({ storageId: attachment.storageId, userId, threadId });
+			this.#discard({ fileId: attachment.fileId, userId, threadId });
 		}
 	}
 
@@ -91,10 +87,8 @@ export class ComposerAttachments implements Store<ComposerAttachment[]> {
 		const threadId = options.threadId === undefined ? context.threadId : options.threadId;
 
 		for (const attachment of this.items) {
-			revokeAttachmentPreview(attachment.previewUrl);
-
-			if (options.discard && attachment.storageId) {
-				this.#discard({ userId, threadId, storageId: attachment.storageId });
+			if (options.discard && attachment.fileId) {
+				this.#discard({ userId, threadId, fileId: attachment.fileId });
 			}
 		}
 
@@ -128,7 +122,7 @@ export class ComposerAttachments implements Store<ComposerAttachment[]> {
 		api?: ComposerAttachmentApi | null;
 		userId?: string | null;
 		threadId?: Id<'threadRecords'> | null;
-		storageId: Id<'_storage'>;
+		fileId: Id<'files'>;
 	}) {
 		try {
 			const context = this.dependencies.getContext();
@@ -139,7 +133,7 @@ export class ComposerAttachments implements Store<ComposerAttachment[]> {
 			void api
 				.discardTranscriptAttachment({
 					userId,
-					storageId: args.storageId,
+					fileId: args.fileId,
 					threadId: args.threadId ?? undefined
 				})
 				.catch(() => {});
@@ -164,20 +158,17 @@ export class ComposerAttachments implements Store<ComposerAttachment[]> {
 			});
 
 			if ('error' in registered) throw new Error(registered.error);
-			const attachment = this.items.find((entry) => entry.localId === localId);
-			revokeAttachmentPreview(attachment?.previewUrl);
 
 			const stillAttached = this.#update(localId, {
 				status: 'ready',
-				storageId: registered.storageId,
+				fileId: registered.fileId,
 				name: registered.name,
 				mediaType: registered.mediaType,
-				size: registered.size,
-				previewUrl: isPreviewableImageMediaType(registered.mediaType) ? registered.url : undefined
+				size: registered.size
 			});
 
 			if (!stillAttached) {
-				this.#discard({ api, userId, threadId, storageId: registered.storageId });
+				this.#discard({ api, userId, threadId, fileId: registered.fileId });
 			}
 		} catch (error) {
 			const message = error instanceof Error ? error.message : 'Upload failed.';

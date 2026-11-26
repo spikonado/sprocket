@@ -6,7 +6,13 @@ import {
 	patchRunExecution
 } from '@convex/lib/runExecution';
 import { api, internal } from '@convex/_generated/api';
-import { createQueuedRun, initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
+import {
+	createQueuedRun,
+	initConvexTest,
+	insertDraftFile,
+	insertQueuedRun,
+	seedOwnedThread
+} from './test.setup';
 
 describe('agentRuntime.insertGatewayRun', () => {
 	it('atomically creates a new thread with its first queued run', async () => {
@@ -18,7 +24,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			submissionId: 'new-thread-submission',
 			repositoryKey: 'alpha',
 			prompt: 'Build it',
-			imageUploadIds: [],
+			fileIds: [],
 			selectedModel: 'gpt-5.6-sol',
 			completionProvider: 'spikonado',
 			reasoningEffort: 'medium',
@@ -92,7 +98,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 				submissionId: 'sub-empty',
 				threadId,
 				prompt: '   ',
-				imageUploadIds: [],
+				fileIds: [],
 				selectedModel: 'openai-model',
 				completionProvider: 'openai',
 				reasoningEffort: 'medium',
@@ -109,24 +115,13 @@ describe('agentRuntime.insertGatewayRun', () => {
 		const t = initConvexTest();
 		const { asUser, subject, threadId } = await seedOwnedThread(t);
 
-		const imageUploadId = await t.run(async (ctx) => {
-			const storageId = await ctx.storage.store(new Blob(['image'], { type: 'image/png' }));
-
-			return await ctx.db.insert('imageUploads', {
-				userId: subject,
-				storageId,
-				name: 'robot.png',
-				mediaType: 'image/png',
-				size: 5,
-				attached: false
-			});
-		});
+		const fileId = await t.run((ctx) => insertDraftFile(ctx, subject));
 
 		const args = {
 			submissionId: 'sub-1',
 			threadId,
 			prompt: 'Hello',
-			imageUploadIds: [imageUploadId],
+			fileIds: [fileId],
 			selectedModel: 'gpt-5.6-sol' as const,
 			reasoningEffort: 'medium' as const,
 			fastMode: false,
@@ -158,21 +153,42 @@ describe('agentRuntime.insertGatewayRun', () => {
 						name: 'robot.png',
 						mediaType: 'image/png',
 						size: 5,
-						storageId: expect.any(String)
+						fileId,
+						storageId: fileId
 					}
 				]
 			}
 		});
 
-		expect(created.promptPart?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
 		const run = await t.run(async (ctx) => ctx.db.get('runs', created.runId));
 		expect(run).toMatchObject({
 			status: 'queued',
 			submissionId: 'sub-1'
 		});
-		expect(await t.run(async (ctx) => ctx.db.get('imageUploads', imageUploadId))).toMatchObject({
-			attached: true
+		expect(await t.run(async (ctx) => ctx.db.get('files', fileId))).toMatchObject({ threadId });
+	});
+
+	it('rejects a file already sent in another thread', async () => {
+		const t = initConvexTest();
+		const { asUser, subject, threadId } = await seedOwnedThread(t);
+		const other = await seedOwnedThread(t, subject);
+
+		const fileId = await t.run(async (ctx) => {
+			const fileId = await insertDraftFile(ctx, subject);
+			await ctx.db.patch('files', fileId, { threadId: other.threadId });
+
+			return fileId;
 		});
+
+		await expect(
+			insertQueuedRun(t, asUser, {
+				submissionId: 'reused-file',
+				threadId,
+				prompt: 'Hello',
+				fileIds: [fileId],
+				executionSecret: 'reused-file-secret'
+			})
+		).rejects.toThrow('File attachment was not found.');
 	});
 
 	it('lets the local executor continue without a browser identity using its run capability', async () => {
@@ -184,7 +200,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			submissionId: 'sub-capability',
 			threadId,
 			prompt: 'Keep going after the tab closes',
-			imageUploadIds: [],
+			fileIds: [],
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
 			fastMode: false,
@@ -237,7 +253,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			submissionId: 'sub-rebind',
 			threadId,
 			prompt: 'Recover this launch',
-			imageUploadIds: [],
+			fileIds: [],
 			selectedModel: 'gpt-5.6-sol' as const,
 			reasoningEffort: 'medium' as const,
 			fastMode: false
@@ -442,7 +458,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 				submissionId: 'sub-owned',
 				threadId,
 				prompt: 'Do the thing',
-				imageUploadIds: [],
+				fileIds: [],
 				selectedModel: 'gpt-5.6-sol',
 				reasoningEffort: 'medium',
 				fastMode: false,
@@ -459,7 +475,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			submissionId: 'sub-active',
 			threadId,
 			prompt: 'First',
-			imageUploadIds: [],
+			fileIds: [],
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
 			fastMode: false,
@@ -471,7 +487,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 				submissionId: 'sub-next',
 				threadId,
 				prompt: 'Second',
-				imageUploadIds: [],
+				fileIds: [],
 				selectedModel: 'gpt-5.6-sol',
 				reasoningEffort: 'medium',
 				fastMode: false,
@@ -500,7 +516,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			submissionId: 'sub-after-abandoned',
 			threadId,
 			prompt: 'Second',
-			imageUploadIds: [],
+			fileIds: [],
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
 			fastMode: false,
@@ -541,7 +557,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 				submissionId: 'sub-during-active-claim',
 				threadId,
 				prompt: 'Second',
-				imageUploadIds: [],
+				fileIds: [],
 				selectedModel: 'gpt-5.6-sol',
 				reasoningEffort: 'medium',
 				fastMode: false,
@@ -560,7 +576,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			submissionId: 'sub-done',
 			threadId,
 			prompt: 'First',
-			imageUploadIds: [],
+			fileIds: [],
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
 			fastMode: false,
@@ -577,7 +593,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			submissionId: 'sub-after',
 			threadId,
 			prompt: 'Second',
-			imageUploadIds: [],
+			fileIds: [],
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
 			fastMode: false,
@@ -601,7 +617,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			submissionId: 'sub-unsettle',
 			threadId,
 			prompt: 'Keep going',
-			imageUploadIds: [],
+			fileIds: [],
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
 			fastMode: false,
@@ -626,66 +642,25 @@ describe('agentRuntime.createGatewayRun attachment identity', () => {
 		vi.unstubAllEnvs();
 	});
 
-	it('resolves storageIds and stores storage-only prompt metadata', async () => {
+	it('records file attachments on the prompt', async () => {
 		const t = initConvexTest();
 		const { asUser, subject, threadId } = await seedOwnedThread(t);
-
-		const storageId = await t.run(async (ctx) => {
-			const storageId = await ctx.storage.store(new Blob(['image'], { type: 'image/png' }));
-			await ctx.db.insert('imageUploads', {
-				userId: subject,
-				storageId,
-				name: 'robot.png',
-				mediaType: 'image/png',
-				size: 5,
-				attached: false
-			});
-
-			return storageId;
-		});
+		const fileId = await t.run((ctx) => insertDraftFile(ctx, subject));
 
 		const created = await asUser.action(api.agentRuntime.createGatewayRun, {
-			submissionId: 'storage-ids-run',
+			submissionId: 'file-ids-run',
 			threadId,
 			prompt: 'Hello',
-			storageIds: [storageId],
+			fileIds: [fileId],
 			selectedModel: 'gpt-5.6-sol',
 			completionProvider: 'spikonado',
 			reasoningEffort: 'medium',
 			fastMode: false,
-			executionSecret: 'storage-ids-secret'
+			executionSecret: 'file-ids-secret'
 		});
 
 		expect(created.promptPart?.prompt?.imageUploads).toEqual([
-			{
-				name: 'robot.png',
-				mediaType: 'image/png',
-				size: 5,
-				storageId
-			}
+			{ name: 'robot.png', mediaType: 'image/png', size: 5, fileId, storageId: fileId }
 		]);
-
-		const stored = await t.run(async (ctx) => {
-			if (!created.promptPart) throw new Error('missing prompt part');
-
-			return await ctx.db.get('threadTranscriptParts', created.promptPart._id);
-		});
-
-		expect(stored?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
-		await expect(
-			asUser.mutation(api.agentRuntime.finalizeFailedStart, {
-				submissionId: 'storage-ids-run',
-				threadId,
-				prompt: 'Hello',
-				storageIds: [storageId],
-				selectedModel: 'gpt-5.6-sol',
-				completionProvider: 'spikonado',
-				reasoningEffort: 'medium',
-				fastMode: false,
-				executionSecret: 'storage-ids-secret',
-				text: 'Run failed before the model started.',
-				lastError: 'startup timed out'
-			})
-		).resolves.toBe('finalized');
 	}, 15_000);
 });

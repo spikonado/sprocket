@@ -121,14 +121,10 @@ impl UserConvexClient {
         self.mutation_json("artifacts:syncArtifact", args).await
     }
 
-    pub async fn attachment_download_by_storage_id(
-        &self,
-        storage_id: &str,
-    ) -> anyhow::Result<Option<RemoteAttachmentDownload>> {
+    pub async fn file_download(&self, file_id: &str) -> anyhow::Result<Option<FileDownload>> {
         let mut args = BTreeMap::new();
-        args.insert("storageId".to_string(), storage_id.to_string().into());
-        self.query_json("transcript:attachmentDownloadByStorageId", args)
-            .await
+        args.insert("fileId".to_string(), file_id.to_string().into());
+        self.mutation_json("files:downloadUrl", args).await
     }
 
     async fn query_json<T: for<'de> serde::Deserialize<'de>>(
@@ -174,10 +170,9 @@ impl UserConvexClient {
 
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RemoteAttachmentDownload {
+pub struct FileDownload {
     pub name: String,
     pub media_type: String,
-    pub storage_id: String,
     pub url: String,
     #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u64")]
     pub size: u64,

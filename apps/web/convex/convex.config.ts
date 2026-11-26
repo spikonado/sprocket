@@ -22,7 +22,11 @@ const app = defineApp({
 		AGENTCARD_WEBHOOK_SECRET: v.optional(v.string()),
 		MODEL_GATEWAY_URL: v.optional(v.string()),
 		MODEL_GATEWAY_TOKEN_SECRET: v.optional(v.string()),
-		POSTHOG_PROJECT_TOKEN: v.string()
+		POSTHOG_PROJECT_TOKEN: v.string(),
+		R2_ACCOUNT_ID: v.optional(v.string()),
+		R2_ACCESS_KEY_ID: v.optional(v.string()),
+		R2_SECRET_ACCESS_KEY: v.optional(v.string()),
+		R2_BUCKET: v.optional(v.string())
 	}
 });
 

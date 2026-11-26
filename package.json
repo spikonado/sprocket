@@ -24,7 +24,8 @@
 		"oxlint": "1.93.0",
 		"turbo": "^2.9.8",
 		"vercel": "catalog:",
-		"workos": "catalog:"
+		"workos": "catalog:",
+		"wrangler": "^4.164.0"
 	},
 	"engines": {
 		"bun": "^1.4.4",

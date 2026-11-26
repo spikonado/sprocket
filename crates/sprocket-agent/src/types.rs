@@ -210,7 +210,7 @@ pub struct RunAgentRequest {
     pub thread_id: String,
     pub repository_key: Option<String>,
     pub prompt: String,
-    pub storage_ids: Vec<String>,
+    pub file_ids: Vec<String>,
     pub selected_model: String,
     pub completion_provider: CompletionProvider,
     pub reasoning_effort: String,

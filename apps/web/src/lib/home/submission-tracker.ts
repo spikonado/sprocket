@@ -7,7 +7,7 @@ export type ComposerRecovery = {
 	message: string | null;
 	prompt: string;
 	attachments?: ComposerAttachment[];
-	storageIds?: Id<'_storage'>[];
+	fileIds?: Id<'files'>[];
 	reasoningEffort?: string;
 	fastMode?: boolean;
 	selectedModel?: CatalogModelId;
@@ -18,7 +18,7 @@ export type ComposerRecovery = {
 
 type RecoveredSubmission = {
 	prompt: string;
-	storageIds: Id<'_storage'>[];
+	fileIds: Id<'files'>[];
 	reasoningEffort: string;
 	fastMode: boolean;
 	selectedModel: CatalogModelId;
@@ -40,11 +40,11 @@ function resubmittable(recovery: ComposerRecovery): RecoveredSubmission | null {
 
 	if (!submissionId || !reasoningEffort || !selectedModel) return null;
 
-	if (!recovery.prompt && !recovery.storageIds?.length) return null;
+	if (!recovery.prompt && !recovery.fileIds?.length) return null;
 
 	return {
 		prompt: recovery.prompt,
-		storageIds: recovery.storageIds ?? [],
+		fileIds: recovery.fileIds ?? [],
 		reasoningEffort,
 		fastMode: recovery.fastMode ?? false,
 		selectedModel,

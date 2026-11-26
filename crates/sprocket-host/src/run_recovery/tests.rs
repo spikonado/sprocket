@@ -14,7 +14,7 @@ fn record() -> RecoveryRecord {
     RecoveryRecord::new(
         serde_json::from_value(serde_json::json!({
             "userId": "alice", "submissionId": "submission", "threadId": "thread",
-            "prompt": "build it", "storageIds": ["image"], "selectedModel": "model",
+            "prompt": "build it", "fileIds": ["file"], "selectedModel": "model",
             "reasoningEffort": "high", "fastMode": true, "workspacePath": "/work",
             "executionSecret": "secret"
         }))
@@ -48,7 +48,7 @@ async fn reload_preserves_capability_and_budget_but_releases_live_reservations()
         Some("failed")
     );
     assert!(saved.request.prompt.is_empty());
-    assert!(saved.request.storage_ids.is_empty());
+    assert!(saved.request.file_ids.is_empty());
     assert_eq!(saved.request.workspace_path, "/work");
     assert_eq!(saved.request.reasoning_effort, "high");
     assert!(saved.request.fast_mode);

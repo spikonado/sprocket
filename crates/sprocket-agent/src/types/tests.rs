@@ -258,8 +258,8 @@ fn deserializes_a_pending_prompt_from_convex_numbers() {
                 "name": "robot.png",
                 "mediaType": "image/png",
                 "size": 42.0,
-                "storageId": "storage_1",
-                "url": "https://example.com/robot.png"
+                "fileId": "file_1",
+                "storageId": "file_1"
             }]
         }
     }))
@@ -271,10 +271,7 @@ fn deserializes_a_pending_prompt_from_convex_numbers() {
         .image_uploads[0];
     assert_eq!(attachment.name, "robot.png");
     assert_eq!(attachment.size, 42);
-    assert_eq!(
-        attachment.url.as_deref(),
-        Some("https://example.com/robot.png")
-    );
+    assert_eq!(attachment.file_id.as_deref(), Some("file_1"));
 }
 
 #[test]

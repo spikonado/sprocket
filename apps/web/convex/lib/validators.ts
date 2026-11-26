@@ -1215,13 +1215,13 @@ export const vTranscriptPartKind = v.union(
 	v.literal('tool')
 );
 
-export const vTranscriptAttachmentMeta = v.object({
-	name: v.string(),
-	mediaType: v.string(),
-	size: v.number(),
-	storageId: v.id('_storage'),
-	url: v.optional(v.string())
-});
+const attachmentFields = { name: v.string(), mediaType: v.string(), size: v.number() };
+
+export const vTranscriptAttachmentMeta = v.union(
+	// Released clients require `storageId`, so file attachments repeat their ID there.
+	v.object({ ...attachmentFields, fileId: v.id('files'), storageId: v.id('files') }),
+	v.object({ ...attachmentFields, storageId: v.id('_storage'), url: v.optional(v.string()) })
+);
 
 export const vTranscriptCompletionItem = v.union(
 	vAssistantTextPart,

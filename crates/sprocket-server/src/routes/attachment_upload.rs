@@ -1,13 +1,16 @@
 use std::collections::BTreeMap;
-use std::time::Duration;
+use std::path::Path;
+use std::time::{Duration, SystemTime};
 
 use anyhow::Context;
 use axum::Json;
 use axum::extract::{Request, State};
 use axum::http::{HeaderMap, header};
+use convex::Value;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
-use sprocket_convex::deserialize_convex_u64;
+use sha2::{Digest, Sha256};
+use sprocket_host::transcript_client::UserConvexClient;
 use tokio::io::AsyncWriteExt;
 use tokio_util::io::ReaderStream;
 
@@ -33,19 +36,23 @@ impl UserScoped for UploadQuery {
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct UploadedAttachment {
-    storage_id: String,
+    file_id: String,
     name: String,
     media_type: String,
-    #[serde(deserialize_with = "deserialize_convex_u64")]
+    #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u64")]
     size: u64,
-    url: String,
 }
 
 #[derive(Deserialize)]
-#[serde(untagged)]
-enum RegistrationResult {
-    Success(UploadedAttachment),
-    Error { error: String },
+struct CreatedUpload {
+    file: UploadedAttachment,
+    upload: Option<PresignedUpload>,
+}
+
+#[derive(Deserialize)]
+struct PresignedUpload {
+    url: String,
+    headers: BTreeMap<String, String>,
 }
 
 pub(super) async fn upload_handler(
@@ -72,80 +79,74 @@ async fn upload(
     request: Request,
 ) -> anyhow::Result<UploadedAttachment> {
     let client = state.host.convex_client_for(&query.user_id).await?;
-    let pending = state
-        .host
-        .transcript
-        .pending_attachment_path(&query.user_id, "upload");
+    let store = &state.host.transcript;
+    let pending = store.pending_attachment_path(&query.user_id, "upload");
     let dir = pending.parent().context("invalid staging directory")?;
     tokio::fs::create_dir_all(dir).await?;
     let temp = tempfile::NamedTempFile::new_in(dir)?;
-    let _upload_guard = state
-        .host
-        .transcript
-        .protect_pending_upload(temp.path())
-        .await;
-    let size = stage_body(request.into_body(), temp.path()).await?;
-    let upload_url: String = client
-        .mutate("imageUploads:generateUploadUrl", BTreeMap::new())
-        .await?;
-    let file = tokio::fs::File::open(temp.path()).await?;
-    let response = reqwest::Client::builder()
-        .no_proxy()
-        .connect_timeout(Duration::from_secs(30))
-        .read_timeout(Duration::from_secs(60))
-        .build()?
-        .post(upload_url)
-        .header(header::CONTENT_TYPE, media_type)
-        .header(header::CONTENT_LENGTH, size)
-        .body(reqwest::Body::wrap_stream(ReaderStream::new(file)))
-        .send()
-        .await?
-        .error_for_status()?;
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct StorageUpload {
-        storage_id: String,
-    }
-    let uploaded: StorageUpload = serde_json::from_slice(&response.bytes().await?)?;
-    let result: RegistrationResult = client
+    let _upload_guard = store.protect_pending_upload(temp.path()).await;
+    let (size, sha256) = stage_body(request.into_body(), temp.path()).await?;
+    let CreatedUpload { file, upload } = client
         .mutate(
-            "imageUploads:registerFile",
+            "files:createUpload",
             BTreeMap::from([
-                ("storageId".into(), uploaded.storage_id.clone().into()),
                 ("name".into(), query.name.into()),
+                ("mediaType".into(), media_type.into()),
+                ("size".into(), Value::Float64(size as f64)),
+                ("sha256".into(), sha256.into()),
             ]),
         )
         .await?;
-    let result = match result {
-        RegistrationResult::Success(result) => result,
-        RegistrationResult::Error { error } => anyhow::bail!(error),
-    };
-    anyhow::ensure!(
-        result.storage_id == uploaded.storage_id,
-        "uploaded attachment identity mismatch"
-    );
-    anyhow::ensure!(result.size == size, "uploaded attachment size mismatch");
-    temp.as_file().set_modified(std::time::SystemTime::now())?;
-    temp.persist(
-        state
-            .host
-            .transcript
-            .pending_attachment_path(&query.user_id, &uploaded.storage_id),
-    )?;
-    Ok(result)
+    if let Some(upload) = upload
+        && let Err(error) = put_file(upload, temp.path()).await
+    {
+        if let Err(discard_error) = discard_remote(&client, &file.file_id).await {
+            tracing::warn!("failed to discard a file whose upload failed: {discard_error:#}");
+        }
+        return Err(error);
+    }
+    temp.as_file().set_modified(SystemTime::now())?;
+    temp.persist(store.pending_attachment_path(&query.user_id, &file.file_id))?;
+    Ok(file)
 }
 
-async fn stage_body(body: axum::body::Body, path: &std::path::Path) -> anyhow::Result<u64> {
+async fn stage_body(body: axum::body::Body, path: &Path) -> anyhow::Result<(u64, String)> {
     let mut file = tokio::fs::File::create(path).await?;
     let mut stream = body.into_data_stream();
+    let mut hasher = Sha256::new();
     let mut size = 0u64;
     while let Some(chunk) = stream.next().await {
         let chunk = chunk?;
+        hasher.update(&chunk);
         file.write_all(&chunk).await?;
         size += chunk.len() as u64;
     }
     file.sync_all().await?;
-    Ok(size)
+    Ok((size, hex::encode(hasher.finalize())))
+}
+
+async fn put_file(upload: PresignedUpload, path: &Path) -> anyhow::Result<()> {
+    let mut headers = reqwest::header::HeaderMap::new();
+    for (name, value) in upload.headers {
+        headers.insert(
+            reqwest::header::HeaderName::try_from(name)?,
+            reqwest::header::HeaderValue::try_from(value)?,
+        );
+    }
+    let file = tokio::fs::File::open(path).await?;
+    reqwest::Client::builder()
+        .no_proxy()
+        .connect_timeout(Duration::from_secs(30))
+        .read_timeout(Duration::from_secs(60))
+        .build()?
+        .put(upload.url)
+        .headers(headers)
+        .body(reqwest::Body::wrap_stream(ReaderStream::new(file)))
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(reqwest::Error::without_url)?;
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -153,7 +154,7 @@ async fn stage_body(body: axum::body::Body, path: &std::path::Path) -> anyhow::R
 pub(super) struct DiscardRequest {
     user_id: String,
     thread_id: Option<String>,
-    storage_id: String,
+    file_id: String,
 }
 
 impl UserScoped for DiscardRequest {
@@ -166,38 +167,36 @@ pub(super) async fn discard_handler(
     State(state): State<AppState>,
     AuthorizedJson(payload): AuthorizedJson<DiscardRequest>,
 ) -> Result<Json<bool>, ApiError> {
-    discard(
-        &state,
-        &payload.user_id,
-        payload.thread_id.as_deref(),
-        &payload.storage_id,
-    )
-    .await
-    .map(Json)
-    .map_err(|error| ApiError::internal_with("attachment discard failed", error))
+    discard(&state, &payload)
+        .await
+        .map(Json)
+        .map_err(|error| ApiError::internal_with("attachment discard failed", error))
 }
 
-async fn discard(
-    state: &AppState,
-    user_id: &str,
-    thread_id: Option<&str>,
-    storage_id: &str,
-) -> anyhow::Result<bool> {
-    let client = state.host.convex_client_for(user_id).await?;
-    let deleted: bool = client
-        .mutate(
-            "imageUploads:discardFile",
-            BTreeMap::from([("storageId".into(), storage_id.to_string().into())]),
-        )
-        .await?;
+async fn discard(state: &AppState, payload: &DiscardRequest) -> anyhow::Result<bool> {
+    let client = state.host.convex_client_for(&payload.user_id).await?;
+    let deleted = discard_remote(&client, &payload.file_id).await?;
     if deleted {
         state
             .host
             .transcript
-            .discard_attachment(user_id, thread_id, storage_id)
+            .discard_attachment(
+                &payload.user_id,
+                payload.thread_id.as_deref(),
+                &payload.file_id,
+            )
             .await?;
     }
     Ok(deleted)
+}
+
+async fn discard_remote(client: &UserConvexClient, file_id: &str) -> anyhow::Result<bool> {
+    client
+        .mutate(
+            "files:discard",
+            BTreeMap::from([("fileId".into(), file_id.to_string().into())]),
+        )
+        .await
 }
 
 #[cfg(test)]

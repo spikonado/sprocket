@@ -1431,13 +1431,13 @@ export default function App({
 		if (matchMedia('(max-width: 767px)').matches) setSidebarOpen(false);
 	}
 
-	async function loadTranscriptAttachment(storageId: Id<'_storage'>) {
+	async function loadTranscriptAttachment(fileId: Id<'files'>) {
 		const api = localApi;
 		const threadId = currentThreadId;
 		const userId = signedInUserIdRef.current;
 
 		if (!api || !threadId || !userId) return null;
-		const blob = await api.fetchTranscriptAttachment({ userId, threadId, storageId });
+		const blob = await api.fetchTranscriptAttachment({ userId, threadId, fileId });
 
 		return blob ? URL.createObjectURL(blob) : null;
 	}
@@ -1477,8 +1477,8 @@ export default function App({
 		const answerText = submittedPrompt.trim();
 		const submittedAttachments = composerAttachments.snapshot();
 
-		const submittedStorageIds = submittedAttachments.flatMap((attachment) =>
-			attachment.storageId ? [attachment.storageId] : []
+		const submittedFileIds = submittedAttachments.flatMap((attachment) =>
+			attachment.fileId ? [attachment.fileId] : []
 		);
 
 		const submittedModel = selectedModel;
@@ -1525,7 +1525,7 @@ export default function App({
 				message: 'Continuing from your answer when you return to this thread.',
 				prompt: continuationPrompt,
 				attachments: submittedAttachments,
-				storageIds: submittedStorageIds,
+				fileIds: submittedFileIds,
 				reasoningEffort: submittedReasoningEffort,
 				fastMode: submittedFastMode,
 				selectedModel: submittedModel,
@@ -1642,8 +1642,8 @@ export default function App({
 		const submittedPrompt = promptText.trim();
 		const submittedAttachments = composerAttachments.snapshot();
 
-		const submittedStorageIds = submittedAttachments.flatMap((attachment) =>
-			attachment.storageId ? [attachment.storageId] : []
+		const submittedFileIds = submittedAttachments.flatMap((attachment) =>
+			attachment.fileId ? [attachment.fileId] : []
 		);
 
 		const submittedModel = selectedModel;
@@ -1681,7 +1681,7 @@ export default function App({
 						},
 			newSubmissionId: freshSubmissionId,
 			prompt: submittedPrompt,
-			storageIds: submittedStorageIds,
+			fileIds: submittedFileIds,
 			reasoningEffort: submittedReasoningEffort,
 			fastMode: submittedFastMode,
 			continuationOfRunId: submittedContinuationOfRunId,
@@ -1715,7 +1715,7 @@ export default function App({
 			message,
 			prompt: submittedPrompt,
 			attachments: submittedAttachments,
-			storageIds: submittedStorageIds,
+			fileIds: submittedFileIds,
 			reasoningEffort: submittedReasoningEffort,
 			fastMode: submittedFastMode,
 			selectedModel: submittedModel,
@@ -1880,7 +1880,7 @@ export default function App({
 				threadId: threadId ?? undefined,
 				repositoryKey: threadId ? undefined : submittedRepositoryKey,
 				prompt: submittedPrompt,
-				storageIds: submittedStorageIds,
+				fileIds: submittedFileIds,
 				selectedModel: submittedModel,
 				submissionId: runSubmissionId,
 				reasoningEffort: submittedReasoningEffort,
@@ -1997,7 +1997,7 @@ export default function App({
 			onStarted: () => {},
 			threadId,
 			prompt: '',
-			storageIds: [],
+			fileIds: [],
 			selectedModel,
 			reasoningEffort: selectedReasoningEffort,
 			fastMode,

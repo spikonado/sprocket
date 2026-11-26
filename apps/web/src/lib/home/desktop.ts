@@ -10,7 +10,7 @@ import type {
 } from '$lib/types/sprocket';
 import { isRunFinalStatus, type RunFailureKind } from '@convex/lib/validators';
 import type { SelectedThreadLifecyclePhase } from '@convex/lib/runCancellation';
-import { areStorageIdsEqual } from '$lib/chat/attachments';
+import { areFileIdsEqual } from '$lib/chat/attachments';
 
 export type ProjectState = Project & {
 	localAttachmentAvailability: LocalAttachmentAvailability;
@@ -41,12 +41,12 @@ export function projectFromAttachment(attachment: ProjectAttachment): ProjectSta
 export function resolveSubmissionId(args: {
 	newSubmissionId: string;
 	prompt: string;
-	storageIds: Id<'_storage'>[];
+	fileIds: Id<'files'>[];
 	reasoningEffort: AgentRunRequest['reasoningEffort'];
 	fastMode: AgentRunRequest['fastMode'];
 	recoveredSubmission?: {
 		prompt: string;
-		storageIds?: Id<'_storage'>[];
+		fileIds?: Id<'files'>[];
 		reasoningEffort: AgentRunRequest['reasoningEffort'];
 		fastMode: AgentRunRequest['fastMode'];
 		selectedModel: AgentRunRequest['selectedModel'];
@@ -77,7 +77,7 @@ export function resolveSubmissionId(args: {
 		recoveredSubmission.reasoningEffort === args.reasoningEffort &&
 		recoveredSubmission.fastMode === args.fastMode &&
 		recoveredSubmission.continuationOfRunId === args.continuationOfRunId &&
-		areStorageIdsEqual(recoveredSubmission.storageIds, args.storageIds)
+		areFileIdsEqual(recoveredSubmission.fileIds, args.fileIds)
 		? recoveredSubmission.submissionId
 		: args.newSubmissionId;
 }
@@ -105,7 +105,7 @@ export function launchAgentRun(args: {
 	threadId?: Id<'threadRecords'>;
 	repositoryKey?: string;
 	prompt: string;
-	storageIds: Id<'_storage'>[];
+	fileIds: Id<'files'>[];
 	selectedModel: AgentRunRequest['selectedModel'];
 	reasoningEffort: AgentRunRequest['reasoningEffort'];
 	fastMode: AgentRunRequest['fastMode'];
@@ -116,7 +116,7 @@ export function launchAgentRun(args: {
 	const request: AgentRunRequest = {
 		userId: args.userId,
 		prompt: args.prompt,
-		storageIds: args.storageIds,
+		fileIds: args.fileIds,
 		selectedModel: args.selectedModel,
 		reasoningEffort: args.reasoningEffort,
 		fastMode: args.fastMode,

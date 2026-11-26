@@ -418,7 +418,7 @@ test('run removes the retired conversation sharing preference', async () => {
 	vi.useRealTimers();
 });
 
-test('run deletes tool images of idle threads and their files and keeps attachments', async () => {
+test('run deletes attachments and tool images of idle threads with their files', async () => {
 	vi.useFakeTimers();
 	const t = initConvexTest();
 	const { threadId } = await seedOwnedThread(t);
@@ -461,8 +461,8 @@ test('run deletes tool images of idle threads and their files and keeps attachme
 			])
 	);
 
-	expect(attachmentRow?.name).toBe('photo.png');
-	expect(attachmentFile).not.toBeNull();
+	expect(attachmentRow).toBeNull();
+	expect(attachmentFile).toBeNull();
 	expect(toolImageRow).toBeNull();
 	expect(toolImageFile).toBeNull();
 	expect(runningFile).not.toBeNull();

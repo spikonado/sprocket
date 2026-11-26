@@ -92,7 +92,7 @@ it('opens a transcript attachment in the image viewer and closes only the viewer
 		text: 'Check this board',
 		attachments: [
 			{
-				storageId: fixtureId<'_storage'>('image'),
+				fileId: fixtureId<'files'>('image'),
 				name: 'board.png',
 				mediaType: 'image/png',
 				size: 100
@@ -111,7 +111,7 @@ it('opens a transcript attachment in the image viewer and closes only the viewer
 		/>
 	);
 	const trigger = await screen.findByRole('button', { name: 'View board.png' });
-	expect(loadAttachment).toHaveBeenCalledWith(message.attachments[0].storageId);
+	expect(loadAttachment).toHaveBeenCalledWith(message.attachments[0].fileId);
 
 	const closeMenu = vi.fn();
 

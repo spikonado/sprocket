@@ -94,9 +94,8 @@ struct RemoteAttachment {
     media_type: String,
     #[serde(deserialize_with = "deserialize_convex_u64")]
     size: u64,
-    storage_id: String,
     #[serde(default)]
-    url: Option<String>,
+    file_id: Option<String>,
 }
 
 fn deserialize_creation_time<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
@@ -125,8 +124,7 @@ impl From<RemotePrompt> for TranscriptPromptBody {
                     name: upload.name,
                     media_type: upload.media_type,
                     size: upload.size,
-                    storage_id: upload.storage_id,
-                    url: upload.url,
+                    file_id: upload.file_id,
                     local_path: None,
                 })
                 .collect(),

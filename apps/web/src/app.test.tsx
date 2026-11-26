@@ -424,15 +424,14 @@ it('removes a project without waiting for uploads and restores the draft text wh
 
 	await act(async () => {
 		upload.resolve({
-			storageId: fixtureId<'_storage'>('late-upload'),
+			fileId: fixtureId<'files'>('late-upload'),
 			name: 'notes.txt',
 			mediaType: 'text/plain',
-			size: 5,
-			url: 'https://sprocket.test/notes'
+			size: 5
 		});
 	});
 	expect(discardTranscriptAttachment).toHaveBeenCalledWith(
-		expect.objectContaining({ storageId: 'late-upload' })
+		expect.objectContaining({ fileId: 'late-upload' })
 	);
 
 	fireEvent.click(screen.getByRole('button', { name: 'Create or add project' }));

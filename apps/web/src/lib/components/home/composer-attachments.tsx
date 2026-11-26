@@ -1,9 +1,21 @@
 import { FileText, X } from 'lucide-react';
-import {
-	formatAttachmentSize,
-	isPreviewableImageMediaType,
-	type ComposerAttachment
-} from '$lib/chat/attachments';
+import { useEffect, useState } from 'react';
+import { formatAttachmentSize, type ComposerAttachment } from '$lib/chat/attachments';
+
+function AttachmentPreview({ file, alt, dimmed }: { file: File; alt: string; dimmed: boolean }) {
+	const [url, setUrl] = useState<string>();
+
+	useEffect(() => {
+		const objectUrl = URL.createObjectURL(file);
+		setUrl(objectUrl);
+
+		return () => URL.revokeObjectURL(objectUrl);
+	}, [file]);
+
+	return (
+		<img src={url} alt={alt} className={`size-full object-cover ${dimmed ? 'opacity-50' : ''}`} />
+	);
+}
 
 export default function ComposerAttachments({
 	attachments,
@@ -20,8 +32,8 @@ export default function ComposerAttachments({
 			aria-label="Attached files"
 		>
 			{attachments.map((attachment) => {
-				const previewable =
-					isPreviewableImageMediaType(attachment.mediaType) && Boolean(attachment.previewUrl);
+				const { previewFile } = attachment;
+				const previewable = previewFile !== undefined;
 
 				return (
 					<li
@@ -39,13 +51,11 @@ export default function ComposerAttachments({
 							attachment.error ?? `${attachment.name} · ${formatAttachmentSize(attachment.size)}`
 						}
 					>
-						{previewable ? (
-							<img
-								src={attachment.previewUrl}
+						{previewFile ? (
+							<AttachmentPreview
+								file={previewFile}
 								alt={attachment.name}
-								className={`size-full object-cover ${
-									attachment.status === 'uploading' ? 'opacity-50' : ''
-								}`}
+								dimmed={attachment.status === 'uploading'}
 							/>
 						) : (
 							<>

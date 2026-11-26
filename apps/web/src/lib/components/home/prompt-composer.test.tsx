@@ -474,7 +474,7 @@ describe('PromptComposer attachments', () => {
 					localId: 'upload-1',
 					name: 'photo.png',
 					mediaType: 'image/png',
-					previewUrl: 'blob:photo',
+					previewFile: new File(['png'], 'photo.png', { type: 'image/png' }),
 					size: 512,
 					status: 'uploading'
 				},
@@ -494,6 +494,7 @@ describe('PromptComposer attachments', () => {
 		expect(document.body.textContent).toContain('2 KiB');
 		expect(document.body.textContent).toContain('Failed');
 		expect(document.querySelector('[aria-label="Uploading photo.png"]')).not.toBeNull();
+		expect(document.querySelector('img[alt="photo.png"]')?.getAttribute('src')).toMatch(/^blob:/);
 		expect(
 			document
 				.querySelector('[aria-label="Remove notes.txt"]')

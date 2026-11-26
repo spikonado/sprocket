@@ -5,7 +5,7 @@ import { ConvexError, type Infer } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { executionSecretHash } from '@convex/lib/auth';
 import { agentError } from '@convex/lib/agentErrors';
-import { getOwnedImageUploads, markImageUploadsAttached } from '@convex/lib/imageUploads';
+import { attachFiles, attachmentMeta, getOwnedFiles } from '@convex/lib/files';
 import {
 	attachRunToMachine,
 	getOwnedMachine,
@@ -26,11 +26,7 @@ import { headActionablePendingQuestion } from '@convex/lib/agentQuestions';
 import { registerChildThread, threadRoot } from '@convex/lib/threadHierarchy';
 import { insertQueuedRun } from '@convex/lib/threadRunStatus';
 import { startRunLifecycle } from '@convex/runLifecycle';
-import {
-	attachmentMetaForUploads,
-	firstUserPromptPart,
-	getPromptPart
-} from '@convex/lib/transcriptParts';
+import { firstUserPromptPart, getPromptPart } from '@convex/lib/transcriptParts';
 import { recordPromptTranscript } from '@convex/lib/transcriptWrites';
 import { posthog } from '@convex/lib/analytics';
 import {
@@ -47,7 +43,7 @@ export type QueuedRunRequest = {
 	repositoryKey?: string;
 	parentThreadId?: Id<'threadRecords'>;
 	prompt: string;
-	imageUploadIds: Id<'imageUploads'>[];
+	fileIds: Id<'files'>[];
 	selectedModel: string;
 	completionProvider: CompletionProvider;
 	reasoningEffort: Infer<typeof vReasoningEffort>;
@@ -121,8 +117,8 @@ export async function createQueuedRunRecord(
 	const continuationOfRunId = args.continuationOfRunId;
 	const prompt = args.prompt.trim();
 
-	const imageUploads = await getOwnedImageUploads(ctx, args.userId, args.imageUploadIds);
-	const recordsPrompt = !continuationOfRunId || Boolean(prompt) || imageUploads.length > 0;
+	const files = await getOwnedFiles(ctx, args.userId, args.fileIds);
+	const recordsPrompt = !continuationOfRunId || Boolean(prompt) || files.length > 0;
 	const machineId = args.machineId;
 	let machine = null;
 
@@ -140,11 +136,11 @@ export async function createQueuedRunRecord(
 		return await reconcileExistingQueuedRun(ctx, args, existingRun, secretHash);
 	}
 
-	if (!continuationOfRunId && !prompt && args.imageUploadIds.length === 0) {
+	if (!continuationOfRunId && !prompt && files.length === 0) {
 		throw new Error('Message cannot be empty.');
 	}
 
-	const fallbackTitle = (prompt || imageUploads[0]?.name || 'New thread').slice(0, 72);
+	const fallbackTitle = (prompt || files[0]?.name || 'New thread').slice(0, 72);
 	let threadRecord: Doc<'threadRecords'>;
 
 	if (args.threadId) {
@@ -263,7 +259,7 @@ export async function createQueuedRunRecord(
 	}
 
 	const promptBody = recordsPrompt
-		? { text: prompt, imageUploads: await attachmentMetaForUploads(ctx, args.imageUploadIds) }
+		? { text: prompt, imageUploads: files.map(attachmentMeta) }
 		: undefined;
 
 	const runRecord: Parameters<typeof insertQueuedRun>[1] = {
@@ -309,7 +305,7 @@ export async function createQueuedRunRecord(
 		userId: args.userId
 	};
 
-	await markImageUploadsAttached(ctx, imageUploads, threadRecord._id);
+	await attachFiles(ctx, files, threadRecord._id);
 
 	if (promptBody && !args.deferPrompt) {
 		created.promptPart = await recordPromptTranscript(ctx, {

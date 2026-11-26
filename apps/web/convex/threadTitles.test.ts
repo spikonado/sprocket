@@ -14,7 +14,7 @@ function createRun(t: ConvexTestInstance, submissionId: string, threadId?: Id<'t
 		submissionId,
 		...(threadId ? { threadId } : { repositoryKey: 'alpha' }),
 		prompt: submissionId === 'first' ? 'Build a robot' : 'Add obstacle avoidance',
-		imageUploadIds: [],
+		fileIds: [],
 		selectedModel: 'gpt-6.1-sol',
 		completionProvider: 'chatgpt',
 		reasoningEffort: 'high',

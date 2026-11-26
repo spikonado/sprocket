@@ -2,12 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { api } from '@convex/_generated/api';
 import type { QueryCtx } from '@convex/_generated/server';
 import { executionSecretHash } from '@convex/lib/auth';
-import { appendTranscriptPart } from '@convex/lib/transcriptParts';
 import { beginExecutorJob } from '@convex/lib/toolJobs';
 import {
 	createQueuedRun,
 	emptyCompletionAssignments,
 	initConvexTest,
+	insertDraftFile,
 	insertQueuedRun,
 	readTranscriptRange,
 	seedOwnedThread,
@@ -1266,157 +1266,26 @@ describe('transcript range reads', () => {
 });
 
 describe('transcript attachment identity', () => {
-	async function seedAttachedPrompt(t: ConvexTestInstance) {
-		const owned = await seedOwnedThread(t);
-		const { asUser, subject, threadId } = owned;
-		const executionSecret = `storage-only-parts-secret-${threadId}`;
+	it('returns file attachment metadata from page endpoints', async () => {
+		const t = initConvexTest();
+		const { asUser, subject, threadId } = await seedOwnedThread(t);
+		const fileId = await t.run((ctx) => insertDraftFile(ctx, subject));
+		const executionSecret = 'attachment-parts-secret';
 
-		const file = await t.run(async (ctx) => {
-			const storageId = await ctx.storage.store(new Blob(['file'], { type: 'text/plain' }));
-
-			const imageUploadId = await ctx.db.insert('imageUploads', {
-				userId: subject,
-				storageId,
-				name: 'file.txt',
-				mediaType: 'text/plain',
-				size: 4,
-				attached: false
-			});
-
-			return { storageId, imageUploadId };
-		});
-
-		const created = await insertQueuedRun(t, asUser, {
-			submissionId: `storage-only-parts-${threadId}`,
+		const { runId } = await insertQueuedRun(t, asUser, {
+			submissionId: 'attachment-parts',
 			threadId,
 			prompt: 'Read this',
-			imageUploadIds: [file.imageUploadId],
+			fileIds: [fileId],
 			executionSecret
 		});
 
-		return { ...owned, file, runId: created.runId, executionSecret };
-	}
-
-	it('returns attachment metadata without URLs from page endpoints', async () => {
-		const t = initConvexTest();
-		const { asUser, threadId, file, runId, executionSecret } = await seedAttachedPrompt(t);
-
 		const page = await asUser.query(api.transcript.getPartsPage, { threadId, start: 0, end: 1 });
 		expect(page.parts[0]?.prompt?.imageUploads).toEqual([
-			{
-				name: 'file.txt',
-				mediaType: 'text/plain',
-				size: 4,
-				storageId: file.storageId
-			}
+			{ name: 'robot.png', mediaType: 'image/png', size: 5, fileId, storageId: fileId }
 		]);
 		expect(
 			await t.query(api.transcript.getPartsPageForRun, { runId, executionSecret, start: 0, end: 1 })
 		).toEqual(page);
-	});
-
-	it('returns the requested attachment URL and null for deleted storage', async () => {
-		const t = initConvexTest();
-		const { runId, executionSecret, file } = await seedAttachedPrompt(t);
-		const args = { runId, executionSecret, partNumber: 0, storageId: file.storageId };
-		expect(await t.query(api.transcript.attachmentUrlForRun, args)).toEqual(expect.any(String));
-		await t.run((ctx) => ctx.storage.delete(file.storageId));
-		expect(await t.query(api.transcript.attachmentUrlForRun, args)).toBeNull();
-	});
-
-	it('restricts the attachment URL to the exact prompt part and run capability', async () => {
-		const t = initConvexTest();
-		const first = await seedAttachedPrompt(t);
-		const other = await seedAttachedPrompt(t);
-		await t.run(async (ctx) => {
-			await appendTranscriptPart(ctx, {
-				threadId: first.threadId,
-				runId: first.runId,
-				sourceKey: 'prompt:without-attachments',
-				kind: 'prompt',
-				prompt: { text: 'No attachments', imageUploads: [] },
-				work: { ranges: [] }
-			});
-			await appendTranscriptPart(ctx, {
-				threadId: first.threadId,
-				runId: first.runId,
-				sourceKey: 'tool:without-attachments',
-				kind: 'tool',
-				tool: {
-					toolInvocationId: 'invocation',
-					callId: 'call',
-					name: 'exec_cmd',
-					status: 'completed'
-				},
-				work: { ranges: [] }
-			});
-		});
-
-		const args = {
-			runId: first.runId,
-			executionSecret: first.executionSecret,
-			partNumber: 0,
-			storageId: first.file.storageId
-		};
-
-		await expect(
-			t.query(api.transcript.attachmentUrlForRun, { ...args, executionSecret: 'wrong' })
-		).rejects.toThrow('Run not found.');
-		await expect(
-			t.query(api.transcript.attachmentUrlForRun, { ...args, runId: other.runId })
-		).rejects.toThrow('Run not found.');
-		await expect(
-			t.query(api.transcript.attachmentUrlForRun, {
-				...args,
-				storageId: other.file.storageId
-			})
-		).rejects.toThrow('Attachment not found in transcript part.');
-		await expect(
-			t.query(api.transcript.attachmentUrlForRun, { ...args, partNumber: 1 })
-		).rejects.toThrow('Attachment not found in transcript part.');
-
-		for (const partNumber of [2, 3]) {
-			await expect(
-				t.query(api.transcript.attachmentUrlForRun, { ...args, partNumber })
-			).rejects.toThrow('Transcript prompt part not found.');
-		}
-
-		for (const partNumber of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
-			await expect(
-				t.query(api.transcript.attachmentUrlForRun, { ...args, partNumber })
-			).rejects.toThrow('Invalid transcript part number.');
-		}
-	});
-
-	it('downloads an owned file by storageId and hides foreign files', async () => {
-		const t = initConvexTest();
-		const { asUser, subject } = await seedOwnedThread(t);
-		const bob = t.withIdentity({ subject: 'bob' });
-
-		const file = await t.run(async (ctx) => {
-			const storageId = await ctx.storage.store(new Blob(['file'], { type: 'text/plain' }));
-			await ctx.db.insert('imageUploads', {
-				userId: subject,
-				storageId,
-				name: 'file.txt',
-				mediaType: 'text/plain',
-				size: 4,
-				attached: false
-			});
-
-			return storageId;
-		});
-
-		expect(
-			await asUser.query(api.transcript.attachmentDownloadByStorageId, { storageId: file })
-		).toMatchObject({
-			storageId: file,
-			name: 'file.txt',
-			mediaType: 'text/plain',
-			size: 4
-		});
-		expect(await bob.query(api.transcript.attachmentDownloadByStorageId, { storageId: file })).toBe(
-			null
-		);
 	});
 });

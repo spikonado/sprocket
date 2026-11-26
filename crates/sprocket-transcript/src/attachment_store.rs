@@ -14,27 +14,27 @@ pub(super) fn write_attachment_metadata(
     thread_dir: &Path,
     attachment: &TranscriptAttachmentMeta,
 ) -> anyhow::Result<()> {
-    let dir = thread_dir
-        .join("attachments")
-        .join(safe_segment(&attachment.storage_id));
+    let Some(file_id) = &attachment.file_id else {
+        return Ok(());
+    };
+    let dir = thread_dir.join("attachments").join(safe_segment(file_id));
     let path = dir.join("metadata.json");
     fs::create_dir_all(&dir)?;
     let mut metadata = attachment.clone();
-    metadata.url = None;
     metadata.local_path = None;
     atomic_write(&path, &serde_json::to_vec(&metadata)?)
 }
 
 impl TranscriptStore {
-    pub fn pending_attachment_path(&self, user_id: &str, storage_id: &str) -> PathBuf {
+    pub fn pending_attachment_path(&self, user_id: &str, file_id: &str) -> PathBuf {
         self.root
             .join(safe_segment(user_id))
             .join(PENDING_ATTACHMENTS_DIR)
-            .join(safe_segment(storage_id))
+            .join(safe_segment(file_id))
     }
 
-    pub(crate) async fn lock_attachment(&self, user_id: &str, storage_id: &str) -> Arc<Mutex<()>> {
-        self.lock_pending_path(&self.pending_attachment_path(user_id, storage_id))
+    pub(crate) async fn lock_attachment(&self, user_id: &str, file_id: &str) -> Arc<Mutex<()>> {
+        self.lock_pending_path(&self.pending_attachment_path(user_id, file_id))
             .await
     }
 
@@ -97,10 +97,10 @@ impl TranscriptStore {
         &self,
         user_id: &str,
         thread_id: &str,
-        attachment: &TranscriptAttachmentMeta,
+        file_id: &str,
+        name: &str,
     ) -> PathBuf {
-        let mut name: String = attachment
-            .name
+        let mut name: String = name
             .chars()
             .map(|ch| {
                 if ch.is_control()
@@ -127,7 +127,7 @@ impl TranscriptStore {
         let name = name.trim_end_matches(['.', ' ']);
         self.thread_dir(user_id, thread_id)
             .join("attachments")
-            .join(safe_segment(&attachment.storage_id))
+            .join(safe_segment(file_id))
             .join(format!("file-{name}"))
     }
 
@@ -146,18 +146,18 @@ impl TranscriptStore {
         &self,
         user_id: &str,
         thread_id: &str,
-        storage_id: &str,
+        file_id: &str,
     ) -> anyhow::Result<Option<TranscriptAttachmentMeta>> {
         let path = self
             .thread_dir(user_id, thread_id)
             .join("attachments")
-            .join(safe_segment(storage_id))
+            .join(safe_segment(file_id))
             .join("metadata.json");
         match tokio::fs::read(path).await {
             Ok(bytes) => {
                 let meta: TranscriptAttachmentMeta = serde_json::from_slice(&bytes)?;
                 anyhow::ensure!(
-                    meta.storage_id == storage_id,
+                    meta.file_id.as_deref() == Some(file_id),
                     "cached attachment identity mismatch"
                 );
                 Ok(Some(meta))
@@ -171,12 +171,12 @@ impl TranscriptStore {
         &self,
         user_id: &str,
         thread_id: Option<&str>,
-        storage_id: &str,
+        file_id: &str,
     ) -> anyhow::Result<()> {
-        let lock = self.lock_attachment(user_id, storage_id).await;
+        let lock = self.lock_attachment(user_id, file_id).await;
         let _guard = lock.lock().await;
         if let Err(error) =
-            tokio::fs::remove_file(self.pending_attachment_path(user_id, storage_id)).await
+            tokio::fs::remove_file(self.pending_attachment_path(user_id, file_id)).await
             && error.kind() != std::io::ErrorKind::NotFound
         {
             return Err(error.into());
@@ -185,7 +185,7 @@ impl TranscriptStore {
             let dir = self
                 .thread_dir(user_id, thread_id)
                 .join("attachments")
-                .join(safe_segment(storage_id));
+                .join(safe_segment(file_id));
             if let Err(error) = tokio::fs::remove_dir_all(dir).await
                 && error.kind() != std::io::ErrorKind::NotFound
             {
