@@ -28,6 +28,8 @@ jobs:
             label: GitHub CLI
           - tool: git
             label: PortableGit
+          - tool: node
+            label: Node.js
           - tool: uv
             label: uv
           - tool: vercel

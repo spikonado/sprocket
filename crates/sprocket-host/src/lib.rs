@@ -22,6 +22,7 @@ pub mod machine_identity;
 pub mod machines;
 pub mod muse_cli;
 pub mod native_auth;
+mod node_install;
 pub mod package_update;
 pub mod profile;
 pub mod project_attachments;
@@ -122,6 +123,7 @@ pub struct Host {
     desktop: Arc<PinnedTool>,
     gh: Arc<PinnedTool>,
     git: Option<Arc<PinnedTool>>,
+    node: Arc<PinnedTool>,
     python: Arc<PythonTools>,
     repository_key_moves: Arc<tokio::sync::Mutex<()>>,
 }
@@ -200,6 +202,7 @@ impl Host {
                 .then(|| git_install::installer(data_dir))
                 .transpose()?
                 .map(Arc::new),
+            node: Arc::new(node_install::installer(data_dir)?),
             python,
             repository_key_moves: Arc::default(),
         })
@@ -214,6 +217,7 @@ impl Host {
         if let Some(git) = &self.git {
             git.prepare();
         }
+        self.node.prepare();
         self.python.prepare();
         self.kicad.prepare();
     }
@@ -229,7 +233,7 @@ impl Host {
                     self.vercel.bin_dir(),
                 ],
             ),
-            [self.bun.bin_dir()]
+            [self.bun.bin_dir(), node_install::path_dir(&self.node)]
                 .into_iter()
                 .chain(self.python.bin_dirs())
                 .chain(self.git.as_deref().map(git_install::path_dir)),

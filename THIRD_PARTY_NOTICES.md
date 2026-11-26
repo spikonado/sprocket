@@ -31,6 +31,17 @@ libraries under their own licenses, including JavaScriptCore under LGPL-2.
 The Bun version, archive sizes, and SHA256 checksums are recorded in
 `tools/bun/releases.json`.
 
+## Node.js and npm
+
+Sprocket downloads unmodified releases of [Node.js](https://nodejs.org) on
+demand. Node.js is licensed under
+[MIT](https://github.com/nodejs/node/blob/main/LICENSE) and bundles libraries
+under their own licenses, including npm under the
+[Artistic License 2.0](https://github.com/npm/cli/blob/latest/LICENSE).
+
+The Node.js version, archive sizes, and SHA256 checksums are recorded in
+`tools/node/releases.json`.
+
 ## agent-desktop
 
 Sprocket downloads unmodified native releases of
