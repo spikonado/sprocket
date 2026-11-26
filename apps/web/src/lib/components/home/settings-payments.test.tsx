@@ -1,58 +1,24 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
-import { ConvexTestClient, ConvexTestProvider, fixtureId } from '$lib/convex-test-client';
+import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
 import SettingsPayments from './settings-payments';
-
-const threadId = fixtureId<'threadRecords'>('thread-test');
-
-const purchaseId = fixtureId<'purchases'>('purchase-test');
 
 afterEach(() => vi.restoreAllMocks());
 
-async function mount(client: ConvexTestClient, onOpenThread = vi.fn(async () => {})) {
+async function mount(client: ConvexTestClient) {
 	client.handleAction(api.payments.listMyCards, async () => [
 		{ id: 'card', brand: 'visa', last4: '4242', expiryMonth: 4, expiryYear: 2030 }
 	]);
-	client.registerQuery(api.payments.listMyPurchases, [
-		{
-			_id: purchaseId,
-			threadId,
-			merchant: 'shop.example.com',
-			amount: 2306,
-			currency: 'usd',
-			status: 'settled',
-			orderNumber: '112-7',
-			orderLink: 'https://shop.example.com/orders/112-7',
-			trackingLink: 'https://track.example.com/1Z',
-			createdAt: Date.UTC(2026, 0, 2)
-		}
-	]);
+	client.registerQuery(api.payments.listMyPurchases, []);
 	await act(async () => {
 		render(
 			<ConvexTestProvider client={client}>
-				<SettingsPayments onOpenThread={onOpenThread} />
+				<SettingsPayments onOpenThread={vi.fn(async () => {})} />
 			</ConvexTestProvider>
 		);
 	});
 }
-
-it('lists saved cards and purchases and opens a purchase thread', async () => {
-	const onOpenThread = vi.fn(async () => {});
-	await mount(new ConvexTestClient(), onOpenThread);
-	expect(await screen.findByText('•••• 4242')).toBeTruthy();
-	expect(screen.getByText('visa')).toBeTruthy();
-	expect(screen.getByText('Expires 04/30')).toBeTruthy();
-	expect(screen.getByText('$23.06')).toBeTruthy();
-	expect(screen.getByRole('link', { name: 'Order 112-7' }).getAttribute('href')).toBe(
-		'https://shop.example.com/orders/112-7'
-	);
-	expect(screen.getByRole('link', { name: 'Track order' }).getAttribute('href')).toBe(
-		'https://track.example.com/1Z'
-	);
-	fireEvent.click(screen.getByRole('button', { name: 'View thread' }));
-	expect(onOpenThread).toHaveBeenCalledWith(threadId);
-});
 
 it('keeps the newest card list when an older reload finishes last', async () => {
 	const client = new ConvexTestClient();

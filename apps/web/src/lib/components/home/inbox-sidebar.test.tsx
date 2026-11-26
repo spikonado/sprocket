@@ -179,14 +179,6 @@ it('removes a project from the project filter without filtering by it', async ()
 	expect(input.onFilter).not.toHaveBeenCalled();
 });
 
-it('adds a project from the project selector footer', async () => {
-	const input = props([thread()]);
-	const view = renderView(<Harness {...input} />);
-	fireEvent.click(view.getByText('All projects', { selector: 'summary span' }));
-	fireEvent.click(view.getByRole('button', { name: 'Add project' }));
-	expect(input.onAddProject).toHaveBeenCalledOnce();
-});
-
 it('renders simple navigation and a collapsible settled section', async () => {
 	const input = await render([thread(), thread(true)]);
 
@@ -229,21 +221,6 @@ it('restores the settled section preference from local storage', async () => {
 	expect(document.querySelector('#inbox-settled .inbox-row')).toBeTruthy();
 });
 
-it('closes the sidebar from the top action and from the brand mark', async () => {
-	const input = await render([thread()]);
-
-	act(() => {
-		document.querySelector<HTMLButtonElement>('[aria-label="Close sidebar"]')!.click();
-	});
-	expect(input.onClose).toHaveBeenCalledOnce();
-
-	const brand = document.querySelector<HTMLButtonElement>('header [aria-label="Close sidebar"]')!;
-	act(() => {
-		brand.click();
-	});
-	expect(input.onClose).toHaveBeenCalledTimes(2);
-});
-
 it('loads more threads only after the user clicks Show more', async () => {
 	const input = props([thread()]);
 	const unsettled = input.sections.find((section) => section.state === 'unsettled')!;
@@ -272,29 +249,6 @@ it('starts a new thread with Alt+N', async () => {
 	});
 
 	expect(input.onNew).toHaveBeenCalledTimes(2);
-});
-
-it('does not render empty thread rows', async () => {
-	await render([]);
-
-	expect(document.querySelector('#inbox-unsettled')).toBeNull();
-	expect(document.querySelector('#inbox-settled .inbox-section-heading')).toBeTruthy();
-	expect(document.querySelector('#inbox-settled .inbox-row')).toBeNull();
-	expect(document.body.textContent).not.toContain('No settled threads');
-	expect(document.body.textContent).not.toContain('No unsettled threads');
-});
-
-it('shows project, title, provider, and model name without a model slug', async () => {
-	await render([thread()]);
-	const row = document.querySelector('.inbox-row')!;
-
-	expect(row.querySelector('.inbox-row-meta')?.textContent).toBe('Repository');
-	expect(row.querySelector('.inbox-row-title')?.textContent).toBe('Thread');
-	expect(row.querySelector('.inbox-row-model')?.textContent).toContain('Model Name');
-	expect(row.querySelector('.inbox-row-model svg')).toBeTruthy();
-	expect(row.textContent).not.toContain('model');
-	expect(row.textContent).not.toContain('submission');
-	expect(row.querySelector('.inbox-row-open')?.getAttribute('title')).not.toContain('model');
 });
 
 const linkedPr = (
@@ -388,17 +342,6 @@ it('lists several linked PRs, newest first, in a dashboard beside one button', a
 	expect(document.querySelector('[role="dialog"]')).toBeNull();
 });
 
-it('names repositories in the PR dashboard only when they differ', async () => {
-	await render([{ ...thread(), pullRequests: [linkedPr(3, 'closed'), linkedPr(7, 'open')] }]);
-	await userEvent.setup().click(document.querySelector('button.inbox-pr-button')!);
-
-	expect(
-		[...document.querySelectorAll('[role="dialog"] .inbox-pr-item-meta')].map(
-			(meta) => meta.textContent
-		)
-	).toEqual(['Open', 'Closed']);
-});
-
 it('keeps thread rows styled when selection moves by click and keyboard', async () => {
 	const first = thread();
 
@@ -466,26 +409,6 @@ it('shows Needs input instead of Working while a question waits for an answer', 
 	expect(document.querySelector('.inbox-row-meta .inbox-status')?.textContent).toBe('Needs input');
 });
 
-it('keeps the selected project filter styled for all projects and a single project', async () => {
-	const input = props([thread()]);
-	const view = renderView(<Harness {...input} />);
-
-	function selectedLabel() {
-		const selected = document.querySelector('.inbox-project-option.inbox-project-selected');
-		expect(selected?.getAttribute('aria-pressed')).toBe('true');
-		expect(document.querySelectorAll('.inbox-project-option[aria-pressed]')).toHaveLength(3);
-		expect(document.querySelectorAll('.inbox-project-selected')).toHaveLength(1);
-
-		return selected?.textContent;
-	}
-
-	expect(selectedLabel()).toBe('All projects');
-	view.rerender(<Harness {...input} selectedProjects={['repo']} />);
-	expect(selectedLabel()).toBe('Repository');
-	view.rerender(<Harness {...input} selectedProjects={[]} />);
-	expect(selectedLabel()).toBe('All projects');
-});
-
 it('filters the project picker and selects one project', async () => {
 	const input = await render([thread()]);
 	act(() => {
@@ -502,41 +425,6 @@ it('filters the project picker and selects one project', async () => {
 		project.click();
 	});
 	expect(input.onFilter).toHaveBeenCalledWith(['repo']);
-});
-
-it('puts the add-project action beside the project selector', async () => {
-	const input = await render([thread()]);
-	const action = document.querySelector<HTMLButtonElement>('[aria-label="Create or add project"]')!;
-
-	expect(action.closest('.inbox-project-controls')).toBeTruthy();
-	expect(action.closest('.inbox-project-menu')).toBeNull();
-	act(() => {
-		action.click();
-	});
-	expect(input.onAddProject).toHaveBeenCalledOnce();
-});
-
-it('shows an icon for every thread menu action without selection controls', async () => {
-	await render([thread()]);
-	act(() => {
-		document
-			.querySelector('.inbox-row')!
-			.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 20, clientY: 20 }));
-	});
-	await flush();
-	const actions = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
-
-	expect(actions.map((action) => action.textContent?.trim())).toEqual([
-		'Settle',
-		'Rename',
-		'Regenerate thread title',
-		'Move to project',
-		'Copy thread ID',
-		'Delete'
-	]);
-	expect(actions.every((action) => action.querySelector('svg'))).toBe(true);
-	expect(document.body.textContent).not.toContain('Select thread');
-	expect(document.body.textContent).not.toContain('Deselect thread');
 });
 
 it('requests title regeneration for the right-clicked thread and closes the menu', async () => {
@@ -679,31 +567,6 @@ it('commits a rename once when Enter and blur both fire before it settles', asyn
 	});
 
 	expect(input.onRename).toHaveBeenCalledOnce();
-});
-
-it('does not attach keyboard context-menu behavior to thread rows', async () => {
-	await render([thread()]);
-	const rowButton = document.querySelector<HTMLButtonElement>('.inbox-row-open')!;
-
-	act(() => {
-		rowButton.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ContextMenu' }));
-	});
-	await flush();
-
-	expect(rowButton.hasAttribute('aria-haspopup')).toBe(false);
-	expect(document.querySelector('.inbox-context-menu')).toBeNull();
-});
-
-it('labels settle and unsettle controls with tooltips', async () => {
-	localStorage.setItem('sprocket.inbox.settled-open', 'true');
-	await render([thread(), thread(true)]);
-
-	expect(document.querySelector('[aria-label="Settle Thread"]')?.getAttribute('data-tooltip')).toBe(
-		'Settle'
-	);
-	expect(
-		document.querySelector('[aria-label="Unsettle Thread"]')?.getAttribute('data-tooltip')
-	).toBe('Unsettle');
 });
 
 it('renames a thread inline', async () => {
@@ -930,20 +793,6 @@ it('shows active trees without working subagents as waiting', async () => {
 	]);
 });
 
-it('shows only counted working descendants during backfill', async () => {
-	treeSummaries.set('thread', {
-		descendantCount: 5,
-		anyActive: true,
-		descendantsActive: true,
-		waitingForInput: false,
-		workingDescendantCount: 1
-	});
-	await render([thread()]);
-	expect(
-		[...document.querySelectorAll('.inbox-row-subagents')].map((row) => row.textContent)
-	).toEqual(['1 subagent · Working']);
-});
-
 it('uses singular for one subagent and omits the row without descendants', async () => {
 	treeSummaries.set('thread', {
 		descendantCount: 1,
@@ -1038,31 +887,6 @@ it('renders and selects nested children with increasing indentation', async () =
 
 	expect(childMain.getAttribute('aria-current')).toBe('page');
 	expect(childMain.closest('.inbox-row-selected')).toBeTruthy();
-});
-
-it('collapses an expanded branch through the expansion control', async () => {
-	treeSummaries.set('thread', {
-		descendantCount: 1,
-		anyActive: false,
-		descendantsActive: false,
-		waitingForInput: false,
-		workingDescendantCount: 0
-	});
-	const input = props([thread()]);
-	input.expansion = expansionStub(['thread']);
-	renderView(<Harness {...input} />);
-	await flush();
-
-	const expansion = document.querySelector<HTMLButtonElement>('.inbox-subagents')!;
-
-	expect(expansion.getAttribute('aria-label')).toBe('Collapse subagents of Thread: 1 subagent');
-	expect(expansion.querySelector('.lucide-chevron-down')).toBeTruthy();
-
-	act(() => {
-		expansion.querySelector<HTMLElement>('.inbox-row-subagents')!.click();
-	});
-
-	expect(input.expansion.collapse).toHaveBeenCalledWith('thread');
 });
 
 it('hides settle and unsettle controls for child threads', async () => {

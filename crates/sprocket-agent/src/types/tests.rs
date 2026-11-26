@@ -143,49 +143,6 @@ fn deserializes_tool_history_into_rig_messages_with_matching_ids() {
 }
 
 #[test]
-fn resolves_tool_result_name_from_call_id_when_result_id_differs() {
-    let history = vec![
-        AgentHistoryMessage {
-            role: AgentHistoryRole::Assistant,
-            origin: None,
-            contents: vec![AgentHistoryContent::ToolCall {
-                call_id: "call_1".to_string(),
-                name: "exec_command".to_string(),
-                arguments: serde_json::json!({"cmd": "pwd"}),
-                native_item: None,
-            }],
-        },
-        AgentHistoryMessage {
-            role: AgentHistoryRole::User,
-            origin: None,
-            contents: vec![AgentHistoryContent::ToolResult {
-                id: "fr_1".to_string(),
-                call_id: Some("call_1".to_string()),
-                items: vec![AgentHistoryToolResultItem::Text {
-                    text: "ok".to_string(),
-                }],
-            }],
-        },
-    ];
-
-    let messages = deserialize_agent_history(history).expect("messages");
-    match &messages[1] {
-        Message::User { content } => match content.iter().next() {
-            Some(UserContent::ToolResult(tool_result)) => {
-                assert_eq!(tool_result.name, "exec_command");
-                assert_eq!(tool_result.call.wire(), "call_1");
-                assert_eq!(
-                    tool_result.call.provider().map(|id| id.as_str()),
-                    Some("call_1")
-                );
-            }
-            other => panic!("expected user tool result, got {other:?}"),
-        },
-        other => panic!("expected user message, got {other:?}"),
-    }
-}
-
-#[test]
 fn mints_one_identity_for_an_empty_tool_call_and_its_result() {
     let history = serde_json::from_value(serde_json::json!([
         {

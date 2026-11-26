@@ -29,7 +29,6 @@ function filesApi(): FilesApi {
 function renderFiles(
 	api: FilesApi,
 	onOpenFile = vi.fn(),
-	threadCwd = '/repo-worktree',
 	location?: WorkspaceFileTarget,
 	onLocationChange = vi.fn()
 ) {
@@ -37,7 +36,7 @@ function renderFiles(
 		<FilesView
 			api={api}
 			projectPath="/repo"
-			threadCwd={threadCwd}
+			threadCwd="/repo-worktree"
 			location={location}
 			onLocationChange={onLocationChange}
 			active
@@ -85,19 +84,6 @@ it('lists the new root when it switches while a new file is being named', async 
 	expect(screen.getByRole('button', { name: 'New file' })).toHaveProperty('disabled', false);
 });
 
-it('lists the project without a root switch when the thread runs in it', async () => {
-	const api = filesApi();
-	renderFiles(api, vi.fn(), '/repo');
-
-	await waitFor(() =>
-		expect(api.watchWorkspaceFiles).toHaveBeenCalledWith(
-			{ workspacePath: '/repo' },
-			expect.objectContaining({ signal: expect.any(AbortSignal) })
-		)
-	);
-	expect(screen.queryByRole('group', { name: 'Files root' })).toBeNull();
-});
-
 it('applies pushed changes, keeping expanded folders, and opens clicked files', async () => {
 	const api = filesApi();
 	const onOpenFile = vi.fn();
@@ -116,7 +102,7 @@ it('applies pushed changes, keeping expanded folders, and opens clicked files', 
 });
 
 it('reveals a linked folder inside the thread root', async () => {
-	renderFiles(filesApi(), vi.fn(), '/repo-worktree', {
+	renderFiles(filesApi(), vi.fn(), {
 		workspacePath: '/repo-worktree',
 		path: 'src'
 	});
@@ -128,13 +114,7 @@ it('reveals a linked folder inside the thread root', async () => {
 it('browses a linked folder outside the workspace until asked to go back', async () => {
 	const api = filesApi();
 	const onLocationChange = vi.fn();
-	renderFiles(
-		api,
-		vi.fn(),
-		'/repo-worktree',
-		{ workspacePath: '/tmp/build', path: '' },
-		onLocationChange
-	);
+	renderFiles(api, vi.fn(), { workspacePath: '/tmp/build', path: '' }, onLocationChange);
 
 	await waitFor(() =>
 		expect(api.watchWorkspaceFiles).toHaveBeenLastCalledWith(

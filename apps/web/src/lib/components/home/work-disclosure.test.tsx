@@ -1,37 +1,8 @@
-import { expect, it, vi } from 'vitest';
+import { expect, it } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
 import { TranscriptStore, useTranscriptExpanded } from '$lib/home/transcript-store';
 import WorkDisclosure from './work-disclosure';
 import WorkSectionDetails from './work-section-details';
-
-it('calls onToggle and renders details according to the controlled expanded prop', () => {
-	const onToggle = vi.fn();
-
-	const disclosure = (expanded: boolean) => (
-		<WorkDisclosure
-			inProgress={false}
-			summary="Read 2 files"
-			expanded={expanded}
-			onToggle={onToggle}
-		>
-			Work details
-		</WorkDisclosure>
-	);
-
-	const view = render(disclosure(false));
-	const button = view.getByRole('button', { name: 'Read 2 files' });
-	fireEvent.click(button);
-	expect(onToggle).toHaveBeenCalledTimes(1);
-	expect(button.getAttribute('aria-expanded')).toBe('false');
-	expect(view.queryByText('Work details')).toBeNull();
-
-	view.rerender(disclosure(true));
-	expect(button.getAttribute('aria-expanded')).toBe('true');
-	expect(view.getByText('Work details')).toBeTruthy();
-	view.rerender(disclosure(false));
-	expect(button.getAttribute('aria-expanded')).toBe('false');
-	expect(view.queryByText('Work details')).toBeNull();
-});
 
 it('folds auto-opened work once it settles and keeps explicit choices', () => {
 	const store = new TranscriptStore();

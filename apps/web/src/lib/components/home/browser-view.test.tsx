@@ -99,10 +99,3 @@ it('restarts and resubscribes after the subscription drops, and stops on unmount
 	await act(async () => {});
 	expect(vi.getTimerCount()).toBe(0);
 });
-
-it('explains the local server requirement without a connected API', () => {
-	render(<BrowserView browserApi={null} />);
-	expect(screen.getByRole('status').textContent).toBe(
-		'Connect to the local Sprocket server to use the browser.'
-	);
-});

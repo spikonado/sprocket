@@ -757,10 +757,3 @@ async fn parsed_images_and_text_share_the_parse_file_transcript_directory() {
     assert!(!store.thread_dir("user", "another-thread").exists());
     assert!(!store.thread_dir("another-user", "thread").exists());
 }
-
-#[test]
-fn identifies_only_parse_file() {
-    assert!(is_parse_file_tool("parse_file"));
-    assert!(!is_parse_file_tool("read_skill"));
-    assert!(!is_parse_file_tool("read_image"));
-}

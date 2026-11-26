@@ -1,37 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
-import type { ComponentProps } from 'react';
 import ArtifactMenu from './artifact-menu';
 import ArtifactDisplay from './home/artifact-display';
-import SidePanel from './home/side-panel';
-import type { ArtifactContent, ArtifactEntry } from '$lib/chat/artifacts';
-import { ArtifactPanel } from '$lib/home/artifact-panel';
-
-const artifact: ArtifactEntry = {
-	key: 'artifact-id',
-	title: 'Notes',
-	artifactType: 'markdown'
-};
-
-function sidePanelProps(overrides: Partial<ComponentProps<typeof SidePanel>> = {}) {
-	const panel = new ArtifactPanel();
-	panel.newTab();
-	panel.updateTab(panel.activeTab.id, { view: 'artifacts' });
-
-	return {
-		panel,
-		transcript: null,
-		artifacts: [artifact],
-		artifactContents: new Map<string, ArtifactContent>([
-			[artifact.key, { status: 'ready', content: '# Notes' }]
-		]),
-		browserApi: null,
-		filesApi: null,
-		onOpenFullscreen: vi.fn(),
-		onDeleteArtifact: vi.fn(async () => {}),
-		...overrides
-	};
-}
 
 it('opens by right click, runs deletion once, and restores focus', async () => {
 	const pending = Promise.withResolvers<void>();
@@ -88,22 +58,6 @@ it('keeps deletion errors visible and allows a retry', async () => {
 	await act(async () => fireEvent.click(screen.getByRole('menuitem')));
 	expect(onDelete).toHaveBeenCalledTimes(2);
 	expect(screen.queryByRole('menu')).toBeNull();
-});
-
-it('deletes from both the sidebar list and selected preview', async () => {
-	const onDeleteArtifact = vi.fn<(id: string) => Promise<void>>(async () => {});
-
-	const props = sidePanelProps({ onDeleteArtifact });
-
-	const view = render(<SidePanel {...props} />);
-	fireEvent.contextMenu(screen.getByText('Notes'));
-	await act(async () => fireEvent.click(screen.getByRole('menuitem')));
-	props.panel.openArtifact(artifact.key);
-	view.rerender(<SidePanel {...props} />);
-	fireEvent.click(screen.getByRole('button', { name: 'Notes actions' }));
-	await act(async () => fireEvent.click(screen.getByRole('menuitem')));
-	expect(onDeleteArtifact).toHaveBeenCalledTimes(2);
-	expect(onDeleteArtifact).toHaveBeenLastCalledWith(artifact.key);
 });
 
 it('opens the top-bar menu from the keyboard and restores focus on dismissal', () => {

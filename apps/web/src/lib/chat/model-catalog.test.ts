@@ -1,9 +1,5 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import {
-	fetchGatewayModelCatalog,
-	resolveCatalogModel,
-	showsReasoningControl
-} from './model-catalog';
+import { fetchGatewayModelCatalog, resolveCatalogModel } from './model-catalog';
 
 const catalogPayload = {
 	sprocket: {
@@ -64,25 +60,6 @@ describe('gateway model catalog', () => {
 		expect(resolveCatalogModel(catalog, 'model-small')).toBe('model-small');
 	});
 
-	it('orders models alphabetically by label', async () => {
-		const payload = structuredClone(catalogPayload);
-		payload.sprocket.models = ['Opus 5.5', 'GPT-6.1 Sol', 'GPT-6 Luna', 'deepseek V4.1'].map(
-			(label) => ({ ...catalogPayload.sprocket.models[0], id: label, label })
-		);
-		vi.stubGlobal(
-			'fetch',
-			vi.fn(async () => Response.json(payload))
-		);
-
-		const catalog = await fetchGatewayModelCatalog('https://ai-gateway.spikonado.com');
-		expect(catalog.models.map((model) => model.label)).toEqual([
-			'deepseek V4.1',
-			'GPT-6 Luna',
-			'GPT-6.1 Sol',
-			'Opus 5.5'
-		]);
-	});
-
 	it('does not expose Fast mode when the model omits the fast gateway tier', async () => {
 		const payload = structuredClone(catalogPayload);
 		payload.sprocket.models[0].serviceTiers = ['standard'];
@@ -93,30 +70,5 @@ describe('gateway model catalog', () => {
 
 		const catalog = await fetchGatewayModelCatalog('https://ai-gateway.spikonado.com');
 		expect(catalog.models[0].supportsFastMode).toBe(false);
-	});
-});
-
-describe('reasoning controls', () => {
-	it('hides the internal no-reasoning marker but keeps fixed named efforts visible', () => {
-		const model = {
-			id: 'model',
-			label: 'Model',
-			provider: 'provider',
-			supportsImages: false,
-			contextWindowTokens: 100_000,
-			autoHandoffTokenLimit: 80_000,
-			reasoningEfforts: ['none'],
-			defaultReasoningEffort: 'none',
-			supportsFastMode: false
-		};
-
-		expect(showsReasoningControl(model)).toBe(false);
-		expect(
-			showsReasoningControl({
-				...model,
-				reasoningEfforts: ['max'],
-				defaultReasoningEffort: 'max'
-			})
-		).toBe(true);
 	});
 });

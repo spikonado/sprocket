@@ -18,7 +18,7 @@ export type InboxQueryResult = UsePaginatedQueryObjectReturnType<typeof api.inbo
 
 export type InboxQueryHook = (options: InboxQueryOptions) => InboxQueryResult;
 
-export function normalizeRepositoryKeys(repositoryKeys: string[]): string[] {
+function normalizeRepositoryKeys(repositoryKeys: string[]): string[] {
 	return [...new Set(repositoryKeys)].sort();
 }
 

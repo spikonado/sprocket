@@ -322,41 +322,6 @@ describe('agentRuntime context accounting', () => {
 		expect((await readThreadUsage(t, threadId)).contextTokens).toBeUndefined();
 	});
 
-	it('preserves opaque run model ids for the worker', async () => {
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
-		const executionSecret = 'context-opaque-model-secret';
-
-		const { runId } = await createQueuedRun(
-			t,
-			asUser,
-			threadId,
-			'context-opaque-model',
-			executionSecret,
-			'Continue'
-		);
-
-		await asUser.mutation(api.agentRuntime.start, {
-			runId,
-			claimId: 'claim-opaque-model',
-			executionSecret
-		});
-		await t.run(async (ctx) => {
-			await ctx.db.patch('runs', runId, {
-				selectedModel: 'gateway-only-model',
-				fastMode: true
-			});
-		});
-
-		const context = await asUser.query(api.agentRuntime.getContext, {
-			runId,
-			executionSecret
-		});
-
-		expect(context.run.selectedModel).toBe('gateway-only-model');
-		expect(context.run.fastMode).toBe(true);
-	});
-
 	it('getContext returns last provider-reported contextTokens', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);

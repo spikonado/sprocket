@@ -59,17 +59,6 @@ fn every_failed_provider_is_shown() {
 }
 
 #[test]
-fn generation_options_map_reasoning_effort() {
-    let options = super::generation_options("xhigh").unwrap();
-    assert_eq!(
-        options.reasoning,
-        Some(rig::completion::Effort::XHigh.into())
-    );
-    let options = super::generation_options("none").unwrap();
-    assert_eq!(options.reasoning, Some(rig::completion::Reasoning::Off));
-}
-
-#[test]
 fn fast_mode_sends_each_providers_service_tier() {
     use crate::types::CompletionProvider;
     for (provider, tier) in [

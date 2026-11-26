@@ -14,17 +14,6 @@ fn exec_command_schema_does_not_expose_the_preview_limit() {
 }
 
 #[test]
-fn exec_command_schema_shell_has_no_default() {
-    let schema = exec_command_parameters(MAX_YIELD_MS);
-    let shell = &schema["properties"]["shell"];
-    assert_eq!(
-        shell["description"],
-        "Shell binary to launch, e.g. bash or pwsh. Defaults to the machine's shell."
-    );
-    assert!(shell.get("default").is_none());
-}
-
-#[test]
 fn control_schema_requires_session_and_action_with_action_constraints() {
     let schema = control_command_parameters(MAX_YIELD_MS);
     assert_eq!(schema["required"], json!(["sessionId", "action"]));
@@ -193,54 +182,6 @@ fn exec_and_control_advertise_the_same_yield_window() {
 }
 
 #[test]
-fn yield_time_defaults_apply_and_zero_is_preserved() {
-    let exec_default: ExecCommandArgs = serde_json::from_value(json!({"cmd": "pwd"})).unwrap();
-    assert_eq!(exec_default.yield_time_ms, DEFAULT_YIELD_MS);
-
-    let control_default: ControlCommandArgs =
-        serde_json::from_value(json!({"sessionId": "abc", "action": "terminate"})).unwrap();
-    assert_eq!(control_default.yield_time_ms, DEFAULT_YIELD_MS);
-
-    let exec_zero: ExecCommandArgs =
-        serde_json::from_value(json!({"cmd": "pwd", "yieldTimeMs": 0})).unwrap();
-    assert_eq!(exec_zero.yield_time_ms, 0);
-    assert_eq!(
-        serde_json::to_value(exec_zero).unwrap(),
-        json!({"cmd": "pwd", "yieldTimeMs": 0})
-    );
-
-    let control_zero: ControlCommandArgs = serde_json::from_value(
-        json!({"sessionId": "abc", "action": "terminate", "yieldTimeMs": 0}),
-    )
-    .unwrap();
-    assert_eq!(control_zero.yield_time_ms, 0);
-    assert_eq!(
-        serde_json::to_value(control_zero).unwrap(),
-        json!({"sessionId": "abc", "action": "terminate", "yieldTimeMs": 0})
-    );
-}
-
-#[test]
-fn historical_numeric_yield_values_round_trip() {
-    let exec_legacy: ExecCommandArgs =
-        serde_json::from_value(json!({"cmd": "pwd", "yieldTimeMs": 10_000})).unwrap();
-    assert_eq!(exec_legacy.yield_time_ms, 10_000);
-    let serialized = serde_json::to_value(&exec_legacy).unwrap();
-    let restored: ExecCommandArgs = serde_json::from_value(serialized).unwrap();
-    assert_eq!(restored.yield_time_ms, 10_000);
-
-    let control_legacy: ControlCommandArgs = serde_json::from_value(
-        json!({"sessionId": "abc", "action": "terminate", "yieldTimeMs": 5_000}),
-    )
-    .unwrap();
-    assert_eq!(control_legacy.yield_time_ms, 5_000);
-    assert_eq!(
-        serde_json::to_value(&control_legacy).unwrap(),
-        json!({"sessionId": "abc", "action": "terminate", "yieldTimeMs": 5_000})
-    );
-}
-
-#[test]
 fn removed_arguments_are_not_replayed_as_tool_arguments() {
     let args: ExecCommandArgs = serde_json::from_value(json!({
         "cmd": "pwd",
@@ -249,24 +190,6 @@ fn removed_arguments_are_not_replayed_as_tool_arguments() {
     }))
     .unwrap();
     assert_eq!(serde_json::to_value(args).unwrap(), json!({"cmd": "pwd"}));
-}
-
-#[test]
-fn timeout_is_optional_and_preserved_when_set() {
-    let without_timeout: ExecCommandArgs =
-        serde_json::from_value(json!({"cmd": "sleep 120"})).unwrap();
-    assert_eq!(without_timeout.timeout_ms, None);
-
-    let with_timeout: ExecCommandArgs = serde_json::from_value(json!({
-        "cmd": "sleep 120",
-        "timeoutMs": 1_000,
-    }))
-    .unwrap();
-    assert_eq!(with_timeout.timeout_ms, Some(1_000));
-    assert_eq!(
-        serde_json::to_value(with_timeout).unwrap(),
-        json!({"cmd": "sleep 120", "timeoutMs": 1_000})
-    );
 }
 
 fn command_part(

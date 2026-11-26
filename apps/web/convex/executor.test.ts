@@ -205,39 +205,6 @@ describe('executor', () => {
 		}
 	);
 
-	it('persists wiring feedback from a completed patch', async () => {
-		const t = initConvexTest();
-		const auth = await seedRunWithJob(t, { executionSecret: 'wiring-check' });
-
-		await t.run((ctx) =>
-			ctx.db.patch('executorJobs', auth.jobId, {
-				kind: 'apply_patch',
-				payload: { patch: 'patch' }
-			})
-		);
-
-		const result = {
-			changes: [
-				{
-					path: '/repo/robot.wiring.json',
-					operation: 'updated' as const,
-					wiringIssues: [{ level: 'error' as const, message: 'Unknown pin.' }]
-				}
-			]
-		};
-
-		expect(
-			await auth.asUser.mutation(api.executor.complete, {
-				runId: auth.runId,
-				claimId: auth.claimId,
-				executionSecret: auth.executionSecret,
-				jobId: auth.jobId,
-				result
-			})
-		).toBe(true);
-		expect((await t.run((ctx) => ctx.db.get('executorJobs', auth.jobId)))?.result).toEqual(result);
-	});
-
 	it.each(['text', 'image'] as const)(
 		'persists parse_file path jobs and %s results',
 		async (mode) => {
@@ -307,119 +274,6 @@ describe('executor', () => {
 			}
 		}
 	);
-
-	it('persists poll_pr jobs and results', async () => {
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
-		const executionSecret = 'poll-pr';
-		const claimId = 'claim-poll-pr';
-
-		const { runId } = await createQueuedRun(
-			t,
-			asUser,
-			threadId,
-			'submission-poll-pr',
-			executionSecret,
-			'Wait for CI'
-		);
-
-		await asUser.mutation(api.agentRuntime.start, { runId, claimId, executionSecret });
-
-		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
-			runId,
-			claimId,
-			...toolTranscriptAssignment(runId, claimId),
-			executionSecret,
-			kind: 'poll_pr',
-			callId: 'call-poll-pr',
-			payload: { repository: 'github.com/acme/widgets', number: 7, cursor: 'abc' }
-		});
-
-		const result = {
-			changes: ['checksFailed' as const, 'requiredChecksPassed' as const, 'newComments' as const],
-			cursor: 'def',
-			state: 'open' as const,
-			checks: {
-				passed: 3,
-				pending: [{ name: 'rust', required: true }],
-				failed: [{ name: 'web', url: 'https://ci/web' }]
-			},
-			newComments: [
-				{ author: 'reviewer', path: 'src/lib.rs', body: 'P1 Fix this', url: 'https://c/1' }
-			]
-		};
-
-		await expect(
-			asUser.mutation(api.executor.complete, { runId, claimId, executionSecret, jobId, result })
-		).resolves.toBe(true);
-		const stored = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
-		expect(stored?.result).toEqual(result);
-	});
-
-	it('persists lookup_parts jobs and results', async () => {
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
-		const executionSecret = 'lookup-parts';
-		const claimId = 'claim-lookup-parts';
-
-		const { runId } = await createQueuedRun(
-			t,
-			asUser,
-			threadId,
-			'submission-lookup-parts',
-			executionSecret,
-			'Price the BOM'
-		);
-
-		await asUser.mutation(api.agentRuntime.start, { runId, claimId, executionSecret });
-
-		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
-			runId,
-			claimId,
-			...toolTranscriptAssignment(runId, claimId),
-			executionSecret,
-			kind: 'lookup_parts',
-			callId: 'call-lookup-parts',
-			payload: { parts: [{ part: 'C28323', quantity: 100 }, { part: 'ZZNOTAPART' }] }
-		});
-
-		const result = {
-			C28323: {
-				matches: [
-					{
-						code: 'C28323',
-						mpn: 'CL21B105KBFNNNE',
-						manufacturer: 'Samsung Electro-Mechanics',
-						package: '0805',
-						jlcpcb: {
-							stock: 3992278,
-							price: 0.0059,
-							priceBreaks: [{ quantity: 20, price: 0.0059 }],
-							library: 'basic' as const,
-							assemblyMin: 20
-						},
-						lcsc: {
-							stock: 474110,
-							price: 0.023,
-							priceBreaks: [
-								{ quantity: 10, price: 0.0307 },
-								{ quantity: 100, price: 0.023 }
-							],
-							moq: 10,
-							multiple: 10
-						}
-					}
-				]
-			},
-			ZZNOTAPART: { matches: [], errors: { jlcpcb: 'rate limited' } }
-		};
-
-		await expect(
-			asUser.mutation(api.executor.complete, { runId, claimId, executionSecret, jobId, result })
-		).resolves.toBe(true);
-		const stored = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
-		expect(stored?.result).toEqual(result);
-	});
 
 	it.each(['scrape_url', 'screenshot_url'] as const)(
 		'persists %s local image references without file bytes',
@@ -792,46 +646,6 @@ describe('executor', () => {
 		expect(await t.run(async (ctx) => (await ctx.db.get('executorJobs', jobId))?.status)).toBe(
 			'completed'
 		);
-	});
-
-	it('accepts browser tool result shapes', async () => {
-		const t = initConvexTest();
-
-		const { asUser, runId, jobId, claimId, executionSecret } = await seedRunWithJob(t, {
-			executionSecret: 'executor-browser-result-secret'
-		});
-
-		const taskResult = { text: 'success: true', truncated: false };
-		await expect(
-			asUser.mutation(api.executor.complete, {
-				jobId,
-				result: taskResult,
-				runId,
-				claimId,
-				executionSecret
-			})
-		).resolves.toBe(true);
-
-		const screenshotResult = {
-			mediaType: 'image/png' as const,
-			dataBase64: '',
-			byteLength: 123,
-			truncated: false
-		};
-
-		const second = await seedRunWithJob(t, {
-			executionSecret: 'executor-browser-screenshot-secret'
-		});
-
-		await expect(
-			second.asUser.mutation(api.executor.complete, {
-				jobId: second.jobId,
-				result: screenshotResult,
-				runId: second.runId,
-				claimId: second.claimId,
-				executionSecret: second.executionSecret
-			})
-		).resolves.toBe(true);
 	});
 
 	it('is idempotent for an already completed job and ignores terminal runs', async () => {

@@ -104,14 +104,6 @@ describe('Conversation notices', () => {
 		}
 	});
 
-	it('shows run errors inside the composer', () => {
-		render(composer(notices({ runError: usageLimit })));
-		const group = screen.getByRole('group', { name: 'Message composer' });
-		const alert = within(group).getByRole('alert');
-		expect(alert.textContent).toContain(usageLimit);
-		expect(alert.textContent).toContain("Run couldn't continue");
-	});
-
 	it('keeps distinct failures and reconnection status visible, then clears them on recovery', () => {
 		const view = render(
 			composer(

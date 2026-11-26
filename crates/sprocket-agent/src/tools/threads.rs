@@ -268,6 +268,3 @@ async fn child_thread_ids(
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

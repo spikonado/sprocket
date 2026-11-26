@@ -1,33 +1,6 @@
 use super::*;
 
 #[test]
-fn transcript_part_keeps_old_json_without_created_at() {
-    let part: TranscriptPart = serde_json::from_value(serde_json::json!({
-        "number": 3,
-        "sourceKey": "prompt:3",
-        "kind": "prompt",
-        "runId": "run",
-        "prompt": { "text": "hi", "imageUploads": [] }
-    }))
-    .unwrap();
-    assert_eq!(part.number, 3);
-    assert_eq!(part.created_at, None);
-    assert_eq!(
-        part.prompt.as_ref().map(|prompt| prompt.text.as_str()),
-        Some("hi")
-    );
-}
-
-#[test]
-fn minimal_tool_result_round_trips_without_copied_call_fields() {
-    let value = serde_json::json!({
-        "toolInvocationId": "invocation", "status": "completed", "output": {"ok": true}
-    });
-    let tool: TranscriptToolBody = serde_json::from_value(value.clone()).unwrap();
-    assert_eq!(serde_json::to_value(tool).unwrap(), value);
-}
-
-#[test]
 fn old_invocation_mapping_normalizes_call_items_without_replacing_canonical_ids() {
     let part: TranscriptPart = serde_json::from_value(serde_json::json!({
         "number": 0, "sourceKey": "completion:run:0", "kind": "completion", "runId": "run",

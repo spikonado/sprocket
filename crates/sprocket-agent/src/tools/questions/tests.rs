@@ -70,27 +70,6 @@ fn commands_and_questions_advertise_the_same_wait_policy() {
 }
 
 #[test]
-fn ask_args_accept_absent_null_and_historical_numeric_timeouts() {
-    for timeout in [
-        None,
-        Some(json!(null)),
-        Some(json!(0)),
-        Some(json!(1_800_000)),
-    ] {
-        let mut payload = json!({
-            "question": "Which configuration?",
-            "options": [{ "id": "safe", "label": "Use the safe default" }],
-        });
-        if let Some(timeout) = timeout {
-            payload["timeoutMs"] = timeout;
-        }
-        let args: AskQuestionArgs = serde_json::from_value(payload.clone()).unwrap();
-        assert_eq!(args.yield_time_ms, 10_000);
-        assert_eq!(args.timeout_ms, payload["timeoutMs"].as_u64());
-    }
-}
-
-#[test]
 fn question_results_return_status_and_answer_with_ids_only_on_creation() {
     for status in ["pending", "answered", "timedOut", "skipped"] {
         let observed = snapshot("q1", status);

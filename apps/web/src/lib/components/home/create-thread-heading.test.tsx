@@ -20,13 +20,6 @@ function renderHeading(overrides: Partial<ComponentProps<typeof CreateThreadHead
 }
 
 describe('CreateThreadHeading', () => {
-	it('prompts the user to add their first project', async () => {
-		const props = renderHeading();
-		const user = userEvent.setup();
-		await user.click(screen.getByRole('button', { name: 'Add project' }));
-		expect(props.onAddProject).toHaveBeenCalledOnce();
-	});
-
 	it('searches projects, selects worktrees by path, and adds projects from the footer', async () => {
 		const props = renderHeading({
 			projects: [

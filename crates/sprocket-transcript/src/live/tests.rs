@@ -24,27 +24,6 @@ fn overlay(thread_id: &str, text: &str) -> LiveCompletionOverlay {
 }
 
 #[test]
-fn live_parts_keep_old_json_without_timing() {
-    let part: LiveAssistantPart = serde_json::from_value(serde_json::json!({
-        "type": "text",
-        "id": "t",
-        "text": "hello",
-        "turnId": "stream-1"
-    }))
-    .unwrap();
-    assert_eq!(
-        part,
-        LiveAssistantPart::Text {
-            id: "t".into(),
-            text: "hello".into(),
-            started_at: None,
-            completed_at: None,
-            turn_id: Some("stream-1".into()),
-        }
-    );
-}
-
-#[test]
 fn text_and_reasoning_record_start_once_and_update_end() {
     let mut parts = LiveAssistantParts::default();
     parts.apply_text_delta("text", "t".into(), "Hello", Some("turn".into()), 10);

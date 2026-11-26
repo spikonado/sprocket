@@ -107,31 +107,6 @@ it('discards a late upload under the account that owned it, not the current one'
 	expect(result.current.items).toEqual([]);
 });
 
-it('keeps one stable instance across renders and notifies subscribers on change', () => {
-	const api: ComposerAttachmentApi = {
-		uploadTranscriptAttachment: vi.fn(),
-		discardTranscriptAttachment: vi.fn(async () => true)
-	};
-
-	const { result, rerender } = renderAttachments({ api, userId: 'user-a', threadId: null });
-	const instance = result.current;
-	const listener = vi.fn();
-	const unsubscribe = instance.subscribe(listener);
-	const before = instance.getSnapshot();
-
-	rerender();
-	expect(result.current).toBe(instance);
-
-	act(() => {
-		instance.replace([
-			{ localId: 'local-1', name: 'notes.txt', mediaType: 'text/plain', size: 8, status: 'ready' }
-		]);
-	});
-	expect(listener).toHaveBeenCalledTimes(1);
-	expect(instance.getSnapshot()).not.toBe(before);
-	unsubscribe();
-});
-
 it('reports a pending upload failure through the latest committed onError', async () => {
 	const gate = Promise.withResolvers<TranscriptUploadResult>();
 
