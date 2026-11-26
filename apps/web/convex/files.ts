@@ -16,9 +16,9 @@ const DRAFT_CLEANUP_BATCH_SIZE = 100;
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
-const BLOB_DELETE_RETRY_MS = 60 * 1_000;
+const BLOB_DELETE_FIRST_RETRY_MS = 60 * 1_000;
 
-const BLOB_DELETE_ATTEMPTS = 8;
+const BLOB_DELETE_MAX_RETRY_MS = 60 * 60 * 1_000;
 
 const vUpload = v.object({ url: v.string(), headers: v.record(v.string(), v.string()) });
 
@@ -164,9 +164,10 @@ export const deleteBlob = internalAction({
 		try {
 			await deleteObject(fileKey(args.userId, args.blobId));
 		} catch (error) {
-			if (attempt + 1 >= BLOB_DELETE_ATTEMPTS) throw error;
+			console.error(`R2 delete attempt ${attempt + 1} failed; retrying.`, error);
+			const delay = Math.min(BLOB_DELETE_FIRST_RETRY_MS * 2 ** attempt, BLOB_DELETE_MAX_RETRY_MS);
 
-			await ctx.scheduler.runAfter(BLOB_DELETE_RETRY_MS * 2 ** attempt, internal.files.deleteBlob, {
+			await ctx.scheduler.runAfter(delay, internal.files.deleteBlob, {
 				...args,
 				attempt: attempt + 1
 			});
