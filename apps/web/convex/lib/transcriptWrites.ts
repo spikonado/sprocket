@@ -173,7 +173,7 @@ export async function recordToolTranscript(
 		preserveExistingDisplay?: boolean;
 	}
 ): Promise<Doc<'threadTranscriptParts'> | null> {
-	if (!isSettledExecutorJobStatus(args.job.status)) {
+	if (!isSettledExecutorJobStatus(args.job.status) || args.job.payload === undefined) {
 		return null;
 	}
 
@@ -252,7 +252,7 @@ function progressToolBody(
 		status: args.status
 	};
 
-	const input = commandToolDisplayInput(job.kind, job.payload);
+	const input = job.payload && commandToolDisplayInput(job.kind, job.payload);
 
 	if (input !== undefined) body.input = input;
 

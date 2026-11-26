@@ -85,7 +85,8 @@ async function expectCleanedJobs(t: ConvexTestInstance, jobs: Doc<'executorJobs'
 		await t.run(async (ctx) => {
 			const persisted = await ctx.db.get('executorJobs', job._id);
 			expect(persisted?.status).toBe(job.status === 'claimed' ? 'cancelled' : job.status);
-			expect(persisted?.result).toEqual(job.result);
+			expect(persisted).not.toHaveProperty('payload');
+			expect(persisted).not.toHaveProperty('result');
 
 			const part = await ctx.db
 				.query('threadTranscriptParts')
@@ -100,6 +101,8 @@ async function expectCleanedJobs(t: ConvexTestInstance, jobs: Doc<'executorJobs'
 				toolInvocationId: job.toolInvocationId,
 				status: persisted?.status
 			});
+
+			if (job.status === 'completed') expect(part?.tool?.output).toEqual(job.result);
 		});
 	}
 }

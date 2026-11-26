@@ -60,9 +60,7 @@ describe('terminal job reconciliation', () => {
 			expect(await t.run((ctx) => ctx.db.get('threadTranscriptParts', partId))).toMatchObject({
 				tool: { status: 'completed', output: { markdown: 'Page' } }
 			});
-			expect(await t.run((ctx) => ctx.db.get('executorJobs', jobId))).toMatchObject({
-				result: { summary: 'Page summary', images: [] }
-			});
+			expect(await t.run((ctx) => ctx.db.get('executorJobs', jobId))).not.toHaveProperty('result');
 			expect(await t.run((ctx) => ctx.db.query('runExecutionStates').first())).toMatchObject({
 				terminalJobsReconciled: true
 			});
@@ -134,6 +132,7 @@ describe('terminal job reconciliation', () => {
 		);
 
 		await reconcileTerminalJobs(t);
+		await reconcileTerminalJobs(t);
 		expect(
 			await t.run((ctx) =>
 				ctx.db
@@ -142,12 +141,12 @@ describe('terminal job reconciliation', () => {
 					.unique()
 			)
 		).toMatchObject({ terminalJobsReconciled: true });
-		expect(await t.run((ctx) => ctx.db.get('executorJobs', jobId))).toMatchObject({
-			status: 'cancelled'
-		});
+		const job = await t.run((ctx) => ctx.db.get('executorJobs', jobId));
+		expect(job).toMatchObject({ status: 'cancelled' });
+		expect(job).not.toHaveProperty('payload');
 		expect(await t.run((ctx) => ctx.db.query('threadTranscriptParts').first())).toMatchObject({
 			kind: 'tool',
-			tool: { status: 'cancelled' }
+			tool: { status: 'cancelled', input: { cmd: 'true' } }
 		});
 	});
 });

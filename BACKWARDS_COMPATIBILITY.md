@@ -172,6 +172,10 @@ Usage charged before the `usage` table lives in `modelUsageMonthly` buckets of t
 
 `hostedParseRequests` and `webRequests` are untyped tables kept only so the schema accepts their old rows. `clearHostedParseRequests` and `clearWebRequests` in `migrations.ts` delete those rows, and the Convex Production workflow runs both after each deploy. The `storageCleanup.cleanupUnregistered` cron deletes the files they referenced. Once `bunx convex run --component migrations lib:getStatus` reports both done on each deployment, remove the tables and the migrations. Delete the unmounted `contextDevWorkpool` and `firecrawlScrapeWorkpool` components' data on each deployment at the same time.
 
+### Terminal job payloads
+
+Jobs settled before terminal reconciliation started clearing `payload` and `result` still carry both, although their transcript parts hold the same output. `migrations:stripTerminalJobPayloads` clears them on jobs of runs whose terminal reconciliation finished, and the Convex Production workflow runs it after each deploy. Once `bunx convex run --prod --component migrations lib:getStatus` reports it done, remove the migration.
+
 ### Stored executor job and result fields
 
 Each of these Convex variants goes once a full production scan confirms no retained row uses it:
