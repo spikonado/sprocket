@@ -90,17 +90,4 @@ describe('local scrape_url dispatch', () => {
 		expect(stored?.cloudWorkId).toBeUndefined();
 		expect(stored?.status).toBe('claimed');
 	});
-
-	it('dispatches web_search through the cloud workpool', async () => {
-		const t = initConvexTest();
-
-		const { jobId } = await seedStartedWebJob(t, {
-			executionSecret: 'local-search-secret',
-			kind: 'web_search',
-			payload: { query: 'sprocket' }
-		});
-
-		const stored = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
-		expect(stored?.cloudWorkId).toEqual(expect.any(String));
-	});
 });

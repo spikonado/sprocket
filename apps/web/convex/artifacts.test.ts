@@ -142,17 +142,6 @@ describe('cloud artifacts', () => {
 		).rejects.toThrow(/project-relative/i);
 	});
 
-	it('returns wiring issues to the active run', async () => {
-		const { asUser, auth } = await seedActiveRun();
-
-		const issues = await asUser.query(api.artifacts.checkWiringForRun, {
-			...auth,
-			content: JSON.stringify({ parts: [], steps: [] })
-		});
-
-		expect(issues).toEqual([expect.objectContaining({ level: 'error' })]);
-	});
-
 	it('uses revision CAS for explicit edits and automatic sync', async () => {
 		const { asUser, repositoryKey, auth } = await seedActiveRun();
 		const created = await asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields });

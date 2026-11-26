@@ -85,8 +85,21 @@ fn retries_keep_earlier_completed_attempts_until_saved_and_new_runs_keep_the_las
 #[tokio::test]
 async fn lagged_live_events_resubscribe_at_the_latest_snapshot() {
     let (state, _root) = state();
+    state
+        .host
+        .transcript
+        .append_parts(
+            "user",
+            "thread",
+            &[completion(0, "run", "cached", json!([]))],
+        )
+        .await
+        .unwrap();
     let rows = thread_rows(&state, cached());
-    rows.ready(&|| {}).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), rows.ready(&|| {}))
+        .await
+        .unwrap()
+        .unwrap();
     let (_, mut changes) = rows.read(|_| ());
     let hub = &state.host.live_completions;
     for _ in 0..100 {

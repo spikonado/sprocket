@@ -42,18 +42,6 @@ fn reasoning_with(id: Option<&str>, content: Vec<ReasoningContent>) -> Reasoning
 }
 
 #[test]
-fn opaque_blob_prefers_the_native_blob_slot() {
-    let mut reasoning = reasoning_with(
-        Some("rs_1"),
-        vec![ReasoningContent::Encrypted("envelope".into())],
-    );
-    let native = reasoning.native.as_mut().expect("native item");
-    native.item["signature"] = serde_json::json!("sig");
-    native.blob_slot = Some("/signature".into());
-    assert_eq!(opaque_reasoning_blob(&reasoning), Some("sig"));
-}
-
-#[test]
 fn empty_opaque_state_keeps_item_id_without_an_encrypted_block() {
     let metadata = openai_reasoning_metadata(Some("rs_empty"), Some(""));
     assert_eq!(

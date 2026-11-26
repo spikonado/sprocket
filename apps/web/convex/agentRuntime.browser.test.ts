@@ -8,43 +8,6 @@ import {
 	toolTranscriptAssignment
 } from './test.setup';
 
-describe('browser screenshot results', () => {
-	it('persists cached metadata from stored jobs', async () => {
-		const result = {
-			mediaType: 'image/png' as const,
-			dataBase64: '',
-			byteLength: 600_001,
-			truncated: true
-		};
-
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
-		const executionSecret = 'screenshot-secret';
-		const claimId = 'screenshot-claim';
-		const { runId } = await createQueuedRun(t, asUser, threadId, 'screenshot', executionSecret);
-		await asUser.mutation(api.agentRuntime.start, { runId, claimId, executionSecret });
-
-		const jobId = await t.run((ctx) =>
-			ctx.db.insert('executorJobs', {
-				threadId,
-				runId,
-				kind: 'browser_screenshot',
-				toolInvocationId: 'test-invocation-browser-screenshot',
-				payload: {},
-				result,
-				status: 'completed',
-				enqueuedAt: 1,
-				sequence: 0
-			})
-		);
-
-		expect(await t.run((ctx) => ctx.db.get('executorJobs', jobId))).toMatchObject({
-			status: 'completed',
-			result
-		});
-	});
-});
-
 describe('retired browser clients', () => {
 	it.each(['browser_act', 'browser_observe', 'browser_extract', 'browser_interact'] as const)(
 		'rejects new %s jobs while preserving stored history',

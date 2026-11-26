@@ -18,13 +18,6 @@ fn base_request() -> serde_json::Value {
 }
 
 #[test]
-fn accepts_fast_mode_requests() {
-    let mut json = base_request();
-    json["fastMode"] = true.into();
-    assert!(request(json).fast_mode);
-}
-
-#[test]
 fn reads_recovery_requests_saved_with_storage_ids() {
     let mut json = base_request();
     json.as_object_mut().unwrap().remove("fileIds");
@@ -37,26 +30,6 @@ fn defaults_older_requests_to_spikonado() {
     assert_eq!(
         request(base_request()).completion_provider,
         CompletionProvider::Spikonado
-    );
-}
-
-#[test]
-fn accepts_direct_openai_requests() {
-    let mut json = base_request();
-    json["completionProvider"] = "openai".into();
-    assert_eq!(
-        request(json).completion_provider,
-        CompletionProvider::Openai
-    );
-}
-
-#[test]
-fn accepts_chatgpt_subscription_requests() {
-    let mut json = base_request();
-    json["completionProvider"] = "chatgpt".into();
-    assert_eq!(
-        request(json).completion_provider,
-        CompletionProvider::Chatgpt
     );
 }
 

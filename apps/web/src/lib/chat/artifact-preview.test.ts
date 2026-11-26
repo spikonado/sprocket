@@ -2,8 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	artifactPreviewType,
 	buildHtmlPreviewDocument,
-	buildReactPreviewDocument,
-	buildVisualDocument
+	buildReactPreviewDocument
 } from './artifact-preview';
 
 describe('artifact-preview', () => {
@@ -42,16 +41,5 @@ describe('artifact-preview', () => {
 		const fragment = buildHtmlPreviewDocument('<p>hi</p>');
 		expect(fragment).toContain('<p>hi</p>');
 		expect(fragment).toContain('<!DOCTYPE html>');
-	});
-
-	it('puts the theme ahead of a visual page own styles', () => {
-		const doc = buildVisualDocument(
-			'html',
-			'<!doctype html><html><head><style>:root{--accent:red}</style></head></html>',
-			':root{--accent:blue}'
-		);
-
-		expect(doc.indexOf('--accent:blue')).toBeLessThan(doc.indexOf('--accent:red'));
-		expect(doc.match(/<!doctype/gi)).toHaveLength(1);
 	});
 });

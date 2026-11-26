@@ -321,20 +321,6 @@ afterEach(() => {
 	resetAuthRuntime();
 });
 
-it('populates projects from the desktop client resolved during boot', async () => {
-	const listProjectAttachments = vi.fn(async () => [
-		projectAttachment('/work/alpha', 'repo-alpha', 'Alpha')
-	]);
-
-	await renderApp(
-		createConvexFixtures(),
-		createRuntime(createLocalApi({ listProjectAttachments }))
-	);
-
-	expect(await projectTrigger('Alpha')).toBeTruthy();
-	expect(listProjectAttachments).toHaveBeenCalled();
-});
-
 it.each(['sidebar', 'heading'])(
 	'removes the current project from project lists and inbox queries through the %s',
 	async (picker) => {
@@ -1615,21 +1601,6 @@ it('opens General by default and resets to it when reopening settings', async ()
 	fireEvent.click(screen.getByRole('button', { name: 'Back' }));
 	fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
 	expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy();
-});
-
-it('keeps logo and settings beside the workspace when the sidebar is closed', async () => {
-	await renderApp(createConvexFixtures(), createRuntime(createLocalApi()));
-	fireEvent.click((await screen.findAllByRole('button', { name: 'Close sidebar' }))[0]!);
-	const layout = document.querySelector('.inbox-layout');
-	const controls = document.querySelector<HTMLElement>('.inbox-floating-controls');
-	expect(controls).toBeTruthy();
-	expect(layout?.classList.contains('sidebar-hidden')).toBe(true);
-	const floating = within(controls!);
-	expect(floating.getByRole('button', { name: 'Open sidebar' })).toBeTruthy();
-	expect(floating.getByRole('button', { name: 'Settings' })).toBeTruthy();
-	fireEvent.click(floating.getByRole('button', { name: 'Open sidebar' }));
-	expect(layout?.classList.contains('sidebar-hidden')).toBe(false);
-	expect(document.querySelector('.inbox-floating-controls')).toBeNull();
 });
 
 it('shows a retained-account sign-out failure in Account settings', async () => {

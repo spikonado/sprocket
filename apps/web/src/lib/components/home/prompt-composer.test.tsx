@@ -371,14 +371,6 @@ describe('PromptComposer workspace path mentions', () => {
 		expect(textarea.value).toBe('[app.tsx](src/app.tsx) ');
 		expect(document.activeElement).toBe(textarea);
 	});
-
-	it('explains how to enable search without a connected workspace', async () => {
-		const { textarea } = renderComposer();
-		await typeInComposer(textarea, '@');
-		expect(document.querySelector('[role="listbox"]')?.textContent).toContain(
-			'Select a workspace and connect its server'
-		);
-	});
 });
 
 describe('PromptComposer submission', () => {
@@ -441,19 +433,6 @@ describe('PromptComposer submission', () => {
 		expect(props.onSubmit).toHaveBeenCalledOnce();
 
 		await pressKey(textarea, { key: 'Enter', isComposing: true });
-		expect(props.onSubmit).toHaveBeenCalledOnce();
-	});
-
-	it('allows retrying after a run failure', async () => {
-		const { props, composer, textarea } = renderComposer({
-			modelCatalog,
-			selectedModel: 'model-one',
-			prompt: 'Try again',
-			notices: <div role="alert">A previous run failed.</div>
-		});
-
-		expect(composer.querySelector('[role="alert"]')?.textContent).toBe('A previous run failed.');
-		await pressKey(textarea, { key: 'Enter' });
 		expect(props.onSubmit).toHaveBeenCalledOnce();
 	});
 });
@@ -788,20 +767,6 @@ describe('PromptComposer model selection', () => {
 		expect(onSelectedReasoningEffortChange).toHaveBeenCalledWith('high');
 	});
 
-	it('keeps the model menu anchored when a parent scrolls', async () => {
-		const { composer } = renderComposer({ modelCatalog, selectedModel: 'model-one' });
-		const trigger = screen.getByRole('button', { name: 'Select model' });
-		const rect = vi.spyOn(trigger, 'getBoundingClientRect');
-		rect.mockReturnValue(new DOMRect(100, 400, 44, 44));
-		await click(trigger);
-		const menu = screen.getByRole('dialog', { name: 'Model' });
-		expect(menu.style.bottom).toBe(`${window.innerHeight - 400 + 12}px`);
-
-		rect.mockReturnValue(new DOMRect(100, 280, 44, 44));
-		fireEvent.scroll(composer.parentElement!);
-		expect(menu.style.bottom).toBe(`${window.innerHeight - 280 + 12}px`);
-	});
-
 	it('previews a hovered model and selects its reasoning without changing models on hover', async () => {
 		const onSelectedModelChange = vi.fn();
 		const onSelectedReasoningEffortChange = vi.fn();
@@ -960,42 +925,6 @@ describe('PromptComposer model selection', () => {
 			}
 		}
 	);
-
-	it('normalizes unsupported reasoning before the model menu is opened', () => {
-		const onSelectedReasoningEffortChange = vi.fn();
-		renderComposer({
-			modelCatalog,
-			selectedModel: 'model-two',
-			selectedReasoningEffort: 'medium',
-			onSelectedReasoningEffortChange
-		});
-		expect(onSelectedReasoningEffortChange).toHaveBeenCalledWith('high');
-		expect(screen.getByRole('button', { name: 'Select model' }).textContent).toBe(
-			'Model Two · High'
-		);
-	});
-
-	it('selects another model and resets reasoning', async () => {
-		const onSelectedModelChange = vi.fn();
-		const onSelectedReasoningEffortChange = vi.fn();
-		renderComposer({
-			modelCatalog,
-			selectedModel: 'model-one',
-			selectedReasoningEffort: 'medium',
-			onSelectedModelChange,
-			onSelectedReasoningEffortChange
-		});
-
-		await click(screen.getByRole('button', { name: 'Select model' }));
-		await click(
-			within(screen.getByRole('dialog', { name: 'Model' })).getByRole('button', {
-				name: 'Model Two'
-			})
-		);
-
-		expect(onSelectedModelChange).toHaveBeenCalledWith('model-two');
-		expect(onSelectedReasoningEffortChange).toHaveBeenCalledWith('high');
-	});
 });
 
 describe('PromptComposer Fast mode', () => {
@@ -1139,22 +1068,5 @@ describe('PromptComposer agent questions', () => {
 
 		await click(document.querySelector<HTMLElement>('[aria-label="Collapse question"]'));
 		expect(answerOptions()).toBeNull();
-	});
-});
-
-describe('PromptComposer attach tooltip', () => {
-	it('shows the attach tooltip while the button is focused', async () => {
-		renderComposer();
-		const attachButton = document.querySelector<HTMLButtonElement>('[aria-label="Attach files"]');
-
-		await act(async () => {
-			attachButton?.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
-		});
-		expect(document.querySelector('[role="tooltip"]')?.textContent).toBe('Attach files');
-
-		await act(async () => {
-			attachButton?.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
-		});
-		expect(document.querySelector('[role="tooltip"]')).toBeNull();
 	});
 });

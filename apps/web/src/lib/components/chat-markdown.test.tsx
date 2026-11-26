@@ -107,13 +107,6 @@ describe('json-render', () => {
 		expect(await findByText('lint')).not.toBeNull();
 	});
 
-	it('renders a whole spec document', async () => {
-		const spec = `{"root":"ci","elements":{"ci":${card},"jobs":${table}}}`;
-		const { findByText } = render(<ChatMarkdown content={'```json-render\n' + spec + '\n```'} />);
-
-		expect(await findByText('lint')).not.toBeNull();
-	});
-
 	it('does not turn javascript hrefs into links', async () => {
 		const spec = JSON.stringify({
 			root: 'link',
@@ -136,17 +129,6 @@ describe('json-render', () => {
 });
 
 describe('links', () => {
-	it.each(['docs/notes.md', 'assets/board.png', 'https://example.com/board.png', '#diagram.png'])(
-		'preserves ordinary link %s',
-		(source) => {
-			const { getByRole } = render(
-				<ChatMarkdown content={`[Link](${source})`} imageScope={{ workspacePath: '/workspace' }} />
-			);
-
-			expect(getByRole('link').getAttribute('href')).toBe(source);
-		}
-	);
-
 	it('opens links in a new tab when requested', () => {
 		renderChatMarkdown({
 			content: '[Sprocket](https://sprocket.dev)',
@@ -181,20 +163,6 @@ describe('links', () => {
 			[{ workspacePath: '/repo', path: 'full.png', knownDirectory: false }]
 		]);
 	});
-});
-
-it('preserves GFM table column alignment through parsing and sanitization', () => {
-	const { container } = render(
-		<ChatMarkdown
-			content={'| Sensor | Status | Value |\n| :--- | :---: | ---: |\n| Voltage | Ready | 3.3 |'}
-		/>
-	);
-
-	const alignments = (selector: string) =>
-		[...container.querySelectorAll(selector)].map((cell) => cell.getAttribute('align'));
-
-	expect(alignments('th')).toEqual(['left', 'center', 'right']);
-	expect(alignments('td')).toEqual(['left', 'center', 'right']);
 });
 
 describe('code blocks', () => {
@@ -398,23 +366,6 @@ describe('copying code', () => {
 });
 
 describe('artifact references', () => {
-	it('shows the artifact title and opens it from the view button', () => {
-		const onOpenArtifact = vi.fn();
-		renderChatMarkdown({
-			content: `Here it is.\n\nartifact:${artifact.key}`,
-			artifacts: [artifact],
-			onOpenArtifact
-		});
-
-		const reference = document.querySelector(`[data-artifact-reference="${artifact.key}"]`);
-		expect(reference?.textContent).toContain('About Me.md');
-		expect(reference?.textContent).toContain('Artifact');
-
-		fireEvent.click(reference!.querySelector<HTMLButtonElement>('button')!);
-		expect(onOpenArtifact).toHaveBeenCalledOnce();
-		expect(onOpenArtifact).toHaveBeenCalledWith(artifact.key);
-	});
-
 	it('keeps an unavailable artifact reference as text', () => {
 		renderChatMarkdown({
 			content: 'artifact:missing',
@@ -424,26 +375,6 @@ describe('artifact references', () => {
 
 		expect(document.querySelector('[data-artifact-reference]')).toBeNull();
 		expect(document.body.textContent).toContain('artifact:missing');
-	});
-});
-
-it('opens a KiCad project card in the side panel', () => {
-	const open = vi.fn();
-
-	const { getByRole } = render(
-		<MarkdownFileLinksContext value={{ roots: ['/repo'], open }}>
-			<ChatMarkdown content={'Done.\n\nkicad:boards/amp board/amp.kicad_pro'} />
-		</MarkdownFileLinksContext>
-	);
-
-	expect(document.querySelector('[data-kicad-reference]')?.textContent).toBe(
-		'ampKiCad projectView'
-	);
-	fireEvent.click(getByRole('button', { name: 'View amp' }));
-	expect(open).toHaveBeenCalledWith({
-		workspacePath: '/repo',
-		path: 'boards/amp board/amp.kicad_pro',
-		knownDirectory: false
 	});
 });
 

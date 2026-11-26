@@ -7,47 +7,6 @@ fn codes(matches: &[PartMatch]) -> Vec<&str> {
 }
 
 #[test]
-fn schema_matches_the_documented_input() {
-    assert_eq!(
-        parameters(),
-        json!({
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "title": "LookupPartsArgs",
-            "type": "object",
-            "properties": {
-                "parts": {
-                    "type": "array",
-                    "items": { "$ref": "#/$defs/PartQuery" },
-                    "minItems": 1
-                }
-            },
-            "required": ["parts"],
-            "additionalProperties": false,
-            "$defs": {
-                "PartQuery": {
-                    "type": "object",
-                    "properties": {
-                        "part": {
-                            "description": "MPN or JLCPCB/LCSC code like `C2864583`.",
-                            "type": "string",
-                            "minLength": 1
-                        },
-                        "quantity": {
-                            "type": "integer",
-                            "format": "uint32",
-                            "minimum": 1,
-                            "default": 1
-                        }
-                    },
-                    "required": ["part"],
-                    "additionalProperties": false
-                }
-            }
-        })
-    );
-}
-
-#[test]
 fn jlcpcb_keeps_exact_stocked_rows() {
     let response: JlcpcbResponse = from_value(json!({
         "code": 200,

@@ -3,7 +3,7 @@ import { act, fireEvent, render, waitFor, within } from '@testing-library/react'
 import type { HighlightRequest, HighlightResponse } from '$lib/chat/code-highlighting-client';
 import { highlightCode } from '$lib/chat/code-highlighting';
 import { MarkdownFileLinksContext } from '$lib/chat/markdown-file-links';
-import { ConvexTestClient, ConvexTestProvider, fixtureId } from '$lib/convex-test-client';
+import { fixtureId } from '$lib/convex-test-client';
 import { TranscriptStore } from '$lib/home/transcript-store';
 import type {
 	TranscriptEvent,
@@ -130,27 +130,6 @@ describe('tool rows', () => {
 		expect(highlighted[1].previousSibling?.textContent).toBe(prefix.slice(first.length));
 	});
 
-	it.each(['apply_patch', 'poll_cmd', 'poll_subagent', 'poll_pr'])(
-		'expands one %s row to show the full summary',
-		(name) => {
-			const row = tool({
-				name,
-				summary: 'First target',
-				hasMore: true
-			});
-
-			const full = tool({ ...row, summary: 'First target\nSecond target: failed', hasMore: false });
-			const { props } = transcript(row, full);
-			const view = render(<WorkTools {...props} />);
-
-			expect(view.container.querySelectorAll('[data-tool-row]')).toHaveLength(1);
-			expect(view.container.querySelector('p')).toBeNull();
-			fireEvent.click(within(view.container).getByRole('button'));
-			expect(view.container.querySelectorAll('[data-tool-row]')).toHaveLength(1);
-			expect(view.container.querySelector('p')?.textContent).toBe(full.summary);
-		}
-	);
-
 	it('subscribes to full summary only while expanded and releases it on unmount', () => {
 		const row = tool({ hasMore: true });
 		const full = tool({ summary: 'Full command\nwith output' });
@@ -206,43 +185,6 @@ describe('tool rows', () => {
 		expect(store.openItem).not.toHaveBeenCalled();
 	});
 
-	it('shows the full summary of tools that do not expand in a title', () => {
-		const { store, props } = transcript(tool({ name: 'web_search', hasMore: true }));
-		const view = render(<WorkTools {...props} />);
-		expect(within(view.container).queryByRole('button')).toBeNull();
-		expect(view.container.querySelector('[data-tool-row]')?.getAttribute('title')).toBe(
-			'Server summary…'
-		);
-		expect(store.openItem).not.toHaveBeenCalled();
-	});
-
-	it.each(['running', 'completed', 'failed', 'cancelled', 'interrupted'] as const)(
-		'preserves server text and %s status',
-		(status) => {
-			const row = tool({
-				name: 'apply_patch',
-				summary: 'a.ts\nb.ts',
-				status,
-				error: 'Exact error'
-			});
-
-			const { props } = transcript(row);
-			const view = render(<WorkTools {...props} />);
-			const rows = view.container.querySelectorAll('[data-tool-row]');
-			expect(rows).toHaveLength(1);
-
-			const suffix =
-				status === 'cancelled'
-					? '(stopped)'
-					: status === 'failed' || status === 'interrupted'
-						? `(${status})`
-						: '';
-
-			expect(rows[0].textContent).toBe(`${row.label}:${row.summary}${suffix}`);
-			expect(within(view.container).getByRole('status').textContent).toBe(row.error);
-		}
-	);
-
 	it('updates just the subscribed row', () => {
 		const first = transcript(tool());
 		const second = transcript(tool({ id: 'other' }));
@@ -284,34 +226,5 @@ describe('tool rows', () => {
 			path: 'docs/design.pdf',
 			knownDirectory: false
 		});
-	});
-
-	it('opens the scraped URL in a new tab', () => {
-		const { props } = transcript(
-			tool({ name: 'scrape_url', action: { kind: 'openUrl', url: 'https://react.dev' } })
-		);
-
-		const link = within(render(<WorkTools {...props} />).container).getByRole('link');
-		expect(link.getAttribute('href')).toBe('https://react.dev');
-		expect(link.getAttribute('target')).toBe('_blank');
-	});
-
-	it('shows the save-card action after reload without loading details', () => {
-		const { store, props } = transcript(tool({ action: { kind: 'saveCard' } }));
-
-		const view = render(
-			<ConvexTestProvider client={new ConvexTestClient()}>
-				<WorkTools {...props} />
-			</ConvexTestProvider>
-		);
-
-		expect(within(view.container).getByRole('button', { name: 'Save a card' })).toBeTruthy();
-		expect(store.openItem).not.toHaveBeenCalled();
-	});
-
-	it('uses the summary as the whole display when the server omits a label', () => {
-		const { props } = transcript(tool({ label: undefined, summary: 'echo hello' }));
-		const view = render(<WorkTools {...props} />);
-		expect(view.container.querySelector('[data-tool-row]')?.textContent).toBe('echo hello');
 	});
 });

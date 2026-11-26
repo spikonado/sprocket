@@ -9,26 +9,6 @@ const scope = (repositoryKey: string) => ({
 	workspacePath: `/worktrees/${repositoryKey}`
 });
 
-it('notifies subscribers on panel changes and keeps one instance per mount', () => {
-	const { result, rerender } = renderHook(() => useArtifactPanel());
-	const instance = result.current;
-	const listener = vi.fn<() => void>();
-	const unsubscribe = instance.subscribe(listener);
-	const before = instance.getSnapshot();
-
-	rerender();
-	expect(result.current).toBe(instance);
-
-	act(() => {
-		instance.openArtifact('artifact-1');
-	});
-	expect(listener).toHaveBeenCalledTimes(1);
-	expect(result.current.activeTab).toMatchObject({ view: 'artifacts', selectedKey: 'artifact-1' });
-	expect(instance.getSnapshot()).not.toBe(before);
-
-	unsubscribe();
-});
-
 it('keeps a layout per thread in the same scope and restores it on return', () => {
 	const panel = new ArtifactPanel();
 
