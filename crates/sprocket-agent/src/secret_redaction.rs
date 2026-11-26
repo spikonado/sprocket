@@ -8,7 +8,7 @@ use serde_json::Value;
 // that boundary, since the `regex` crate has no lookbehind.
 const TOKEN_START: &str = r"(^|[^A-Za-z0-9_-]|(?:^|\s)-)";
 
-const KNOWN_FORMATS: [(&str, &str); 9] = [
+const KNOWN_FORMATS: &[(&str, &str)] = &[
     (
         "private-key",
         r"()-----BEGIN [A-Z ]{0,20}PRIVATE KEY-----(?s:.)*?-----END [A-Z ]{0,20}PRIVATE KEY-----",
@@ -34,7 +34,7 @@ const KNOWN_FORMATS: [(&str, &str); 9] = [
 
 struct Rules {
     known_formats: Vec<(Regex, String)>,
-    url_password: Regex,
+    url_password: (Regex, String),
     candidate: Regex,
 }
 
@@ -47,8 +47,11 @@ static RULES: LazyLock<Rules> = LazyLock::new(|| Rules {
             (pattern, format!("${{1}}{}", placeholder(label)))
         })
         .collect(),
-    url_password: Regex::new(r"(?i)(\b[a-z][a-z0-9+.-]{0,30}://[^\s/:@]{1,256}:)[^\s/@]{1,256}@")
-        .expect("URL password pattern is valid"),
+    url_password: (
+        Regex::new(r"(?i)(\b[a-z][a-z0-9+.-]{0,30}://[^\s/:@]{1,256}:)[^\s/@]{1,256}@")
+            .expect("URL password pattern is valid"),
+        format!("${{1}}{}@", placeholder("password")),
+    ),
     // Lockfile and Nix integrity hashes are long and random but not secret, so they are
     // matched whole and kept. `=` only ends a candidate, as base64 padding, so the value of
     // `NAME=value` starts its own.
@@ -86,8 +89,8 @@ fn is_high_entropy(token: &str) -> bool {
         && entropy(token) >= ((token.len() as f64).log2() - 0.6).min(4.5)
 }
 
-// A candidate ends at `_`, and nothing after the `_` starts one, so prefixed IDs such as
-// `user_01KX…` stay intact.
+// Only the part before the first `_` is scored, so prefixed IDs such as `user_01KX…` stay
+// intact.
 fn redact_candidate(captures: &Captures<'_>) -> String {
     let token = &captures[0];
     let head = token.split('_').next().unwrap_or_default();
@@ -109,8 +112,8 @@ pub(crate) fn redact_secrets(text: &str) -> String {
     for (pattern, replacement) in &rules.known_formats {
         replace_all(&mut redacted, pattern, replacement.as_str());
     }
-    let password = format!("${{1}}{}@", placeholder("password"));
-    replace_all(&mut redacted, &rules.url_password, password.as_str());
+    let (url_password, password) = &rules.url_password;
+    replace_all(&mut redacted, url_password, password.as_str());
     replace_all(&mut redacted, &rules.candidate, redact_candidate);
     redacted
 }
