@@ -63,51 +63,10 @@ pub(crate) struct ServiceCallArgs {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub(crate) enum CustomConnector {
-    Stdio {
-        name: String,
-        command: String,
-        #[serde(default)]
-        args: Vec<String>,
-        /// Names of the environment variables the user must fill in.
-        #[serde(default)]
-        env: Vec<String>,
-    },
-    Http {
-        name: String,
-        url: String,
-        /// Names of the HTTP headers the user must fill in.
-        #[serde(default)]
-        headers: Vec<String>,
-    },
-}
-
-impl CustomConnector {
-    fn split(&self) -> (&str, McpTransport) {
-        match self {
-            Self::Stdio {
-                name,
-                command,
-                args,
-                env,
-            } => (
-                name,
-                McpTransport::Stdio {
-                    command: command.clone(),
-                    args: args.clone(),
-                    env: env.clone(),
-                },
-            ),
-            Self::Http { name, url, headers } => (
-                name,
-                McpTransport::Http {
-                    url: url.clone(),
-                    headers: headers.clone(),
-                },
-            ),
-        }
-    }
+pub(crate) struct CustomConnector {
+    name: String,
+    #[serde(flatten)]
+    transport: McpTransport,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -278,7 +237,7 @@ impl rig::tool::Tool for ServiceCallTool {
 }
 
 async fn call_service(
-    mut context: AgentToolContext,
+    context: AgentToolContext,
     hub: SharedServiceHub,
     job_id: String,
     args: ServiceCallArgs,
@@ -313,7 +272,6 @@ async fn call_service(
             }
         },
     }
-    context.service_hub = None;
     let elicitor = Arc::new(QuestionElicitor {
         context,
         job_id,
@@ -518,12 +476,12 @@ fn prepare_connector_request(
             (name, json!({ "type": "known", "id": id.trim() }))
         }
         (None, Some(custom)) => {
-            let (name, transport) = custom.split();
-            let name = name.trim();
+            let name = custom.name.trim();
             if name.is_empty() {
                 return Err(tool_failure("name cannot be empty"));
             }
-            transport
+            custom
+                .transport
                 .validate()
                 .map_err(|error| tool_failure(error.to_string()))?;
             (

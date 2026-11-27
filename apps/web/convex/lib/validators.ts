@@ -402,7 +402,7 @@ export const vAwaitQuestionPayload = v.object({
 	yieldTimeMs: v.optional(v.number())
 });
 
-export const questionFieldKinds = ['string', 'number', 'integer', 'boolean', 'enum'] as const;
+const questionFieldKinds = ['string', 'number', 'integer', 'boolean', 'enum'] as const;
 
 const vQuestionFieldValue = v.union(v.string(), v.number(), v.boolean());
 
@@ -434,7 +434,7 @@ const vHttpConnector = v.object({
 	headers: v.array(v.string())
 });
 
-export const vCustomConnector = v.union(vStdioConnector, vHttpConnector);
+const vCustomConnector = v.union(vStdioConnector, vHttpConnector);
 
 export const vAgentQuestionDetail = v.union(
 	v.object({

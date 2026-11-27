@@ -92,12 +92,7 @@ export default function McpConnectors({ userId, localApi }: { userId: string; lo
 			<CustomConnectorForm
 				userId={userId}
 				localApi={localApi}
-				onAdded={(added) =>
-					setConnectors((current) => [
-						...(current ?? []).filter((entry) => entry.id !== added.id),
-						added
-					])
-				}
+				onAdded={(added) => setConnectors((current) => [...(current ?? []), added])}
 			/>
 		</>
 	);
