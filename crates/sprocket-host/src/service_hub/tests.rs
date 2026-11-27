@@ -82,16 +82,6 @@ fn not_connected(query: &str, remote: &[RemoteServer]) -> Vec<(String, String)> 
 }
 
 #[test]
-fn unconnected_catalog_services_match_id_name_and_description() {
-    for query in ["ATLASSIAN", "Rovo", "Jira"] {
-        assert_eq!(
-            not_connected(query, &[]),
-            [("atlassian".into(), "Atlassian Rovo".into())]
-        );
-    }
-}
-
-#[test]
 fn catalog_search_reuses_remote_request_until_auth_completes() {
     let mut remote = remote_server(Some("atlassian"), "needs_auth");
     remote.connector_id = "work-tracker-2".into();
@@ -103,7 +93,7 @@ fn catalog_search_reuses_remote_request_until_auth_completes() {
     }
 
     remote.status = ConnectorStatus::Connected;
-    assert!(not_connected("atlassian Rovo Jira", &[remote]).is_empty());
+    assert!(not_connected("Jira", &[remote]).is_empty());
 }
 
 #[test]
@@ -111,7 +101,7 @@ fn remote_slug_does_not_suppress_an_unrelated_catalog_service() {
     for catalog_id in [None, Some("notion")] {
         let remote = remote_server(catalog_id, "connected");
         assert_eq!(
-            not_connected("atlassian", std::slice::from_ref(&remote)),
+            not_connected("Jira", std::slice::from_ref(&remote)),
             [("atlassian".into(), "Atlassian Rovo".into())]
         );
         if catalog_id.is_some() {

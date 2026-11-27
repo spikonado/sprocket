@@ -159,7 +159,7 @@ export default function McpConnectors({
 							localApi={localApi}
 							connector={connector}
 							remote={server}
-							catalog={server.catalogId ? catalogConnector(server.catalogId) : undefined}
+							catalog={catalogConnector(server.catalogId)}
 						/>
 					);
 				})}
@@ -245,7 +245,7 @@ function McpConnectorCard({
 	const [open, setOpen] = useState(false);
 	const { pending, error, act } = useConnectorAction<'remove'>(connector.name);
 	const needsAuth = remote?.status === 'needs_auth';
-	const notConnected = Boolean(catalog && !remote);
+	const notConnected = catalog !== undefined && !remote;
 	const toolsApi = needsAuth || notConnected ? null : localApi;
 	const line = transportLine(connector.transport);
 	const secrets = secretNames(connector.transport);
@@ -315,9 +315,12 @@ function McpConnectorCard({
 			}
 			error={error}
 		>
-			{(notConnected || needsAuth) && !loading && (
-				<McpOAuth connectorId={remote?.connectorId} catalog={catalog} />
-			)}
+			{!loading &&
+				(needsAuth ? (
+					<McpOAuth connectorId={remote.connectorId} />
+				) : (
+					notConnected && <McpOAuth catalog={catalog} />
+				))}
 			{open && toolsApi && (
 				<McpToolList
 					userId={userId}
@@ -893,7 +896,7 @@ export function RequestedRemoteConnectorSetup({
 			localApi={localApi}
 			connector={remoteMcpConnector(remote)}
 			remote={remote}
-			catalog={remote.catalogId ? catalogConnector(remote.catalogId) : undefined}
+			catalog={catalogConnector(remote.catalogId)}
 			onConnected={onConnected}
 		/>
 	);

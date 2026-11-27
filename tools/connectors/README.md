@@ -1,9 +1,9 @@
 # Connector catalog
 
 `update-catalog.ts` builds `crates/sprocket-host/connector-catalog.json` from the
-[official MCP Registry](https://registry.modelcontextprotocol.io),
-whose data is CC0. Run `bun tools/connectors/update-catalog.ts` from the repository root after
-`bun install`. Run the tests with `node --test tools/connectors/*.test.ts`.
+[official MCP Registry](https://registry.modelcontextprotocol.io), whose data is CC0. Run
+`bun tools/connectors/update-catalog.ts` from the repository root after `bun install`. Run the
+tests with `node --test tools/connectors/*.test.ts`.
 
 The host embeds the reviewed catalog. `service_search` lists matching catalog services that have no
 remote server with their `catalogId`. A server that needs sign-in uses its existing remote request ID.
@@ -15,8 +15,8 @@ when they differ from the namespace domain. A vendor that publishes under its Gi
 for the same server in the GitHub registry, for example Notion's older SSE listing.
 
 A server qualifies when it is active and latest, and has an HTTPS Streamable HTTP remote without URL
-templates on an allowed domain. Domain checks use the Public Suffix List,
-including private suffixes. The first qualifying remote wins.
+templates on an allowed domain. Domain checks use the Public Suffix List, including private
+suffixes. The first qualifying remote wins.
 
 The GitHub MCP Registry supplies only the advisory `listedOnGitHub` field, matched by registry
 name, reviewed alias, or remote URL. It never controls catalog inclusion.

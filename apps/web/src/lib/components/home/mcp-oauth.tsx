@@ -12,13 +12,7 @@ const clientRequiredError = z.object({ code: z.literal('client_required') });
 
 type OAuthStatus = 'ready' | 'starting' | 'client_required' | 'authorizing';
 
-export default function McpOAuth({
-	connectorId,
-	catalog
-}: {
-	connectorId?: string;
-	catalog?: CatalogConnector;
-}) {
+export default function McpOAuth(props: { connectorId: string } | { catalog: CatalogConnector }) {
 	const convex = useConvex();
 	const addRemote = useAction(api.mcpServers.add);
 	const startOAuth = useAction(api.mcpServers.startOAuth);
@@ -42,11 +36,17 @@ export default function McpOAuth({
 
 			if (loginWindow) loginWindow.opener = null;
 
-			let id = connectorId;
+			let connectorId: string;
 
-			if (!id && catalog) {
-				id = await addRemote({ name: catalog.name, url: catalog.url, catalogId: catalog.id });
-				const server = await waitForMcpConnector(convex, id);
+			if ('connectorId' in props) connectorId = props.connectorId;
+			else {
+				const { catalog } = props;
+				connectorId = await addRemote({
+					name: catalog.name,
+					url: catalog.url,
+					catalogId: catalog.id
+				});
+				const server = await waitForMcpConnector(convex, connectorId);
 
 				if (server.status === 'connected') {
 					loginWindow?.close();
@@ -56,10 +56,8 @@ export default function McpOAuth({
 				}
 			}
 
-			if (!id) throw new Error('Choose a connector to connect.');
-
 			const { authorizationUrl } = await startOAuth({
-				connectorId: id,
+				connectorId,
 				...(needsClient && {
 					client: { clientId: clientId.trim(), clientSecret: clientSecret.trim() || undefined }
 				})

@@ -50,10 +50,9 @@ function isGitHubNamespace(registryName: string): boolean {
 }
 
 export function namespaceDomain(registryName: string): string | null {
-	if (isGitHubNamespace(registryName) || namespace(registryName) === 'io.github') return null;
-	const host = namespace(registryName).split('.').reverse().join('.');
+	if (isGitHubNamespace(registryName)) return null;
 
-	return registrableDomain(host);
+	return registrableDomain(namespace(registryName).split('.').reverse().join('.'));
 }
 
 // The registry proves `io.github.<org>` namespaces through that GitHub org, so a reviewed vendor
