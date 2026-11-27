@@ -148,17 +148,15 @@ function ApprovalDetail({ detail }: { detail: Extract<AgentQuestionDetail, { typ
 	);
 }
 
-type RawFormValues = Record<string, string | boolean>;
+const CHECKED = 'true';
+
+type RawFormValues = Record<string, string>;
 
 function initialFormValues(fields: QuestionFormField[]): RawFormValues {
 	return Object.fromEntries(
 		fields.map((field) => [
 			field.name,
-			field.kind === 'boolean'
-				? field.default === true
-				: field.default === undefined
-					? ''
-					: String(field.default)
+			field.default === undefined || field.default === false ? '' : String(field.default)
 		])
 	);
 }
@@ -169,7 +167,7 @@ function toFormValues(fields: QuestionFormField[], raw: RawFormValues): Question
 	for (const field of fields) {
 		const value = raw[field.name];
 
-		if (typeof value === 'boolean') values[field.name] = value;
+		if (field.kind === 'boolean') values[field.name] = value === CHECKED;
 		else if (value === '') continue;
 		else if (field.kind === 'number' || field.kind === 'integer') values[field.name] = Number(value);
 		else values[field.name] = value;
@@ -199,7 +197,7 @@ function QuestionForm({
 		if (!problem) onSubmit(values);
 	}
 
-	function set(name: string, value: string | boolean) {
+	function set(name: string, value: string) {
 		setRaw((current) => ({ ...current, [name]: value }));
 	}
 
@@ -235,9 +233,9 @@ function FormField({
 	onChange
 }: {
 	field: QuestionFormField;
-	value: string | boolean;
+	value: string;
 	disabled: boolean;
-	onChange: (value: string | boolean) => void;
+	onChange: (value: string) => void;
 }) {
 	const label = (
 		<span className="text-foreground text-[12px]">
@@ -261,9 +259,9 @@ function FormField({
 				<input
 					type="checkbox"
 					className="mt-1"
-					checked={value === true}
+					checked={value === CHECKED}
 					disabled={disabled}
-					onChange={(event) => onChange(event.currentTarget.checked)}
+					onChange={(event) => onChange(event.currentTarget.checked ? CHECKED : '')}
 				/>
 				<span>
 					{label}
@@ -273,8 +271,6 @@ function FormField({
 		);
 	}
 
-	const text = typeof value === 'string' ? value : '';
-
 	return (
 		<label className="block space-y-1">
 			<span className="block">{label}</span>
@@ -282,7 +278,7 @@ function FormField({
 			{field.kind === 'enum' ? (
 				<select
 					className={inputClass}
-					value={text}
+					value={value}
 					required={field.required}
 					disabled={disabled}
 					onChange={(event) => onChange(event.currentTarget.value)}
@@ -299,7 +295,7 @@ function FormField({
 					className={cn(inputClass, field.kind !== 'string' && 'font-mono')}
 					type={field.kind === 'string' ? 'text' : 'number'}
 					step={field.kind === 'integer' ? 1 : 'any'}
-					value={text}
+					value={value}
 					required={field.required}
 					disabled={disabled}
 					onChange={(event) => onChange(event.currentTarget.value)}

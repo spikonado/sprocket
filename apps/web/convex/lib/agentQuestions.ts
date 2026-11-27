@@ -1,6 +1,7 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { DatabaseReader } from '@convex/_generated/server';
 import type { Infer } from 'convex/values';
+import { z } from 'zod';
 import type {
 	vAgentQuestionDetail,
 	vQuestionFormField,
@@ -87,7 +88,7 @@ export const MAX_OPTION_ID_CHARS = 20;
 
 export const MAX_OPTION_LABEL_CHARS = 200;
 
-export const MAX_APPROVAL_ARGUMENTS_CHARS = 4000;
+const MAX_APPROVAL_ARGUMENTS_CHARS = 4000;
 
 export const CONNECTED_OPTION_ID = 'connected';
 
@@ -250,22 +251,23 @@ function validateQuestionDetail(detail: AgentQuestionDetail) {
 	}
 }
 
-export function formFieldAccepts(
-	field: QuestionFormField,
-	value: string | number | boolean
-): boolean {
+function formFieldSchema(field: QuestionFormField) {
 	switch (field.kind) {
 		case 'string':
-			return typeof value === 'string';
+			return z.string();
 		case 'number':
-			return typeof value === 'number' && Number.isFinite(value);
+			return z.number();
 		case 'integer':
-			return Number.isInteger(value);
+			return z.int();
 		case 'boolean':
-			return typeof value === 'boolean';
+			return z.boolean();
 		case 'enum':
-			return typeof value === 'string' && (field.enumValues ?? []).includes(value);
+			return z.enum(field.enumValues ?? []);
 	}
+}
+
+function formFieldAccepts(field: QuestionFormField, value: string | number | boolean) {
+	return formFieldSchema(field).safeParse(value).success;
 }
 
 export function formValuesError(

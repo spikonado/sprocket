@@ -64,7 +64,6 @@ function ConnectorCard({
 	const [requestError, setRequestError] = useState<string | null>(null);
 	const installing = connector.state === 'installing';
 	const busy = pending || installing;
-	const error = requestError ?? connector.error;
 
 	async function run(action: () => Promise<ConnectorStatus>) {
 		setPending(true);
@@ -95,11 +94,6 @@ function ConnectorCard({
 					<ConnectorDescription>Lets the agent design PCBs</ConnectorDescription>
 					{connector.kicadVersion && (
 						<VersionLine name={connector.name} version={connector.kicadVersion} />
-					)}
-					{error && (
-						<p className="text-destructive mt-0.5 truncate text-[12px]" title={error}>
-							{error}
-						</p>
 					)}
 				</>
 			}
@@ -137,7 +131,7 @@ function ConnectorCard({
 					</button>
 				)
 			}
-			error={null}
+			error={requestError ?? connector.error}
 		/>
 	);
 }

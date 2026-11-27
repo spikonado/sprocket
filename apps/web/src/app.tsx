@@ -1480,16 +1480,16 @@ export default function App({
 		if (currentThreadDeleted) leaveCurrentThreadRef.current();
 	}, [currentThreadDeleted, leaveCurrentThreadRef]);
 
-	async function settleAgentQuestion(action: 'answer' | 'skip', explicit?: QuestionAnswerInput) {
+	async function settleAgentQuestion(action: 'answer' | 'skip', input?: QuestionAnswerInput) {
 		const question = pendingAgentQuestion;
 		const threadId = currentThreadId;
 		const userId = signedInUserIdRef.current;
 
 		if (!question || !threadId || !userId || answeringAgentQuestion) return;
 
-		const answerOptionId = explicit ? explicit.optionId : selectedQuestionOptionId;
+		const answerOptionId = input ? input.optionId : selectedQuestionOptionId;
 
-		if (action === 'answer' && !answerOptionId && !explicit?.values && !prompt.trim()) return;
+		if (action === 'answer' && !answerOptionId && !input?.values && !prompt.trim()) return;
 
 		setAnsweringAgentQuestion(true);
 		setCurrentError(null);
@@ -1517,7 +1517,7 @@ export default function App({
 							threadId,
 							questionId: question.questionId,
 							optionId: answerOptionId ?? undefined,
-							values: explicit?.values,
+							values: input?.values,
 							text: answerText || undefined
 						})
 					: await skipAgentQuestion({ threadId, questionId: question.questionId });
@@ -2751,13 +2751,13 @@ export default function App({
 															: null
 													}
 													usageThreadId={currentThreadId}
-												selectedQuestionOptionId={selectedQuestionOptionId}
-												onSelectedQuestionOptionIdChange={setSelectedQuestionOptionId}
-												onAnswerQuestion={(answer) => void settleAgentQuestion('answer', answer)}
-												questionConnectorSetup={
-													localApi && signedInUserId ? { userId: signedInUserId, localApi } : null
-												}
-												canSend={canSend}
+													selectedQuestionOptionId={selectedQuestionOptionId}
+													onSelectedQuestionOptionIdChange={setSelectedQuestionOptionId}
+													onAnswerQuestion={(answer) => void settleAgentQuestion('answer', answer)}
+													questionConnectorSetup={
+														localApi && signedInUserId ? { userId: signedInUserId, localApi } : null
+													}
+													canSend={canSend}
 													submitting={
 														hasPendingAgentLaunch
 															? 'agentLaunch'

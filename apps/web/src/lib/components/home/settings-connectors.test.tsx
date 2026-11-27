@@ -130,6 +130,7 @@ it('saves an MCP tool permission and reverts it when the save fails', async () =
 
 	fireEvent.click(await screen.findByRole('button', { name: 'Tools' }));
 	const control = await screen.findByRole('group', { name: 'create_issue permission' });
+
 	const pressed = () =>
 		within(control)
 			.getAllByRole('button')

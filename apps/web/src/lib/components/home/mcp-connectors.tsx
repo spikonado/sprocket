@@ -22,7 +22,7 @@ export type McpApi = Pick<
 	| 'setMcpToolPolicy'
 >;
 
-export type RequestedMcpConnector = Exclude<
+type RequestedMcpConnector = Exclude<
 	Extract<AgentQuestionDetail, { type: 'connector' }>['connector'],
 	{ type: 'known' }
 >;
@@ -35,16 +35,22 @@ const policies: { value: ToolPolicy; label: string }[] = [
 	{ value: 'disabled', label: 'Disabled' }
 ];
 
-export function McpLogo() {
+function McpLogo() {
 	return <Plug className="text-foreground size-8 shrink-0 p-1.5" aria-hidden="true" />;
 }
 
-export function commandLine(command: string, args: string[]) {
-	return [command, ...args].map((part) => (/[\s"']/.test(part) ? JSON.stringify(part) : part)).join(' ');
+type Transport = McpConnector['transport'] | RequestedMcpConnector;
+
+function transportLine(transport: Transport) {
+	if (transport.type === 'http') return transport.url;
+
+	return [transport.command, ...transport.args]
+		.map((part) => (/[\s"']/.test(part) ? JSON.stringify(part) : part))
+		.join(' ');
 }
 
-function transportLine(transport: McpConnector['transport']) {
-	return transport.type === 'stdio' ? commandLine(transport.command, transport.args) : transport.url;
+function secretNames(transport: Transport) {
+	return transport.type === 'stdio' ? transport.env : transport.headers;
 }
 
 export default function McpConnectors({ userId, localApi }: { userId: string; localApi: McpApi }) {
@@ -107,8 +113,7 @@ function McpConnectorCard({
 	const [open, setOpen] = useState(false);
 	const { pending, error, act } = useConnectorAction<'remove'>(connector.name);
 	const line = transportLine(connector.transport);
-	const secretNames =
-		connector.transport.type === 'stdio' ? connector.transport.env : connector.transport.headers;
+	const secrets = secretNames(connector.transport);
 
 	return (
 		<ConnectorCardFrame
@@ -119,10 +124,10 @@ function McpConnectorCard({
 					<p className="text-muted-foreground mt-0.5 truncate font-mono text-[12px]" title={line}>
 						{line}
 					</p>
-					{secretNames.length > 0 && (
+					{secrets.length > 0 && (
 						<p className="text-muted-foreground mt-0.5 truncate text-[12px]">
 							{connector.transport.type === 'stdio' ? 'Environment' : 'Headers'}:{' '}
-							<span className="font-mono">{secretNames.join(', ')}</span>
+							<span className="font-mono">{secrets.join(', ')}</span>
 						</p>
 					)}
 				</>
@@ -504,7 +509,7 @@ export function RequestedConnectorSetup({
 	connector: RequestedMcpConnector;
 	onConnected: () => void;
 }) {
-	const names = connector.type === 'stdio' ? connector.env : connector.headers;
+	const names = secretNames(connector);
 	const [values, setValues] = useState<Record<string, string>>({});
 	const { pending, error, act } = useConnectorAction<'connect'>(connector.name);
 	const busy = pending !== null;
@@ -538,7 +543,7 @@ export function RequestedConnectorSetup({
 		>
 			<form className="space-y-3 px-5 pb-5" onSubmit={submit} aria-label={`Connect ${connector.name}`}>
 				<pre className="bg-hover-fill/60 text-foreground overflow-x-auto rounded-lg px-3 py-2 font-mono text-[12px] leading-5 whitespace-pre-wrap break-all">
-					{connector.type === 'stdio' ? commandLine(connector.command, connector.args) : connector.url}
+					{transportLine(connector)}
 				</pre>
 				{names.map((name) => (
 					<Field key={name} label={name} mono>
