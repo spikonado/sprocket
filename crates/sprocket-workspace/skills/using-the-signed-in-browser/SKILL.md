@@ -25,7 +25,7 @@ agent-browser --session sprocket-signed-in --profile "$SPROCKET_BROWSER_PROFILE"
 
 When that reports `Daemon failed to start`, another agent started the browser at the same moment, so run the first command again.
 
-Launch flags on the `sprocket-signed-in` session relaunch Chrome and close every agent's tab. Pass them only in this launch command and in step 2's headed one, and keep `--args` in both: without it Chrome reports `navigator.webdriver`, and checkouts fail their risk checks. In PowerShell, use `$env:SPROCKET_BROWSER_PROFILE`, since an empty `--profile` also closes the browser.
+Launch flags on the `sprocket-signed-in` session relaunch Chrome and close every agent's tab. Pass them only in this launch command and in step 2's headed one, and keep `--args` in both. Without it, Chrome reports `navigator.webdriver` and checkouts fail their risk checks. In PowerShell, use `$env:SPROCKET_BROWSER_PROFILE`, since an empty `--profile` also closes the browser.
 
 Open your own tab in it:
 
