@@ -1,7 +1,9 @@
 import { httpRouter } from 'convex/server';
 import { internal } from '@convex/_generated/api';
 import { env, httpAction } from '@convex/_generated/server';
+import { MCP_CALLBACK_PATH, MCP_CLIENT_METADATA_PATH } from '@convex/lib/mcpOAuth';
 import { parseAgentcardWebhook, verifyAgentcardSignature } from '@convex/lib/payments/agentcard';
+import { clientMetadata, oauthCallback } from '@convex/mcpServers';
 import { parse, scrape } from '@convex/webToolHttp';
 
 const http = httpRouter();
@@ -9,6 +11,10 @@ const http = httpRouter();
 http.route({ path: '/agent/scrape', method: 'POST', handler: scrape });
 
 http.route({ path: '/agent/parse', method: 'POST', handler: parse });
+
+http.route({ path: MCP_CALLBACK_PATH, method: 'GET', handler: oauthCallback });
+
+http.route({ path: MCP_CLIENT_METADATA_PATH, method: 'GET', handler: clientMetadata });
 
 http.route({
 	path: '/dodopayments-webhook',

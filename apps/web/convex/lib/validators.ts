@@ -1394,3 +1394,23 @@ export type AssistantToolResultErrorOutput = Infer<typeof vAssistantToolResultEr
 export type WorkspaceInstruction = Infer<typeof vWorkspaceInstruction>;
 
 export type ArtifactScope = Infer<typeof vArtifactScope>;
+
+export const vMcpServerAuth = v.union(v.literal('oauth'), v.literal('headers'), v.literal('none'));
+
+export const vMcpServerStatus = v.union(v.literal('needs_auth'), v.literal('connected'));
+
+export const vMcpToolPolicy = v.union(
+	v.literal('enabled'),
+	v.literal('ask'),
+	v.literal('disabled')
+);
+
+export const tokenEndpointAuthMethods = [
+	'none',
+	'client_secret_basic',
+	'client_secret_post'
+] as const;
+
+export type TokenEndpointAuthMethod = (typeof tokenEndpointAuthMethods)[number];
+
+export const vTokenEndpointAuthMethod = v.union(...literals(tokenEndpointAuthMethods));

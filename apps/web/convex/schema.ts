@@ -16,6 +16,9 @@ import {
 	vExecutorJobStatus,
 	vLegacyArtifactType,
 	vLinkedPullRequest,
+	vMcpServerAuth,
+	vMcpServerStatus,
+	vMcpToolPolicy,
 	vModelCallUsage,
 	vPurchaseStatus,
 	vReasoningEffort,
@@ -24,6 +27,7 @@ import {
 	vTokenUsageTotals,
 	vBillingInterval,
 	vSubscriptionStatus,
+	vTokenEndpointAuthMethod,
 	vTranscriptCompletionBody,
 	vTranscriptPartKind,
 	vTranscriptPromptBody,
@@ -61,6 +65,44 @@ export default defineSchema({
 		runIds: v.array(v.id('runs')),
 		updatedAt: v.number()
 	}).index('by_userId_and_machineId', ['userId', 'machineId']),
+	mcpServers: defineTable({
+		userId: v.string(),
+		connectorId: v.string(),
+		name: v.string(),
+		url: v.string(),
+		catalogId: v.optional(v.string()),
+		auth: vMcpServerAuth,
+		headerNames: v.array(v.string()),
+		status: vMcpServerStatus
+	}).index('by_userId_and_connectorId', ['userId', 'connectorId']),
+	mcpToolPolicies: defineTable({
+		userId: v.string(),
+		connectorId: v.string(),
+		tool: v.string(),
+		policy: vMcpToolPolicy
+	}).index('by_userId_and_connectorId_and_tool', ['userId', 'connectorId', 'tool']),
+	// Dynamically registered clients, shared by every user of an authorization server.
+	mcpOAuthClients: defineTable({
+		issuer: v.string(),
+		clientId: v.string(),
+		clientVaultName: v.optional(v.string()),
+		tokenEndpointAuthMethod: vTokenEndpointAuthMethod
+	}).index('by_issuer', ['issuer']),
+	mcpOAuthStates: defineTable({
+		state: v.string(),
+		userId: v.string(),
+		connectorId: v.string(),
+		codeVerifier: v.string(),
+		clientId: v.string(),
+		clientVaultName: v.optional(v.string()),
+		tokenEndpointAuthMethod: vTokenEndpointAuthMethod,
+		issuer: v.string(),
+		issuerParameterRequired: v.boolean(),
+		tokenEndpoint: v.string(),
+		resource: v.string(),
+		redirectUri: v.string(),
+		expiresAt: v.number()
+	}).index('by_state', ['state']),
 	tiers: defineTable({
 		tierId: v.string(),
 		label: v.string(),

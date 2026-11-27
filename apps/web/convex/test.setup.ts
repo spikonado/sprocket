@@ -9,6 +9,7 @@ import { vWorkId, type WorkId } from '@convex-dev/workpool';
 import { parse } from 'convex-helpers/validators';
 import { convexTest, type TestConvex } from 'convex-test';
 import { vi } from 'vitest';
+import { z } from 'zod';
 import { api, internal } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
@@ -37,6 +38,87 @@ export type ConvexTestInstance = TestConvex<typeof schema>;
  */
 export function tickPastLastCommit() {
 	vi.setSystemTime(Date.now() + 1);
+}
+
+type VaultEntry = { id: string; name: string; value: string; metadata: { version_id: string } };
+
+export type FetchHandler = (url: URL, init?: RequestInit) => Response | Promise<Response>;
+
+/** Fakes WorkOS Vault's version checks; other URLs go to `fallback`. */
+export function stubVault(fallback?: FetchHandler): Map<string, VaultEntry> {
+	const entries = new Map<string, VaultEntry>();
+	let versions = 0;
+	const nextVersion = () => `version_${(versions += 1)}`;
+
+	vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+		const url = new URL(String(input));
+
+		if (url.origin !== 'https://api.workos.com') {
+			return fallback ? await fallback(url, init) : new Response(null, { status: 404 });
+		}
+
+		const byName = url.pathname.match(/^\/vault\/v1\/kv\/name\/(.+)$/);
+		const byId = url.pathname.match(/^\/vault\/v1\/kv\/([^/]+)$/);
+		const entryWithId = (id: string) => [...entries.values()].find((entry) => entry.id === id);
+
+		if (byName) {
+			const entry = entries.get(decodeURIComponent(byName[1]!));
+
+			return entry ? Response.json(entry) : new Response(null, { status: 404 });
+		}
+
+		if (init?.method === 'POST' && url.pathname === '/vault/v1/kv') {
+			const body = z
+				.object({ name: z.string(), value: z.string() })
+				.parse(JSON.parse(String(init.body)));
+
+			if (entries.has(body.name)) return new Response(null, { status: 409 });
+
+			const entry = {
+				id: `secret_${entries.size + 1}_${versions}`,
+				...body,
+				metadata: { version_id: nextVersion() }
+			};
+
+			entries.set(entry.name, entry);
+
+			return Response.json(entry);
+		}
+
+		const entry = byId ? entryWithId(decodeURIComponent(byId[1]!)) : undefined;
+
+		if (!entry) return new Response(null, { status: 404 });
+
+		if (init?.method === 'PUT') {
+			const body = z
+				.object({ value: z.string(), version_check: z.string() })
+				.parse(JSON.parse(String(init.body)));
+
+			if (body.version_check !== entry.metadata.version_id)
+				return new Response(null, { status: 409 });
+			entries.set(entry.name, {
+				...entry,
+				value: body.value,
+				metadata: { version_id: nextVersion() }
+			});
+
+			return Response.json(entries.get(entry.name));
+		}
+
+		if (init?.method === 'DELETE') {
+			if (url.searchParams.get('version_check') !== entry.metadata.version_id) {
+				return new Response(null, { status: 409 });
+			}
+
+			entries.delete(entry.name);
+
+			return new Response(null, { status: 204 });
+		}
+
+		return new Response(null, { status: 405 });
+	});
+
+	return entries;
 }
 
 export async function finishDueScheduledFunctions(t: ConvexTestInstance) {
