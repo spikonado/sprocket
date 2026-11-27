@@ -1,16 +1,26 @@
 import { useState, type FormEvent } from 'react';
-import { useAction } from 'convex/react';
+import { useAction, useConvex } from 'convex/react';
 import { ConvexError } from 'convex/values';
 import { z } from 'zod';
 import { api } from '@convex/_generated/api';
+import type { CatalogConnector } from '$lib/connectors/catalog';
 import { inputClass, primaryButtonClass } from './connector-card-parts';
 import { caughtMessage } from './use-connectors';
+import { waitForMcpConnector } from './mcp-connectors-client';
 
 const clientRequiredError = z.object({ code: z.literal('client_required') });
 
 type OAuthStatus = 'ready' | 'starting' | 'client_required' | 'authorizing';
 
-export default function McpOAuth({ connectorId }: { connectorId: string }) {
+export default function McpOAuth({
+	connectorId,
+	catalog
+}: {
+	connectorId?: string;
+	catalog?: CatalogConnector;
+}) {
+	const convex = useConvex();
+	const addRemote = useAction(api.mcpServers.add);
 	const startOAuth = useAction(api.mcpServers.startOAuth);
 
 	const [status, setStatus] = useState<OAuthStatus>('ready');
@@ -32,8 +42,24 @@ export default function McpOAuth({ connectorId }: { connectorId: string }) {
 
 			if (loginWindow) loginWindow.opener = null;
 
+			let id = connectorId;
+
+			if (!id && catalog) {
+				id = await addRemote({ name: catalog.name, url: catalog.url, catalogId: catalog.id });
+				const server = await waitForMcpConnector(convex, id);
+
+				if (server.status === 'connected') {
+					loginWindow?.close();
+					setStatus('ready');
+
+					return;
+				}
+			}
+
+			if (!id) throw new Error('Choose a connector to connect.');
+
 			const { authorizationUrl } = await startOAuth({
-				connectorId,
+				connectorId: id,
 				...(needsClient && {
 					client: { clientId: clientId.trim(), clientSecret: clientSecret.trim() || undefined }
 				})

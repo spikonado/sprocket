@@ -1,4 +1,4 @@
-import { useAction } from 'convex/react';
+import { useAction, type ConvexReactClient } from 'convex/react';
 import type { FunctionReturnType } from 'convex/server';
 import { api } from '@convex/_generated/api';
 import type { LocalApi, McpConnector, NewMcpConnector } from '$lib/types/sprocket';
@@ -6,6 +6,31 @@ import type { LocalApi, McpConnector, NewMcpConnector } from '$lib/types/sprocke
 export type RemoteMcpServer = FunctionReturnType<typeof api.mcpServers.listMine>[number];
 
 export const REMOTE_MCP_PREFIX = 'remote:';
+
+export function waitForMcpConnector(convex: ConvexReactClient, connectorId: string) {
+	return new Promise<RemoteMcpServer>((resolve, reject) => {
+		const watch = convex.watchQuery(api.mcpServers.listMine, {});
+
+		const check = () => {
+			try {
+				const server = watch
+					.localQueryResult()
+					?.find((server) => server.connectorId === connectorId);
+
+				if (server) {
+					unsubscribe();
+					resolve(server);
+				}
+			} catch (caught) {
+				unsubscribe();
+				reject(caught);
+			}
+		};
+
+		const unsubscribe = watch.onUpdate(check);
+		check();
+	});
+}
 
 export function remoteMcpConnector(server: RemoteMcpServer): McpConnector {
 	return {

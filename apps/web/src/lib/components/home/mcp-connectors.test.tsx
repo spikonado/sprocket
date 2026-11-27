@@ -5,6 +5,7 @@ import type { FunctionArgs } from 'convex/server';
 import { api } from '@convex/_generated/api';
 import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
 import type { McpConnector } from '$lib/types/sprocket';
+import { catalogConnector } from '$lib/connectors/catalog';
 import McpConnectors, { RequestedConnectorSetup, type McpApi } from './mcp-connectors';
 import type { RemoteMcpServer } from './mcp-connectors-client';
 import AgentQuestion from './agent-question';
@@ -373,3 +374,132 @@ it('reconnects a canonical remote ID requested by the agent', async () => {
 	);
 	expect(onAnswer).toHaveBeenCalledWith('connected');
 });
+
+it('connects a catalog entry in one click and keeps OAuth client input after the server syncs', async () => {
+	const entry = catalogConnector('linear');
+
+	if (!entry) throw new Error('Missing catalog entry.');
+	const convex = client();
+	const server = remoteServer({ connectorId: 'linear-2', catalogId: entry.id, url: entry.url });
+	const replace = vi.fn();
+	const close = vi.fn();
+	const open = vi.fn(() => ({ location: { replace }, close, opener: window }));
+	vi.stubGlobal('open', open);
+	vi.stubGlobal('sprocketDesktopBridge', undefined);
+
+	const addRemote = vi.fn(async () => {
+		expect(open).toHaveBeenCalledWith('about:blank', '_blank');
+
+		return server.connectorId;
+	});
+
+	convex.handleAction(api.mcpServers.add, addRemote);
+
+	const startOAuth = vi
+		.fn<
+			(
+				args: FunctionArgs<typeof api.mcpServers.startOAuth>
+			) => Promise<{ authorizationUrl: string }>
+		>()
+		.mockRejectedValueOnce(
+			new ConvexError({ code: 'client_required', message: 'Enter your client ID.' })
+		)
+		.mockResolvedValue({ authorizationUrl: 'https://auth.linear.test/authorize' });
+
+	convex.handleAction(api.mcpServers.startOAuth, startOAuth);
+
+	render(
+		<ConvexTestProvider client={convex}>
+			<McpConnectors userId="user-a" localApi={null} />
+		</ConvexTestProvider>
+	);
+	fireEvent.click(screen.getByRole('button', { name: 'Browse connectors' }));
+	fireEvent.change(screen.getByRole('searchbox', { name: 'Search connectors' }), {
+		target: { value: entry.name }
+	});
+	fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+	await waitFor(() => expect(addRemote).toHaveBeenCalledTimes(1));
+	expect(startOAuth).not.toHaveBeenCalled();
+	await act(async () => convex.registerQuery(api.mcpServers.listMine, [server]));
+	expect(await screen.findByLabelText('Client ID')).toBeTruthy();
+	expect(addRemote).toHaveBeenCalledWith({ name: entry.name, url: entry.url, catalogId: entry.id });
+	expect(startOAuth).toHaveBeenCalledWith({ connectorId: server.connectorId });
+	expect(screen.getAllByText(entry.name)).toHaveLength(1);
+	fireEvent.change(screen.getByLabelText('Client ID'), { target: { value: 'my-client' } });
+	fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+	await waitFor(() => expect(replace).toHaveBeenCalledWith('https://auth.linear.test/authorize'));
+	expect(addRemote).toHaveBeenCalledTimes(1);
+
+	await act(async () =>
+		convex.registerQuery(api.mcpServers.listMine, [{ ...server, status: 'connected' }])
+	);
+	expect(screen.getByText('Connected')).toBeTruthy();
+	fireEvent.click(screen.getByRole('button', { name: 'Browse connectors' }));
+	expect(screen.getByText(entry.name)).toBeTruthy();
+});
+
+it.each(['oauth', 'none'] as const)(
+	'settles a catalog request after its %s connection completes',
+	async (auth) => {
+		const entry = catalogConnector('linear');
+
+		if (!entry) throw new Error('Missing catalog entry.');
+
+		const server = remoteServer({
+			connectorId: 'team-linear',
+			catalogId: entry.id,
+			url: entry.url,
+			auth,
+			status: auth === 'none' ? 'connected' : 'needs_auth'
+		});
+
+		const convex = client();
+		const onAnswer = vi.fn();
+
+		const addRemote = vi.fn(async () => server.connectorId);
+
+		convex.handleAction(api.mcpServers.add, addRemote);
+
+		const startOAuth = vi.fn(async () => ({
+			authorizationUrl: 'https://auth.linear.test/authorize'
+		}));
+
+		convex.handleAction(api.mcpServers.startOAuth, startOAuth);
+		vi.stubGlobal('sprocketDesktopBridge', { openExternal: vi.fn(async () => {}) });
+
+		render(
+			<ConvexTestProvider client={convex}>
+				<AgentQuestion
+					question="Connect Linear"
+					options={[{ id: 'connected', label: 'Connected' }]}
+					detail={{
+						type: 'connector',
+						reason: 'To file the bug',
+						connector: { type: 'known', id: entry.id }
+					}}
+					runEnded={false}
+					selectedOptionId={null}
+					onToggleOption={vi.fn()}
+					onAnswer={onAnswer}
+					connectorSetup={{ userId: 'user-a', localApi: null }}
+					disabled={false}
+				/>
+			</ConvexTestProvider>
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+		await waitFor(() => expect(addRemote).toHaveBeenCalledTimes(1));
+		await act(async () => convex.registerQuery(api.mcpServers.listMine, [server]));
+
+		if (auth === 'oauth') {
+			await waitFor(() =>
+				expect(startOAuth).toHaveBeenCalledWith({ connectorId: server.connectorId })
+			);
+			expect(onAnswer).not.toHaveBeenCalled();
+			await act(async () =>
+				convex.registerQuery(api.mcpServers.listMine, [{ ...server, status: 'connected' }])
+			);
+		}
+
+		await waitFor(() => expect(onAnswer).toHaveBeenCalledWith({ optionId: 'connected' }));
+	}
+);
