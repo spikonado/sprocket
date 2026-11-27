@@ -1,3 +1,4 @@
+pub mod agent_browser_shim;
 pub mod agent_launch;
 pub mod artifact_watch;
 pub mod browser;

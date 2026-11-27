@@ -8,6 +8,7 @@ use serde::Deserialize;
 use tokio::process::Command;
 use tokio::sync::Mutex;
 
+use crate::agent_browser_shim;
 use crate::tool_install::{
     Asset, INSTALL_LOCK, PinnedTool, acquire_lock, download_atomic, set_executable,
 };
@@ -25,6 +26,7 @@ pub(crate) struct BrowserInstaller {
     tool: PinnedTool,
     skill_data: Asset,
     chromium_lock: PathBuf,
+    shim_dir: PathBuf,
     ready: Mutex<bool>,
 }
 
@@ -39,6 +41,7 @@ impl BrowserInstaller {
         Ok(Self {
             skill_data: serde_json::from_str::<Releases>(RELEASES)?.skill_data,
             chromium_lock: data_dir.join("tools/agent-browser/chromium-install.lock"),
+            shim_dir: data_dir.join("tools/agent-browser/shim"),
             tool,
             ready: Mutex::new(false),
         })
@@ -47,13 +50,24 @@ impl BrowserInstaller {
     pub async fn ensure_ready(&self) -> anyhow::Result<PathBuf> {
         let mut ready = self.ready.lock().await;
         self.tool.ensure_installed().await?;
-        let cli = self.tool.bin_dir().join(CLI);
+        let cli = self.cli();
         if !*ready {
             self.ensure_skills().await?;
             self.ensure_chromium(&cli).await?;
+            if let Err(error) = agent_browser_shim::install(&self.shim_dir) {
+                tracing::warn!("agent-browser shim install failed: {error:#}");
+            }
             *ready = true;
         }
         Ok(cli)
+    }
+
+    pub fn cli(&self) -> PathBuf {
+        self.tool.bin_dir().join(CLI)
+    }
+
+    pub fn shim_dir(&self) -> PathBuf {
+        self.shim_dir.clone()
     }
 
     pub fn bin_dir(&self) -> PathBuf {

@@ -13,6 +13,7 @@ use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, watch};
 use tokio::task::JoinHandle;
 
+use crate::agent_browser_shim::REAL_CLI_ENV;
 use crate::browser_install::{AGENT_BROWSER_USE_SYSTEM_CA, BrowserInstaller};
 use crate::tool_install::prepend_path;
 
@@ -266,16 +267,13 @@ impl BrowserManager {
                     self.installer.skills_directory().into_os_string(),
                 ),
                 (AGENT_BROWSER_USE_SYSTEM_CA.into(), "1".into()),
-                (
-                    "AGENT_BROWSER_ARGS".into(),
-                    "--disable-blink-features=AutomationControlled".into(),
-                ),
+                (REAL_CLI_ENV.into(), self.installer.cli().into_os_string()),
                 (
                     "SPROCKET_BROWSER_PROFILE".into(),
                     self.signed_in_profile.clone().into_os_string(),
                 ),
             ],
-            [self.installer.bin_dir()],
+            [self.installer.shim_dir(), self.installer.bin_dir()],
         )
     }
 
