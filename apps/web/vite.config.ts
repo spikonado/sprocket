@@ -23,6 +23,17 @@ const posthogSourceMaps =
 			]
 		: [];
 
+// Worker builds inherit the main build's source maps. PostHog only uploads the main bundle's, and workers report no exceptions.
+const dropWorkerSourceMaps: Plugin = {
+	name: 'drop-worker-source-maps',
+	generateBundle(_options, bundle) {
+		for (const [fileName, output] of Object.entries(bundle)) {
+			if (fileName.endsWith('.map')) delete bundle[fileName];
+			else if (output.type === 'chunk') output.map = null;
+		}
+	}
+};
+
 // Matches the Rust server: the KiCanvas frame's opaque origin hides the bundle's errors unless it may read it.
 const kicanvasCors: Plugin = {
 	name: 'kicanvas-cors',
@@ -42,7 +53,7 @@ const bunGlobalStore = path.resolve(
 
 export default defineConfig({
 	publicDir: 'static',
-	worker: { format: 'es' },
+	worker: { format: 'es', plugins: () => [dropWorkerSourceMaps] },
 	build: {
 		assetsDir: IMMUTABLE_ASSETS_DIR
 	},
