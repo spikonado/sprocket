@@ -12,36 +12,33 @@ const MAX_URL_LENGTH = 2048;
 
 const MAX_REDIRECTS = 3;
 
-const MAX_TOKEN_LENGTH = 16_384;
+export const MAX_CLIENT_ID_LENGTH = 2048;
+
+export const MAX_SECRET_LENGTH = 16_384;
 
 // Older servers reject newer versions in `initialize`; the probe only needs their 401.
 const PROBE_PROTOCOL_VERSION = '2025-11-25';
 
-function sprocketSiteUrl(): string {
-	const site = env.CONVEX_SITE_URL.trim().replace(/\/+$/, '');
-
-	if (!site) throw new ConvexError('Connectors are not configured on this Sprocket deployment.');
-
-	return site;
-}
-
 export function cimdClientId(): string {
-	return `${sprocketSiteUrl()}${MCP_CLIENT_METADATA_PATH}`;
+	return `${env.CONVEX_SITE_URL}${MCP_CLIENT_METADATA_PATH}`;
 }
 
 export function callbackUrl(): string {
-	return `${sprocketSiteUrl()}${MCP_CALLBACK_PATH}`;
+	return `${env.CONVEX_SITE_URL}${MCP_CALLBACK_PATH}`;
 }
 
-export function clientMetadataDocument() {
+function clientRegistration() {
 	return {
-		client_id: cimdClientId(),
 		client_name: 'Sprocket',
 		redirect_uris: [callbackUrl()],
 		grant_types: ['authorization_code', 'refresh_token'],
 		response_types: ['code'],
 		token_endpoint_auth_method: 'none'
 	};
+}
+
+export function clientMetadataDocument() {
+	return { client_id: cimdClientId(), ...clientRegistration() };
 }
 
 function isPrivateIpv4(hostname: string): boolean {
@@ -113,7 +110,7 @@ async function fetchPublic(url: URL, init: RequestInit = {}): Promise<Response> 
 			response = await providerFetch(publicHttpsUrl(target.href), { ...init, redirect: 'manual' });
 		} catch (error) {
 			if (error instanceof ConvexError) throw error;
-			throw new ConvexError(`Couldn’t reach ${target.origin}.`);
+			throw new ConvexError(`Couldn't reach ${target.origin}.`);
 		}
 
 		const location = response.headers.get('location');
@@ -165,7 +162,7 @@ const protectedResourceSchema = z.object({
 	scopes_supported: z.array(z.string()).optional()
 });
 
-export type ProtectedResource = {
+type ProtectedResource = {
 	resource: string;
 	authorizationServer: string;
 	scope?: string;
@@ -263,17 +260,10 @@ export type AuthorizationServer = z.infer<typeof authorizationServerSchema>;
 function authorizationServerMetadataUrls(issuer: URL): URL[] {
 	const path = issuer.pathname.replace(/\/+$/, '');
 
-	if (!path) {
-		return [
-			new URL('/.well-known/oauth-authorization-server', issuer.origin),
-			new URL('/.well-known/openid-configuration', issuer.origin)
-		];
-	}
-
 	return [
 		new URL(`/.well-known/oauth-authorization-server${path}`, issuer.origin),
 		new URL(`/.well-known/openid-configuration${path}`, issuer.origin),
-		new URL(`${path}/.well-known/openid-configuration`, issuer.origin)
+		...(path ? [new URL(`${path}/.well-known/openid-configuration`, issuer.origin)] : [])
 	];
 }
 
@@ -294,43 +284,36 @@ export async function discoverAuthorizationServer(issuer: string): Promise<Autho
 		return metadata;
 	}
 
-	throw new ConvexError(`Couldn’t find the OAuth metadata of ${issuer}.`);
+	throw new ConvexError(`Couldn't find the OAuth metadata of ${issuer}.`);
 }
 
 export function secretAuthMethod(server: AuthorizationServer): TokenEndpointAuthMethod {
 	const supported = server.token_endpoint_auth_methods_supported;
 
-	return !supported || supported.includes('client_secret_basic')
-		? 'client_secret_basic'
-		: supported.includes('client_secret_post')
-			? 'client_secret_post'
-			: 'client_secret_basic';
+	return supported?.includes('client_secret_post') && !supported.includes('client_secret_basic')
+		? 'client_secret_post'
+		: 'client_secret_basic';
 }
 
 const registeredClientSchema = z.object({
-	client_id: z.string().min(1).max(MAX_URL_LENGTH),
-	client_secret: z.string().min(1).max(MAX_TOKEN_LENGTH).optional(),
+	client_id: z.string().min(1).max(MAX_CLIENT_ID_LENGTH),
+	client_secret: z.string().min(1).max(MAX_SECRET_LENGTH).optional(),
 	token_endpoint_auth_method: z.string().optional()
 });
 
-export async function registerClient(registrationEndpoint: string): Promise<{
+export type OAuthClient = {
 	clientId: string;
 	clientSecret?: string;
 	tokenEndpointAuthMethod: TokenEndpointAuthMethod;
-}> {
+};
+
+export async function registerClient(registrationEndpoint: string): Promise<OAuthClient> {
 	const url = publicHttpsUrl(registrationEndpoint);
 
 	const response = await fetchPublic(url, {
 		method: 'POST',
 		headers: { accept: 'application/json', 'content-type': 'application/json' },
-		body: JSON.stringify({
-			client_name: 'Sprocket',
-			redirect_uris: [callbackUrl()],
-			grant_types: ['authorization_code', 'refresh_token'],
-			response_types: ['code'],
-			token_endpoint_auth_method: 'none',
-			application_type: 'web'
-		})
+		body: JSON.stringify({ ...clientRegistration(), application_type: 'web' })
 	});
 
 	if (!response.ok) {
@@ -371,26 +354,20 @@ export async function codeChallenge(verifier: string): Promise<string> {
 	return base64Url(new Uint8Array(digest));
 }
 
-export type OAuthClient = {
-	clientId: string;
-	clientSecret?: string;
-	tokenEndpointAuthMethod: TokenEndpointAuthMethod;
-};
-
 const tokenResponseSchema = z.object({
-	access_token: z.string().min(1).max(MAX_TOKEN_LENGTH),
+	access_token: z.string().min(1).max(MAX_SECRET_LENGTH),
 	token_type: z
 		.string()
 		.refine((type) => type.toLowerCase() === 'bearer')
 		.optional(),
 	expires_in: z.number().positive().optional(),
-	refresh_token: z.string().min(1).max(MAX_TOKEN_LENGTH).optional(),
+	refresh_token: z.string().min(1).max(MAX_SECRET_LENGTH).optional(),
 	scope: z.string().optional()
 });
 
 const tokenErrorSchema = z.object({ error: z.string() });
 
-export type TokenResult =
+type TokenResult =
 	| { kind: 'tokens'; tokens: z.infer<typeof tokenResponseSchema> }
 	| { kind: 'error'; error: string };
 
@@ -438,5 +415,5 @@ export async function requestTokens(
 	}
 
 	await discard(response);
-	throw new ConvexError(`${url.origin} couldn’t issue a token. Try again in a moment.`);
+	throw new ConvexError(`${url.origin} couldn't issue a token. Try again in a moment.`);
 }

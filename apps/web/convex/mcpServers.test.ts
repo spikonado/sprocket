@@ -68,7 +68,11 @@ function oauthServer(
 	return { handler, registrations: () => registrations };
 }
 
-async function seedServer(t: ConvexTestInstance, connectorId: string) {
+async function seedServer(
+	t: ConvexTestInstance,
+	connectorId: string,
+	status: 'needs_auth' | 'connected' = 'needs_auth'
+) {
 	await t.run((ctx) =>
 		ctx.db.insert('mcpServers', {
 			userId: USER,
@@ -77,7 +81,7 @@ async function seedServer(t: ConvexTestInstance, connectorId: string) {
 			url: SERVER_URL,
 			auth: 'oauth',
 			headerNames: [],
-			status: 'needs_auth'
+			status
 		})
 	);
 }
@@ -194,11 +198,7 @@ describe('remote MCP servers', () => {
 			const vault = stubVault(oauthServer({}, onToken).handler);
 			const t = initConvexTest();
 			const asUser = t.withIdentity({ subject: USER });
-			await seedServer(t, 'linear');
-			await t.run(async (ctx) => {
-				const server = await ctx.db.query('mcpServers').unique();
-				await ctx.db.patch('mcpServers', server!._id, { status: 'connected' });
-			});
+			await seedServer(t, 'linear', 'connected');
 			await asUser.mutation(api.machines.registerProcess, { ...machine, processId: 'process-a' });
 			const name = await credentialName('sprocket-mcp-', `${USER}/linear`);
 

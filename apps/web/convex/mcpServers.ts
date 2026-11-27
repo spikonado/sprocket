@@ -22,6 +22,8 @@ import {
 	codeChallenge,
 	discoverAuthorizationServer,
 	discoverProtectedResource,
+	MAX_CLIENT_ID_LENGTH,
+	MAX_SECRET_LENGTH,
 	publicHttpsUrl,
 	randomToken,
 	registerClient,
@@ -30,13 +32,7 @@ import {
 	type AuthorizationServer,
 	type OAuthClient
 } from '@convex/lib/mcpOAuth';
-import {
-	tokenEndpointAuthMethods,
-	vMcpServerAuth,
-	vMcpServerStatus,
-	vMcpToolPolicy,
-	vTokenEndpointAuthMethod
-} from '@convex/lib/validators';
+import { tokenEndpointAuthMethods, vMcpToolPolicy } from '@convex/lib/validators';
 import {
 	credentialName,
 	deleteVaultObject,
@@ -45,6 +41,7 @@ import {
 	writeVaultObjectIfUnchanged,
 	type VaultObject
 } from '@convex/lib/workosVault';
+import schema from '@convex/schema';
 
 const MAX_SERVERS = 50;
 
@@ -57,10 +54,6 @@ const MAX_TOOL_NAME_LENGTH = 256;
 const MAX_HEADERS = 20;
 
 const MAX_HEADER_VALUE_LENGTH = 8192;
-
-const MAX_CLIENT_ID_LENGTH = 2048;
-
-const MAX_CLIENT_SECRET_LENGTH = 1024;
 
 const OAUTH_STATE_TTL_MS = 10 * 60_000;
 
@@ -86,10 +79,10 @@ const oauthCredentialSchema = z.object({
 
 type OAuthCredential = z.infer<typeof oauthCredentialSchema>;
 
-const credentialSchema = z.discriminatedUnion('type', [
-	oauthCredentialSchema,
-	z.object({ type: z.literal('headers'), headers: z.record(z.string(), z.string()) })
-]);
+const headersCredentialSchema = z.object({
+	type: z.literal('headers'),
+	headers: z.record(z.string(), z.string())
+});
 
 const storedClientSchema = z.object({
 	issuer: z.string(),
@@ -143,21 +136,12 @@ function serverPolicies(ctx: QueryCtx | MutationCtx, userId: string, connectorId
 		);
 }
 
-const vPolicyEntry = v.object({ tool: v.string(), policy: vMcpToolPolicy });
-
 export const listMine = query({
 	args: {},
 	returns: v.array(
-		v.object({
-			connectorId: v.string(),
-			name: v.string(),
-			url: v.string(),
-			catalogId: v.optional(v.string()),
-			auth: vMcpServerAuth,
-			headerNames: v.array(v.string()),
-			status: vMcpServerStatus,
+		schema.tables.mcpServers.validator.omit('userId').extend({
 			createdAt: v.number(),
-			policies: v.array(vPolicyEntry)
+			policies: v.array(schema.tables.mcpToolPolicies.validator.pick('tool', 'policy'))
 		})
 	),
 	handler: async (ctx) => {
@@ -197,15 +181,7 @@ function connectorSlug(name: string): string {
 }
 
 export const insertServer = internalMutation({
-	args: {
-		userId: v.string(),
-		name: v.string(),
-		url: v.string(),
-		catalogId: v.optional(v.string()),
-		auth: vMcpServerAuth,
-		headerNames: v.array(v.string()),
-		status: vMcpServerStatus
-	},
+	args: schema.tables.mcpServers.validator.omit('connectorId').fields,
 	returns: v.string(),
 	handler: async (ctx, args) => {
 		const existing = await ctx.db
@@ -375,12 +351,7 @@ export const getSharedClient = internalQuery({
 });
 
 export const saveSharedClient = internalMutation({
-	args: {
-		issuer: v.string(),
-		clientId: v.string(),
-		clientVaultName: v.optional(v.string()),
-		tokenEndpointAuthMethod: vTokenEndpointAuthMethod
-	},
+	args: schema.tables.mcpOAuthClients.validator.fields,
 	handler: async (ctx, args) => {
 		const winner = await ctx.db
 			.query('mcpOAuthClients')
@@ -406,11 +377,9 @@ function sharedClient(row: Doc<'mcpOAuthClients'>): SelectedClient {
 
 async function registerSharedClient(
 	ctx: ActionCtx,
-	authorizationServer: AuthorizationServer,
+	issuer: string,
 	registrationEndpoint: string
 ): Promise<SelectedClient> {
-	const { issuer } = authorizationServer;
-
 	const existing: Doc<'mcpOAuthClients'> | null = await ctx.runQuery(
 		internal.mcpServers.getSharedClient,
 		{ issuer }
@@ -446,7 +415,6 @@ async function registerSharedClient(
 	return sharedClient(winner);
 }
 
-/** MCP client registration order: pasted client, then CIMD, then DCR. */
 async function selectClient(
 	ctx: ActionCtx,
 	server: Doc<'mcpServers'>,
@@ -465,7 +433,7 @@ async function selectClient(
 			throw new ConvexError('Enter a valid client ID.');
 		}
 
-		if (clientSecret && clientSecret.length > MAX_CLIENT_SECRET_LENGTH) {
+		if (clientSecret && clientSecret.length > MAX_SECRET_LENGTH) {
 			throw new ConvexError('Enter a valid client secret.');
 		}
 
@@ -494,11 +462,7 @@ async function selectClient(
 	}
 
 	if (authorizationServer.registration_endpoint) {
-		return await registerSharedClient(
-			ctx,
-			authorizationServer,
-			authorizationServer.registration_endpoint
-		);
+		return await registerSharedClient(ctx, issuer, authorizationServer.registration_endpoint);
 	}
 
 	throw new ConvexError({
@@ -507,24 +471,8 @@ async function selectClient(
 	});
 }
 
-const vOAuthState = {
-	state: v.string(),
-	userId: v.string(),
-	connectorId: v.string(),
-	codeVerifier: v.string(),
-	clientId: v.string(),
-	clientVaultName: v.optional(v.string()),
-	tokenEndpointAuthMethod: vTokenEndpointAuthMethod,
-	issuer: v.string(),
-	issuerParameterRequired: v.boolean(),
-	tokenEndpoint: v.string(),
-	resource: v.string(),
-	redirectUri: v.string(),
-	expiresAt: v.number()
-};
-
 export const insertOAuthState = internalMutation({
-	args: vOAuthState,
+	args: schema.tables.mcpOAuthStates.validator.fields,
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const stateId = await ctx.db.insert('mcpOAuthStates', args);
@@ -768,7 +716,7 @@ export const oauthCallback = httpAction(async (ctx, request) => {
 	} catch (error) {
 		const reason = error instanceof ConvexError ? ` ${String(error.data)}` : '';
 
-		return callbackPage(502, `Couldn’t connect ${serverName}.${reason}`);
+		return callbackPage(502, `Couldn't connect ${serverName}.${reason}`);
 	}
 
 	return callbackPage(200, `${serverName} is connected. You can close this window.`);
@@ -870,7 +818,7 @@ async function freshOAuthCredential(
 		throw needsAuthError(server);
 	}
 
-	throw new ConvexError(`Couldn’t refresh the token of ${server.name}. Try again in a moment.`);
+	throw new ConvexError(`Couldn't refresh the token of ${server.name}. Try again in a moment.`);
 }
 
 export const issueCredential = action({
@@ -906,12 +854,11 @@ export const issueCredential = action({
 
 		const name = await credentialVaultName(server.userId, server.connectorId);
 		const object = await readVaultObject(name);
-		const credential = object && parseVaultJson(object, credentialSchema);
 
-		if (credential?.type !== 'headers') {
+		if (!object) {
 			throw new ConvexError(`${server.name} has no saved headers. Add it again.`);
 		}
 
-		return { headers: credential.headers };
+		return { headers: parseVaultJson(object, headersCredentialSchema).headers };
 	}
 });
