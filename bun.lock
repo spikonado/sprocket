@@ -12,6 +12,7 @@
         "concurrently": "^10.0.0",
         "convex": "catalog:",
         "oxlint": "1.93.0",
+        "tldts": "7.4.19",
         "vercel": "catalog:",
         "workos": "catalog:",
         "wrangler": "^4.164.0",
