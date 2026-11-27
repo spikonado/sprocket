@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use futures::future::BoxFuture;
-use rig::tool::ToolExecutionError;
+use rig::tool::{Tool, ToolExecutionError};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -10,8 +10,8 @@ use super::async_tools::{YieldMode, default_yield_ms, is_default_yield_ms};
 use super::context::{AgentToolContext, cancelled_read, tool_error, tool_failure};
 use super::job::{execute_serialized_tool_job, execute_tool_job_with_id};
 use super::questions::{
-    AskQuestionOption, MAX_QUESTION_CHARS, NewQuestion, QuestionSnapshot, ask_and_observe,
-    ask_and_settle, with_question_waits,
+    MAX_QUESTION_CHARS, NewQuestion, QuestionSnapshot, ask_and_observe, ask_and_settle,
+    with_question_waits,
 };
 use crate::secret_redaction::redact_secrets;
 use crate::services::{
@@ -23,7 +23,6 @@ const DEFAULT_SEARCH_LIMIT: usize = 10;
 const MAX_SEARCH_LIMIT: usize = 25;
 const MAX_DESCRIBE_PATHS: usize = 20;
 const MAX_APPROVAL_ARGUMENTS_CHARS: usize = 4000;
-const CONNECTED_OPTION_ID: &str = "connected";
 
 #[derive(Clone)]
 pub(crate) struct ServiceSearchTool(pub(super) AgentToolContext);
@@ -139,6 +138,38 @@ fn service_hub(context: &AgentToolContext) -> Result<SharedServiceHub, ToolExecu
         .service_hub
         .clone()
         .ok_or_else(|| tool_failure("Connectors aren't available in this run."))
+}
+
+// Convex rejects object keys that start with `$` or `_`, such as `$schema` and `_meta`, so jobs
+// store MCP arguments, schemas and content as JSON strings.
+pub(super) fn encode_stored_payload(kind: &str, payload: &mut Value) {
+    if kind == ServiceCallTool::NAME {
+        stringify_field(payload, "arguments");
+    }
+}
+
+pub(super) fn encode_stored_result(kind: &str, result: &mut Value) {
+    match kind {
+        ServiceDescribeTool::NAME => {
+            if let Some(tools) = result.get_mut("tools").and_then(Value::as_array_mut) {
+                for tool in tools {
+                    stringify_field(tool, "inputSchema");
+                    stringify_field(tool, "outputSchema");
+                }
+            }
+        }
+        ServiceCallTool::NAME => {
+            stringify_field(result, "content");
+            stringify_field(result, "structuredContent");
+        }
+        _ => {}
+    }
+}
+
+fn stringify_field(object: &mut Value, key: &str) {
+    if let Some(value) = object.get_mut(key) {
+        *value = Value::String(value.to_string());
+    }
 }
 
 impl rig::tool::Tool for ServiceSearchTool {
@@ -312,20 +343,6 @@ enum Approval {
     Denied { text: Option<String> },
 }
 
-fn approval_options() -> Vec<AskQuestionOption> {
-    [
-        ("allow", "Allow once"),
-        ("always", "Always allow"),
-        ("deny", "Deny"),
-    ]
-    .into_iter()
-    .map(|(id, label)| AskQuestionOption {
-        id: id.to_string(),
-        label: label.to_string(),
-    })
-    .collect()
-}
-
 async fn ask_approval(
     context: &AgentToolContext,
     job_id: &str,
@@ -340,7 +357,7 @@ async fn ask_approval(
         "arguments": truncate_chars(&arguments, MAX_APPROVAL_ARGUMENTS_CHARS),
     });
     let question = format!("Allow {} to run {}?", tool.connector, tool.tool);
-    let question = blocking_question(&question, approval_options(), detail);
+    let question = blocking_question(&question, detail);
     let snapshot = ask_and_settle(context, job_id, &question).await?;
     approval_from_snapshot(&snapshot)
 }
@@ -367,14 +384,11 @@ fn approval_from_snapshot(snapshot: &QuestionSnapshot) -> Result<Approval, ToolE
     }
 }
 
-fn blocking_question(
-    question: &str,
-    options: Vec<AskQuestionOption>,
-    detail: Value,
-) -> NewQuestion {
+/// Convex gives questions with a `detail` that kind's fixed options.
+fn blocking_question(question: &str, detail: Value) -> NewQuestion {
     NewQuestion {
         question: truncate_chars(question, MAX_QUESTION_CHARS),
-        options,
+        options: Vec::new(),
         timeout_ms: None,
         detail: Some(detail),
     }
@@ -404,7 +418,7 @@ impl Elicitor for QuestionElicitor {
                 "connector": self.connector,
                 "fields": form.fields,
             });
-            let question = blocking_question(&question, Vec::new(), detail);
+            let question = blocking_question(&question, detail);
             match ask_and_settle(&self.context, &self.job_id, &question).await {
                 Ok(snapshot) => {
                     let (outcome, reply) = elicitation_from_snapshot(&snapshot);
@@ -525,10 +539,7 @@ fn prepare_connector_request(
     };
     Ok(NewQuestion {
         question: format!("Connect {name}?"),
-        options: vec![AskQuestionOption {
-            id: CONNECTED_OPTION_ID.to_string(),
-            label: "Connected".to_string(),
-        }],
+        options: Vec::new(),
         timeout_ms: args.timeout_ms,
         detail: Some(json!({ "type": "connector", "reason": reason, "connector": connector })),
     })

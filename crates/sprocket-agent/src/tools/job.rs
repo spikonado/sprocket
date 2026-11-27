@@ -300,6 +300,7 @@ where
     if kind != "scrape_url" {
         redact_json(&mut payload);
     }
+    super::services::encode_stored_payload(kind, &mut payload);
     let job_id = begin_executor_job(context, kind, assignment, payload).await?;
 
     let cancellation = WorkspaceCancellation::new();
@@ -344,6 +345,7 @@ async fn finish_job(
     let outcome = outcome.and_then(|output| {
         let mut stored = output.clone();
         redact_json(&mut stored);
+        super::services::encode_stored_result(kind, &mut stored);
         let result = Value::try_from(stored).map_err(tool_error)?;
         Ok((output, result))
     });
