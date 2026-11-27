@@ -76,6 +76,8 @@ pub(super) struct AgentToolContext {
     pub(super) subagent_polls: super::subagents::SubagentPolls,
     pub(super) subagent_models: Arc<Vec<crate::catalog::SubagentModelChoice>>,
     pub(super) subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
+    pub(super) service_hub: Option<crate::services::SharedServiceHub>,
+    pub(super) can_ask_user: bool,
     pub(super) posthog_session_id: Option<String>,
 }
 

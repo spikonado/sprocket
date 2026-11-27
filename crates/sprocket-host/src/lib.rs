@@ -20,6 +20,8 @@ pub mod kicad_scenes;
 pub mod lifetime;
 pub mod machine_identity;
 pub mod machines;
+mod mcp_client;
+pub mod mcp_store;
 pub mod muse_cli;
 pub mod native_auth;
 mod node_install;
@@ -29,6 +31,7 @@ pub mod project_attachments;
 mod python_install;
 pub mod run_recovery;
 mod sealed_file;
+pub mod service_hub;
 mod subagent_launcher;
 mod tool_install;
 pub mod transcript_client;
@@ -58,6 +61,7 @@ use crate::kicad_scenes::KiCadScenes;
 use crate::lifetime::HostLifetime;
 use crate::machine_identity::MachineIdentity;
 use crate::machines::MachineManager;
+use crate::mcp_store::McpStore;
 use crate::muse_cli::MuseCli;
 use crate::native_auth::{BrowserSessions, NativeAuthManager};
 use crate::package_update::PackageUpdateManager;
@@ -118,6 +122,7 @@ pub struct Host {
     pub browsers: Arc<BrowserManager>,
     pub kicad: Arc<KiCadConnector>,
     pub kicad_scenes: Arc<KiCadScenes>,
+    pub mcp: Arc<McpStore>,
     pub claude_code_cli: Arc<ClaudeCodeCli>,
     pub claude_code: sprocket_agent::ClaudeCode,
     pub muse_cli: Arc<MuseCli>,
@@ -191,6 +196,7 @@ impl Host {
             browsers: BrowserManager::new(data_dir.to_path_buf())?,
             kicad: Arc::new(KiCadConnector::new(data_dir, Arc::clone(&python))?),
             kicad_scenes: Arc::default(),
+            mcp: Arc::new(McpStore::new(data_dir, sealed_file::os_key_store())),
             claude_code: sprocket_agent::ClaudeCode::new(
                 Arc::clone(&claude_code_cli) as _,
                 data_dir.join("claude-code"),
@@ -247,14 +253,24 @@ impl Host {
 
     /// One line per installed connector, for the agent's workspace instructions.
     pub fn installed_connectors(&self) -> Vec<String> {
-        [
+        let mut connectors: Vec<_> = [
             self.github.installed(),
             self.vercel.installed(),
             self.kicad.installed(),
         ]
         .into_iter()
         .flatten()
-        .collect()
+        .collect();
+        match self.mcp.list() {
+            Ok(servers) => connectors.extend(servers.into_iter().map(|server| {
+                format!(
+                    "{} connector (MCP server; find its tools with service_search)",
+                    server.connector.name
+                )
+            })),
+            Err(error) => tracing::warn!("couldn't list MCP connectors: {error:#}"),
+        }
+        connectors
     }
 
     #[cfg(any(test, feature = "test-support"))]

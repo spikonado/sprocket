@@ -6,7 +6,7 @@ fn snapshot(question_id: &str, status: &str) -> QuestionSnapshot {
         status: status.to_string(),
         answer: (status == "answered").then(|| QuestionAnswer {
             option_id: Some("safe".to_string()),
-            text: None,
+            ..QuestionAnswer::default()
         }),
     }
 }
@@ -193,7 +193,7 @@ async fn pending_updates_keep_waiting_until_answer() {
     let wait = wait_for_question_updates(
         &mut rx,
         &initial,
-        Instant::now() + Duration::from_secs(10),
+        Some(Instant::now() + Duration::from_secs(10)),
         || async {
             panic!("answer should end wait before deadline");
         },
@@ -207,7 +207,8 @@ async fn pending_updates_keep_waiting_until_answer() {
     tokio::time::advance(Duration::from_secs(2)).await;
     tx.unbounded_send(Ok(Some(snapshot("q1", "answered"))))
         .unwrap();
-    assert_eq!(wait.await.unwrap()["answer"]["optionId"], "safe");
+    let answer = wait.await.unwrap().answer.unwrap();
+    assert_eq!(answer.option_id.as_deref(), Some("safe"));
 }
 
 #[tokio::test(start_paused = true)]
@@ -218,11 +219,11 @@ async fn wait_deadline_performs_an_authoritative_read() {
         let result = wait_for_question_updates(
             &mut updates,
             &initial,
-            Instant::now() + Duration::from_millis(5),
+            Some(Instant::now() + Duration::from_millis(5)),
             || async { Ok(snapshot("q1", status)) },
         )
         .await
         .unwrap();
-        assert_eq!(result["status"], status);
+        assert_eq!(result.status, status);
     }
 }

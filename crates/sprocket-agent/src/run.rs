@@ -993,6 +993,7 @@ pub async fn run_agent(
                     gateway_url: gateway_url.clone(),
                     subagent_models: Arc::new(subagent_models),
                     subagent_launcher: request.subagent_launcher.clone(),
+                    service_hub: request.service_hub.clone(),
                     transcript_store: request.transcript_store.clone(),
                     posthog_session_id: posthog_session_id.clone(),
                 },

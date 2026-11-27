@@ -235,6 +235,7 @@ async fn launch_agent_inner(
         subagent_launcher: Some(crate::subagent_launcher::launcher(&host)),
         transcript_store: Some(Arc::clone(&host.transcript)),
         installed_connectors: host.installed_connectors(),
+        service_hub: Some(crate::service_hub::service_hub(&host)),
     };
 
     let cleanup_request = request.clone();

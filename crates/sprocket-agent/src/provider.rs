@@ -272,8 +272,15 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) gateway_url: String,
     pub(crate) subagent_models: Arc<Vec<crate::catalog::SubagentModelChoice>>,
     pub(crate) subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
+    pub(crate) service_hub: Option<crate::services::SharedServiceHub>,
     pub(crate) transcript_store: Option<Arc<sprocket_transcript::TranscriptStore>>,
     pub(crate) posthog_session_id: Option<String>,
+}
+
+impl AgentProviderRequest {
+    pub(crate) fn offers_questions(&self) -> bool {
+        self.allow_interaction || self.is_child
+    }
 }
 
 pub(crate) enum AgentProviderResult {
@@ -787,14 +794,20 @@ async fn run_with_completion_model(
         .tool(tools.poll_subagent)
         .tool(tools.list_threads)
         .tool(tools.download_threads)
-        .tool(tools.set_cwd);
+        .tool(tools.set_cwd)
+        .tool(tools.service_search)
+        .tool(tools.service_describe)
+        .tool(tools.service_call);
     let agent = if offer_github_tools {
         agent.tool(tools.link_prs).tool(tools.poll_pr)
     } else {
         agent
     };
-    let agent = if request.allow_interaction || request.is_child {
-        agent.tool(tools.ask_question).tool(tools.poll_question)
+    let agent = if request.offers_questions() {
+        agent
+            .tool(tools.ask_question)
+            .tool(tools.poll_question)
+            .tool(tools.request_connector)
     } else {
         agent
     };

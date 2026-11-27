@@ -16,6 +16,7 @@ mod pdf_pages;
 mod pull_requests;
 mod questions;
 mod scrape_files;
+mod services;
 mod skills;
 mod subagents;
 mod threads;
@@ -35,6 +36,9 @@ use self::patch::ApplyPatchTool;
 use self::payments::{CardCheckoutTool, PollCheckoutTool, ReportOrderTool};
 use self::pull_requests::{LinkPrsTool, PollPrTool};
 use self::questions::{AskQuestionTool, PollQuestionTool};
+use self::services::{
+    RequestConnectorTool, ServiceCallTool, ServiceDescribeTool, ServiceSearchTool,
+};
 use self::skills::ReadSkillTool;
 use self::subagents::{ControlSubagentTool, PollSubagentTool, SpawnSubagentTool};
 use self::threads::{DownloadThreadsTool, ListThreadsTool};
@@ -67,8 +71,12 @@ pub(crate) const AGENT_TOOLS: &[(&str, NormalizeToolArgs)] = &[
     agent_tool::<PollSubagentTool>(),
     agent_tool::<ReadSkillTool>(),
     agent_tool::<ReportOrderTool>(),
+    agent_tool::<RequestConnectorTool>(),
     agent_tool::<SaveArtifactTool>(),
     agent_tool::<ScrapeUrlTool>(),
+    agent_tool::<ServiceCallTool>(),
+    agent_tool::<ServiceDescribeTool>(),
+    agent_tool::<ServiceSearchTool>(),
     agent_tool::<SetCwdTool>(),
     agent_tool::<SpawnSubagentTool>(),
     agent_tool::<WebSearchTool>(),
@@ -119,6 +127,10 @@ pub(crate) struct AgentToolSet {
     pub(crate) card_checkout: CardCheckoutTool,
     pub(crate) poll_checkout: PollCheckoutTool,
     pub(crate) report_order: ReportOrderTool,
+    pub(crate) service_search: ServiceSearchTool,
+    pub(crate) service_describe: ServiceDescribeTool,
+    pub(crate) service_call: ServiceCallTool,
+    pub(crate) request_connector: RequestConnectorTool,
 }
 
 pub(crate) async fn hydrate_tool_history(
@@ -212,6 +224,8 @@ pub(crate) fn agent_tools(
         subagent_polls: subagents::SubagentPolls::default(),
         subagent_models: request.subagent_models.clone(),
         subagent_launcher: request.subagent_launcher.clone(),
+        service_hub: request.service_hub.clone(),
+        can_ask_user: request.allow_interaction,
         posthog_session_id: request.posthog_session_id.clone(),
     };
     AgentToolSet {
@@ -255,6 +269,10 @@ pub(crate) fn agent_tools(
         cwd: context.cwd.clone(),
         card_checkout: CardCheckoutTool(context.clone()),
         poll_checkout: PollCheckoutTool(context.clone()),
+        service_search: ServiceSearchTool(context.clone()),
+        service_describe: ServiceDescribeTool(context.clone()),
+        service_call: ServiceCallTool(context.clone()),
+        request_connector: RequestConnectorTool(context.clone()),
         report_order: ReportOrderTool(context),
     }
 }

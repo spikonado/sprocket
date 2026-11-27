@@ -26,8 +26,10 @@ keyring.workspace = true
 # Unused directly. fff-notify-debouncer-full 0.9.4 fails to build against notify 9.0.0-rc.9.
 notify = "=9.0.0-rc.7"
 portable-pty = "0.9.0"
+process-wrap = { version = "10.0.2", features = ["tokio1"] }
 reqwest = { workspace = true, features = ["form", "rustls", "stream"] }
 ring.workspace = true
+rmcp.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sevenz-rust2 = { version = "0.24.2", default-features = false, features = ["util"] }
@@ -56,6 +58,7 @@ dwarfs = { version = "0.2.1", default-features = false, features = ["zstd"] }
 [target.'cfg(windows)'.dependencies]
 memmap2 = "0.9.12"
 nsis = "=0.6.1"
+windows = { version = "0.62.2", features = ["Win32_System_Threading"] }
 windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading"] }
 
 [dev-dependencies]

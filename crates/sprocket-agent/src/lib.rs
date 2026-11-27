@@ -21,6 +21,7 @@ mod responses_gateway;
 mod run;
 mod run_settings;
 mod secret_redaction;
+pub mod services;
 mod stream_recovery;
 pub mod subagents;
 mod submission;
