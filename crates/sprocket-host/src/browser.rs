@@ -267,10 +267,6 @@ impl BrowserManager {
                 ),
                 (AGENT_BROWSER_USE_SYSTEM_CA.into(), "1".into()),
                 (
-                    "AGENT_BROWSER_ARGS".into(),
-                    "--disable-blink-features=AutomationControlled".into(),
-                ),
-                (
                     "SPROCKET_BROWSER_PROFILE".into(),
                     self.signed_in_profile.clone().into_os_string(),
                 ),

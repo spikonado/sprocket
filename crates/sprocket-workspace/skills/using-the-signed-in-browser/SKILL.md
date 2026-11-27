@@ -20,12 +20,12 @@ agent-browser --session sprocket-signed-in get cdp-url
 When it reports `Browser not launched`, start the browser headless. This also prints the URL:
 
 ```bash
-agent-browser --session sprocket-signed-in --profile "$SPROCKET_BROWSER_PROFILE" batch --bail "tab list" "get cdp-url"
+agent-browser --session sprocket-signed-in --profile "$SPROCKET_BROWSER_PROFILE" --args "--disable-blink-features=AutomationControlled" batch --bail "tab list" "get cdp-url"
 ```
 
 When that reports `Daemon failed to start`, another agent started the browser at the same moment, so run the first command again.
 
-Launch flags on the `sprocket-signed-in` session relaunch Chrome and close every agent's tab. Pass them only in this launch command and in step 2's headed one. In PowerShell, use `$env:SPROCKET_BROWSER_PROFILE`, since an empty `--profile` also closes the browser.
+Launch flags on the `sprocket-signed-in` session relaunch Chrome and close every agent's tab. Pass them only in this launch command and in step 2's headed one, and keep `--args` in both: without it Chrome reports `navigator.webdriver`, and checkouts fail their risk checks. In PowerShell, use `$env:SPROCKET_BROWSER_PROFILE`, since an empty `--profile` also closes the browser.
 
 Open your own tab in it:
 
@@ -42,7 +42,7 @@ Done when: a snapshot of your tab shows the site.
 Sign in yourself when the user gave you credentials for the site. Whenever anything else blocks you, or you need the user to act in the page, switch the browser to headed, then open your tab again with the URL it prints:
 
 ```bash
-agent-browser --session sprocket-signed-in --profile "$SPROCKET_BROWSER_PROFILE" --headed batch --bail "tab list" "get cdp-url"
+agent-browser --session sprocket-signed-in --profile "$SPROCKET_BROWSER_PROFILE" --args "--disable-blink-features=AutomationControlled" --headed batch --bail "tab list" "get cdp-url"
 ```
 
 When the browser is already headed, this changes nothing. Leave it headed afterwards, since switching back closes every agent's tab again. When Chrome can't start headed because the machine has no display, attach again from step 1 and continue headless.
