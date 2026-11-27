@@ -1,3 +1,5 @@
+use std::io::Cursor;
+
 use super::*;
 
 async fn fixture_server(payload: &'static [u8]) -> (String, tokio::task::JoinHandle<()>) {
@@ -187,4 +189,68 @@ fn appends_after_the_users_path_and_moves_windows_store_aliases_last() {
         std::env::split_paths(&environment[0].1).collect::<Vec<_>>(),
         expected
     );
+}
+
+fn write_zip_with_uncompressed_sizes(path: &Path, sizes: &[u32]) {
+    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for index in 0..sizes.len() {
+        writer
+            .start_file(
+                format!("f{index}"),
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+    }
+    let mut data = writer.finish().unwrap().into_inner();
+    let eocd = data
+        .windows(4)
+        .rposition(|magic| magic == [0x50, 0x4b, 0x05, 0x06])
+        .unwrap();
+    let mut pos = u32::from_le_bytes(data[eocd + 16..eocd + 20].try_into().unwrap()) as usize;
+    for &size in sizes {
+        assert_eq!(&data[pos..pos + 4], b"PK\x01\x02");
+        let name_len = u16::from_le_bytes(data[pos + 28..pos + 30].try_into().unwrap()) as usize;
+        let extra_len = u16::from_le_bytes(data[pos + 30..pos + 32].try_into().unwrap()) as usize;
+        let comment_len = u16::from_le_bytes(data[pos + 32..pos + 34].try_into().unwrap()) as usize;
+        let local = u32::from_le_bytes(data[pos + 42..pos + 46].try_into().unwrap()) as usize;
+        assert_eq!(&data[local..local + 4], b"PK\x03\x04");
+        data[pos + 24..pos + 28].copy_from_slice(&size.to_le_bytes());
+        data[local + 22..local + 26].copy_from_slice(&size.to_le_bytes());
+        pos += 46 + name_len + extra_len + comment_len;
+    }
+    std::fs::write(path, data).unwrap();
+}
+
+fn zip_limit() -> u32 {
+    u32::try_from(MAX_ZIP_UNCOMPRESSED).unwrap()
+}
+
+#[test]
+fn opens_a_zip_at_the_uncompressed_size_limit() {
+    let directory = tempfile::tempdir().unwrap();
+    let archive = directory.path().join("tool.zip");
+    write_zip_with_uncompressed_sizes(&archive, &[zip_limit()]);
+
+    open_zip(&archive).unwrap();
+}
+
+#[test]
+fn rejects_a_zip_one_byte_over_the_uncompressed_size_limit() {
+    let directory = tempfile::tempdir().unwrap();
+    let archive = directory.path().join("tool.zip");
+    write_zip_with_uncompressed_sizes(&archive, &[zip_limit() + 1]);
+
+    let error = open_zip(&archive).unwrap_err().to_string();
+    assert!(error.contains("exceeds"));
+}
+
+#[test]
+fn rejects_a_zip_whose_entries_sum_over_the_uncompressed_size_limit() {
+    let directory = tempfile::tempdir().unwrap();
+    let archive = directory.path().join("tool.zip");
+    let half = zip_limit() / 2 + 1;
+    write_zip_with_uncompressed_sizes(&archive, &[half, half]);
+
+    let error = open_zip(&archive).unwrap_err().to_string();
+    assert!(error.contains("exceeds"));
 }

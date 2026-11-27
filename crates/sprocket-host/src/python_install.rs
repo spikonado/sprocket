@@ -8,7 +8,7 @@ use std::time::Duration;
 use anyhow::{Context, ensure};
 use tokio::sync::Mutex;
 
-use crate::tool_install::{PinnedTool, set_executable};
+use crate::tool_install::{PinnedTool, open_zip, set_executable};
 
 const PYTHON_VERSION: &str = "3.12";
 const PYTHON_INSTALL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -146,14 +146,16 @@ fn unpack_tar_gz(archive: &Path, bin: &Path) -> anyhow::Result<()> {
 }
 
 fn unpack_zip(archive: &Path, bin: &Path) -> anyhow::Result<()> {
-    let mut archive = zip::ZipArchive::new(File::open(archive)?)?;
+    let mut archive = open_zip(archive)?;
     for index in 0..archive.len() {
         let mut file = archive.by_index(index)?;
         if !file.is_file() {
             continue;
         }
-        let name = uv_executable(Path::new(&*file.name()?)).map(ToOwned::to_owned);
-        if let Some(name) = name {
+        let Some(path) = file.enclosed_name() else {
+            continue;
+        };
+        if let Some(name) = uv_executable(&path).map(ToOwned::to_owned) {
             std::io::copy(&mut file, &mut File::create(bin.join(name))?)?;
         }
     }

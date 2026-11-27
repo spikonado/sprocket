@@ -274,6 +274,20 @@ pub(crate) fn set_executable(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+const MAX_ZIP_UNCOMPRESSED: u128 = 256 * 1024 * 1024;
+
+pub(crate) fn open_zip(path: &Path) -> anyhow::Result<zip::ZipArchive<File>> {
+    let archive = zip::ZipArchive::new(File::open(path)?)?;
+    let size = archive
+        .decompressed_size()
+        .context("zip uncompressed size is unknown")?;
+    ensure!(
+        size <= MAX_ZIP_UNCOMPRESSED,
+        "zip uncompressed size {size} exceeds {MAX_ZIP_UNCOMPRESSED}"
+    );
+    Ok(archive)
+}
+
 pub(crate) fn open_lock_file(path: &Path) -> std::io::Result<File> {
     OpenOptions::new()
         .create(true)
