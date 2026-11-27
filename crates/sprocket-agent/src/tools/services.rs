@@ -66,15 +66,32 @@ pub(crate) struct CustomConnector {
     transport: McpTransport,
 }
 
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+#[schemars(inline)]
+pub(crate) enum ConnectorRequest {
+    Known(String),
+    Custom(CustomConnector),
+}
+
+// Derived untagged deserialization reports only "did not match any variant", which hides
+// which custom field is wrong.
+impl<'de> Deserialize<'de> for ConnectorRequest {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        match Value::deserialize(deserializer)? {
+            Value::String(id) => Ok(Self::Known(id)),
+            value => serde_json::from_value(value)
+                .map(Self::Custom)
+                .map_err(serde::de::Error::custom),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RequestConnectorArgs {
-    /// A connector ID, such as one service_search reports as not connected.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) connector: Option<String>,
-    /// An MCP server to add instead of a known connector.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) custom: Option<CustomConnector>,
+    /// A connector ID that service_search reports as not connected, or an MCP server to add.
+    pub(crate) connector: ConnectorRequest,
     #[serde(
         rename = "yieldTimeMs",
         default = "default_yield_ms",
@@ -336,7 +353,7 @@ impl rig::tool::Tool for RequestConnectorTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Ask the user to connect a service. Pass either a connector ID or a custom MCP server. Poll the result with poll_question; `connected` means its tools are now in service_search."
+        "Ask the user to connect a service. Poll the result with poll_question; `connected` means its tools are now in service_search."
             .to_string()
     }
 
@@ -374,8 +391,8 @@ fn prepare_connector_request(
     args: &RequestConnectorArgs,
     hub: &dyn ServiceHub,
 ) -> Result<NewQuestion, ToolExecutionError> {
-    let (name, connector) = match (&args.connector, &args.custom) {
-        (Some(id), None) => {
+    let (name, connector) = match &args.connector {
+        ConnectorRequest::Known(id) => {
             let name = hub.connector_name(id.trim()).ok_or_else(|| {
                 tool_failure(format!(
                     "Unknown connector '{id}'. Use an ID from service_search, or describe a custom MCP server."
@@ -383,7 +400,7 @@ fn prepare_connector_request(
             })?;
             (name, json!({ "type": "known", "id": id.trim() }))
         }
-        (None, Some(custom)) => {
+        ConnectorRequest::Custom(custom) => {
             let name = custom.name.trim();
             if name.is_empty() {
                 return Err(tool_failure("name cannot be empty"));
@@ -396,11 +413,6 @@ fn prepare_connector_request(
                 name.to_string(),
                 serde_json::to_value(custom).map_err(|e| tool_error(e.into()))?,
             )
-        }
-        _ => {
-            return Err(tool_failure(
-                "Pass exactly one of `connector` and `custom`.",
-            ));
         }
     };
     Ok(NewQuestion {

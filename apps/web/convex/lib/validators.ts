@@ -453,8 +453,7 @@ export const vServiceCallPayload = v.object({
 });
 
 export const vRequestConnectorPayload = v.object({
-	connector: v.optional(v.string()),
-	custom: v.optional(vCustomConnector),
+	connector: v.union(v.string(), vCustomConnector),
 	yieldTimeMs: v.optional(v.number()),
 	timeoutMs: v.optional(v.union(v.number(), v.null()))
 });

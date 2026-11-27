@@ -330,7 +330,7 @@ impl<'a> ToolDisplayInput<'a> {
             "request_connector" => field("connector")
                 .or_else(|| {
                     input
-                        .get("custom")
+                        .get("connector")
                         .and_then(|custom| string(custom, "name"))
                 })
                 .unwrap_or("Connector")

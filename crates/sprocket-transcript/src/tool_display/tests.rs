@@ -121,7 +121,7 @@ fn tool_labels_and_summaries() {
         ),
         (
             "request_connector",
-            json!({"custom": {"type": "http", "name": "Local issues", "url": "http://localhost/mcp"}}),
+            json!({"connector": {"type": "http", "name": "Local issues", "url": "http://localhost/mcp"}}),
             Some("Requested Connector"),
             "Local issues",
         ),

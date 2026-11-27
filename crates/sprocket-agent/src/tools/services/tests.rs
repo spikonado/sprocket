@@ -71,3 +71,16 @@ fn stored_service_jobs_have_no_keys_convex_rejects() {
         assert!(!has_reserved_convex_key(&value), "{value}");
     }
 }
+
+#[test]
+fn connector_requests_name_the_wrong_custom_field() {
+    let args: RequestConnectorArgs =
+        serde_json::from_value(json!({ "connector": "linear" })).unwrap();
+    assert!(matches!(args.connector, ConnectorRequest::Known(id) if id == "linear"));
+
+    let error = serde_json::from_value::<RequestConnectorArgs>(
+        json!({ "connector": { "name": "Local", "type": "stdio" } }),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("command"), "{error}");
+}
