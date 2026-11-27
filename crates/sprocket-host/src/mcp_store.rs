@@ -22,6 +22,15 @@ pub struct McpConnector {
     pub transport: McpTransport,
 }
 
+impl McpConnector {
+    pub(crate) fn prompt_line(&self) -> String {
+        format!(
+            "{} connector (MCP server; find its tools with service_search)",
+            self.name
+        )
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct McpServer {
     #[serde(flatten)]

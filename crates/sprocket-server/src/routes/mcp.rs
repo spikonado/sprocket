@@ -4,7 +4,8 @@ use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 use sprocket_agent::services::ToolPolicy;
 use sprocket_host::mcp_store::{McpConnector, NewMcpTransport};
-use sprocket_host::service_hub::{self, ServerTool};
+use sprocket_host::service_hub::{self, ConnectorSummary, ServerTool};
+use std::collections::BTreeMap;
 
 use crate::AppState;
 use crate::routes::api_error::ApiError;
@@ -65,18 +66,9 @@ pub fn routes() -> axum::Router<AppState> {
 
 async fn list(
     State(state): State<AppState>,
-    AuthorizedQuery(_): AuthorizedQuery<UserRequest>,
-) -> Result<Json<Vec<McpConnector>>, ApiError> {
-    let connectors = state
-        .host
-        .mcp
-        .run(|store| {
-            Ok(store
-                .list()?
-                .into_iter()
-                .map(|server| server.connector)
-                .collect())
-        })
+    AuthorizedQuery(payload): AuthorizedQuery<UserRequest>,
+) -> Result<Json<Vec<ConnectorSummary>>, ApiError> {
+    let connectors = service_hub::list_connectors(&state.host, &payload.user_id)
         .await
         .map_err(ApiError::internal)?;
     Ok(Json(connectors))
@@ -98,8 +90,22 @@ async fn add(
 async fn delete(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    AuthorizedJson(_): AuthorizedJson<UserRequest>,
+    AuthorizedJson(payload): AuthorizedJson<UserRequest>,
 ) -> Result<Json<()>, ApiError> {
+    if let Some(connector_id) = service_hub::remote_connector_id(&id) {
+        let _: serde_json::Value = state
+            .host
+            .convex_client_for(&payload.user_id)
+            .await
+            .map_err(ApiError::internal)?
+            .act(
+                "mcpServers:remove",
+                BTreeMap::from([("connectorId".into(), connector_id.to_owned().into())]),
+            )
+            .await
+            .map_err(ApiError::bad_request)?;
+        return Ok(Json(()));
+    }
     state
         .host
         .mcp
@@ -112,9 +118,9 @@ async fn delete(
 async fn tools(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    AuthorizedQuery(_): AuthorizedQuery<UserRequest>,
+    AuthorizedQuery(payload): AuthorizedQuery<UserRequest>,
 ) -> Result<Json<ToolsResponse>, ApiError> {
-    let tools = service_hub::list_server_tools(&state.host, &id)
+    let tools = service_hub::list_server_tools(&state.host, &payload.user_id, &id)
         .await
         .map_err(ApiError::bad_request)?;
     Ok(Json(ToolsResponse { tools }))
@@ -125,11 +131,14 @@ async fn set_policy(
     Path(id): Path<String>,
     AuthorizedJson(payload): AuthorizedJson<PolicyRequest>,
 ) -> Result<Json<()>, ApiError> {
-    state
-        .host
-        .mcp
-        .run(move |store| store.set_policy(&id, &payload.tool, payload.policy))
-        .await
-        .map_err(ApiError::bad_request)?;
+    service_hub::set_tool_policy(
+        &state.host,
+        &payload.user_id,
+        &id,
+        &payload.tool,
+        payload.policy,
+    )
+    .await
+    .map_err(ApiError::bad_request)?;
     Ok(Json(()))
 }
