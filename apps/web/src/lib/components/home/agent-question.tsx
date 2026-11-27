@@ -13,8 +13,6 @@ import { REMOTE_MCP_PREFIX } from './mcp-connectors-client';
 import type { ConnectorsApi } from './settings-connectors';
 import VercelConnector from './vercel-connector';
 
-export type QuestionAnswerInput = { optionId?: string; values?: QuestionValues };
-
 export type QuestionConnectorSetup = { userId: string; localApi: ConnectorsApi | null };
 
 type Props = {

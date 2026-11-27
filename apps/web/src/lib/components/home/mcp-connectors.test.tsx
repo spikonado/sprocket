@@ -355,7 +355,6 @@ it('reconnects a canonical remote ID requested by the agent', async () => {
 				options={[{ id: 'connected', label: 'Connected' }]}
 				detail={{
 					type: 'connector',
-					reason: 'To file the bug',
 					connector: { type: 'known', id: 'remote:linear' }
 				}}
 				runEnded={false}
@@ -363,7 +362,6 @@ it('reconnects a canonical remote ID requested by the agent', async () => {
 				onToggleOption={vi.fn()}
 				onAnswer={onAnswer}
 				connectorSetup={{ userId: 'user-a', localApi: null }}
-				disabled={false}
 			/>
 		</ConvexTestProvider>
 	);
@@ -373,5 +371,5 @@ it('reconnects a canonical remote ID requested by the agent', async () => {
 	await act(async () =>
 		convex.registerQuery(api.mcpServers.listMine, [{ ...server, status: 'connected' }])
 	);
-	expect(onAnswer).toHaveBeenCalledWith({ optionId: 'connected' });
+	expect(onAnswer).toHaveBeenCalledWith('connected');
 });

@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
@@ -10,9 +10,7 @@ use process_wrap::tokio::{ChildWrapper, CommandWrap, KillOnDrop};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use rmcp::model::{
     CallToolRequestParams, ClientCapabilities, ClientConfig, ClientJsonRpcMessage, ClientRequest,
-    ElicitRequestParams, ElicitResult, ElicitationAction, ElicitationCapability, ElicitationSchema,
-    ErrorCode, FormElicitationCapability, Implementation, ProtocolVersion, SubscriptionFilter,
-    Tool,
+    ErrorCode, Implementation, ProtocolVersion, SubscriptionFilter, Tool,
 };
 use rmcp::service::{
     ClientCacheConfig, ClientLifecycleMode, ClientServiceExt, RunningService, ServiceError,
@@ -26,11 +24,7 @@ use rmcp::transport::streamable_http_client::{
 use rmcp::transport::{IntoTransport, StreamableHttpClientTransport};
 use rmcp::{ClientHandler, RoleClient};
 use serde_json::Value;
-use sprocket_agent::services::{
-    ElicitationForm, ElicitationOutcome, Elicitor, FieldKind, FormField, JsonObject,
-    loopback_http_url, mcp_http_url,
-};
-use tokio_util::sync::CancellationToken;
+use sprocket_agent::services::{JsonObject, loopback_http_url, mcp_http_url};
 
 use crate::Host;
 use crate::mcp_store::{McpServer, McpTransport};
@@ -660,83 +654,7 @@ impl StreamableHttpClient for RemoteHttpClient {
     }
 }
 
-#[derive(Default)]
-struct Handler {
-    calls: Mutex<Vec<Arc<ActiveCall>>>,
-}
-
-impl Handler {
-    fn register(&self, elicitor: Arc<dyn Elicitor>) -> CallGuard<'_> {
-        let call = Arc::new(ActiveCall {
-            elicitor,
-            cancellation: CancellationToken::new(),
-        });
-        self.calls
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(Arc::clone(&call));
-        CallGuard {
-            handler: self,
-            call,
-        }
-    }
-
-    async fn elicit(&self, request: ElicitRequestParams) -> ElicitResult {
-        let ElicitRequestParams::FormElicitationParams {
-            message,
-            requested_schema,
-            ..
-        } = request
-        else {
-            return ElicitResult::new(ElicitationAction::Decline);
-        };
-        let Some(fields) = form_fields(&requested_schema) else {
-            return ElicitResult::new(ElicitationAction::Decline);
-        };
-        let call = self
-            .calls
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .first()
-            .cloned();
-        let Some(call) = call else {
-            return ElicitResult::new(ElicitationAction::Decline);
-        };
-        let outcome = tokio::select! {
-            biased;
-            _ = call.cancellation.cancelled() => ElicitationOutcome::Cancel,
-            outcome = call.elicitor.elicit(ElicitationForm { message, fields }) => outcome,
-        };
-        match outcome {
-            ElicitationOutcome::Accept(values) => {
-                ElicitResult::new(ElicitationAction::Accept).with_content(Value::Object(values))
-            }
-            ElicitationOutcome::Decline => ElicitResult::new(ElicitationAction::Decline),
-            ElicitationOutcome::Cancel => ElicitResult::new(ElicitationAction::Cancel),
-        }
-    }
-}
-
-struct ActiveCall {
-    elicitor: Arc<dyn Elicitor>,
-    cancellation: CancellationToken,
-}
-
-struct CallGuard<'a> {
-    handler: &'a Handler,
-    call: Arc<ActiveCall>,
-}
-
-impl Drop for CallGuard<'_> {
-    fn drop(&mut self) {
-        self.call.cancellation.cancel();
-        self.handler
-            .calls
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .retain(|call| !Arc::ptr_eq(call, &self.call));
-    }
-}
+struct Handler;
 
 impl ClientHandler for Handler {
     fn get_info(&self) -> ClientConfig {
