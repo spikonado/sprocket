@@ -8,6 +8,7 @@ mod checkout_pulls;
 pub mod claude_code_cli;
 mod cli_install;
 pub mod command_sessions;
+mod connector_catalog;
 pub mod convex_clients;
 mod desktop_install;
 pub mod device_sign_in;

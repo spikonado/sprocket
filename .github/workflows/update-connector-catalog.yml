@@ -34,7 +34,7 @@ jobs:
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          paths=(tools/connectors/catalog.json tools/connectors/candidates.json)
+          paths=(crates/sprocket-host/connector-catalog.json tools/connectors/candidates.json)
           if [[ -z "$(git status --porcelain -- "${paths[@]}")" ]]; then
             echo "Connector catalog and candidates are already current."
             exit 0

@@ -137,7 +137,7 @@ for await (const entry of entries(officialRegistry)) {
 const write = (file: string, data: Connector[] | Candidate[]) =>
 	writeFile(new URL(file, directory), JSON.stringify(data, null, '\t') + '\n');
 
-await write('catalog.json', catalog);
+await write('../../crates/sprocket-host/connector-catalog.json', catalog);
 
 await write('candidates.json', candidates);
 

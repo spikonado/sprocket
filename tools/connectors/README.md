@@ -1,8 +1,12 @@
 # Connector catalog
 
-`update-catalog.ts` builds `catalog.json` from the [official MCP Registry](https://registry.modelcontextprotocol.io),
+`update-catalog.ts` builds `crates/sprocket-host/connector-catalog.json` from the
+[official MCP Registry](https://registry.modelcontextprotocol.io),
 whose data is CC0. Run `bun tools/connectors/update-catalog.ts` from the repository root after
 `bun install`. Run the tests with `node --test tools/connectors/*.test.ts`.
+
+The host embeds the reviewed catalog. `service_search` lists matching catalog services that have no
+remote server with their `catalogId`. A server that needs sign-in uses its existing remote request ID.
 
 `vendors.json` is the reviewed inclusion list, keyed by registry namespace. Each vendor picks one
 official registry server and a stable connector id. `domains` allows extra registrable remote domains
