@@ -1124,7 +1124,11 @@ describe('agentQuestions', () => {
 				optionIds: ['allow', 'always', 'deny']
 			},
 			{
-				detail: { type: 'connector', reason: 'File issues', connector: { type: 'known', id: 'github' } },
+				detail: {
+					type: 'connector',
+					reason: 'File issues',
+					connector: { type: 'known', id: 'github' }
+				},
 				optionIds: ['connected']
 			}
 		] satisfies { detail: AgentQuestionDetail; optionIds: string[] }[])(
@@ -1135,9 +1139,9 @@ describe('agentQuestions', () => {
 
 				expect(created.options.map((option) => option.id)).toEqual(optionIds);
 
-				expect(await asUser.query(api.agentQuestions.headPendingForThread, { threadId })).toMatchObject(
-					{ detail }
-				);
+				expect(
+					await asUser.query(api.agentQuestions.headPendingForThread, { threadId })
+				).toMatchObject({ detail });
 
 				await expect(answer({ optionId: optionIds[0] })).resolves.toMatchObject({
 					question: { status: 'answered', answer: { optionId: optionIds[0] } }

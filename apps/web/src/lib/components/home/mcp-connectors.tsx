@@ -63,7 +63,11 @@ export default function McpConnectors({ userId, localApi }: { userId: string; lo
 		status: connectors,
 		setStatus: setConnectors,
 		loadError
-	} = usePolledStatus(fetchConnectors, noPolling, 'Couldn’t check MCP connectors on this computer.');
+	} = usePolledStatus(
+		fetchConnectors,
+		noPolling,
+		'Couldn’t check MCP connectors on this computer.'
+	);
 
 	return (
 		<>
@@ -214,7 +218,10 @@ function McpToolList({
 			{tools === null ? (
 				<p
 					role={loadError ? 'alert' : undefined}
-					className={cn('px-5 py-3 text-[12px]', loadError ? 'text-destructive' : 'text-muted-foreground')}
+					className={cn(
+						'px-5 py-3 text-[12px]',
+						loadError ? 'text-destructive' : 'text-muted-foreground'
+					)}
 				>
 					{loadError ?? 'Connecting…'}
 				</p>
@@ -536,13 +543,19 @@ export function RequestedConnectorSetup({
 			name={connector.name}
 			summary={
 				<ConnectorDescription>
-					{connector.type === 'stdio' ? 'Runs this command on your computer' : 'Connects to this URL'}
+					{connector.type === 'stdio'
+						? 'Runs this command on your computer'
+						: 'Connects to this URL'}
 				</ConnectorDescription>
 			}
 			error={error}
 		>
-			<form className="space-y-3 px-5 pb-5" onSubmit={submit} aria-label={`Connect ${connector.name}`}>
-				<pre className="bg-hover-fill/60 text-foreground overflow-x-auto rounded-lg px-3 py-2 font-mono text-[12px] leading-5 whitespace-pre-wrap break-all">
+			<form
+				className="space-y-3 px-5 pb-5"
+				onSubmit={submit}
+				aria-label={`Connect ${connector.name}`}
+			>
+				<pre className="bg-hover-fill/60 text-foreground overflow-x-auto rounded-lg px-3 py-2 font-mono text-[12px] leading-5 break-all whitespace-pre-wrap">
 					{transportLine(connector)}
 				</pre>
 				{names.map((name) => (

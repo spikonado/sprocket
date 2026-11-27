@@ -128,7 +128,11 @@ function prettyJson(text: string) {
 	}
 }
 
-function ApprovalDetail({ detail }: { detail: Extract<AgentQuestionDetail, { type: 'approval' }> }) {
+function ApprovalDetail({
+	detail
+}: {
+	detail: Extract<AgentQuestionDetail, { type: 'approval' }>;
+}) {
 	return (
 		<div className="border-border mt-2 rounded-lg border text-[13px]">
 			<p className="text-muted-foreground px-3 pt-2">
@@ -137,7 +141,10 @@ function ApprovalDetail({ detail }: { detail: Extract<AgentQuestionDetail, { typ
 			</p>
 			<details className="group px-3 py-2">
 				<summary className="text-muted-foreground hover:text-foreground flex cursor-pointer list-none items-center gap-1 text-[12px]">
-					<ChevronRight className="size-3.5 transition-transform group-open:rotate-90" aria-hidden="true" />
+					<ChevronRight
+						className="size-3.5 transition-transform group-open:rotate-90"
+						aria-hidden="true"
+					/>
 					Arguments
 				</summary>
 				<pre className="bg-hover-fill/60 text-foreground mt-2 max-h-48 overflow-auto rounded-md px-3 py-2 font-mono text-[12px] leading-5">
@@ -169,7 +176,8 @@ function toFormValues(fields: QuestionFormField[], raw: RawFormValues): Question
 
 		if (field.kind === 'boolean') values[field.name] = value === CHECKED;
 		else if (value === '') continue;
-		else if (field.kind === 'number' || field.kind === 'integer') values[field.name] = Number(value);
+		else if (field.kind === 'number' || field.kind === 'integer')
+			values[field.name] = Number(value);
 		else values[field.name] = value;
 	}
 
