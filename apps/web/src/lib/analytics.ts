@@ -51,3 +51,7 @@ function syncAnalyticsUser(config: RuntimeConfig): void {
 export function captureRenderError(error: Error, componentStack: string | null | undefined): void {
 	if (initialized) posthog.captureException(error, { component_stack: componentStack });
 }
+
+export function analyticsSessionId(): string | undefined {
+	return initialized ? posthog.get_session_id() : undefined;
+}

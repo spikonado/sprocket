@@ -578,6 +578,7 @@ async fn launch_queued_child(
             reasoning_effort: created.settings.reasoning.clone(),
             fast_mode: created.settings.fast,
             continuation_of_run_id: created.continuation_of_run_id.clone(),
+            posthog_session_id: context.posthog_session_id.clone(),
         })
         .await;
     if let Err(error) = launched {

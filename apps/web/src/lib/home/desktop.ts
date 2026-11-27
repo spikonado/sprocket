@@ -11,6 +11,7 @@ import type {
 import { isRunFinalStatus, type RunFailureKind } from '@convex/lib/validators';
 import type { SelectedThreadLifecyclePhase } from '@convex/lib/runCancellation';
 import { areFileIdsEqual } from '$lib/chat/attachments';
+import { analyticsSessionId } from '$lib/analytics';
 
 export type ProjectState = Project & {
 	localAttachmentAvailability: LocalAttachmentAvailability;
@@ -131,6 +132,10 @@ export function launchAgentRun(args: {
 	if (args.continuationOfRunId) {
 		request.continuationOfRunId = args.continuationOfRunId;
 	}
+
+	const posthogSessionId = analyticsSessionId();
+
+	if (posthogSessionId) request.posthogSessionId = posthogSessionId;
 
 	return args.localApi
 		.runAgent(request)

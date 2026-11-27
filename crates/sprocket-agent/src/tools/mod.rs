@@ -212,6 +212,7 @@ pub(crate) fn agent_tools(
         subagent_polls: subagents::SubagentPolls::default(),
         subagent_models: request.subagent_models.clone(),
         subagent_launcher: request.subagent_launcher.clone(),
+        posthog_session_id: request.posthog_session_id.clone(),
     };
     AgentToolSet {
         apply_patch: ApplyPatchTool(context.clone()),

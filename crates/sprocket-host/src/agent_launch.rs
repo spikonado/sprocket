@@ -54,6 +54,9 @@ pub struct AgentLaunchRequest {
     /// Set when `subagents:createOrSend` already created the run with this secret.
     #[serde(default)]
     pub execution_secret: Option<String>,
+    /// The browser's PostHog session, so error tracking links run failures to its replay.
+    #[serde(default)]
+    pub posthog_session_id: Option<String>,
 }
 
 pub struct LaunchedRun {
@@ -227,6 +230,7 @@ async fn launch_agent_inner(
         workspace_path,
         installation_id: host.machine_identity.installation_id.clone(),
         continuation_of_run_id: payload.continuation_of_run_id,
+        posthog_session_id: payload.posthog_session_id,
         automatic_recovery,
         subagent_launcher: Some(crate::subagent_launcher::launcher(&host)),
         transcript_store: Some(Arc::clone(&host.transcript)),

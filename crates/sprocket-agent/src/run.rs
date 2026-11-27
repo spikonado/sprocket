@@ -949,6 +949,7 @@ pub async fn run_agent(
     }
     let mut prior_messages = prior_history.messages;
     prior_messages.extend(new_workspace_context.iter().map(HiddenPrompt::message));
+    let posthog_session_id = request.posthog_session_id.clone();
 
     match run_with_claim_lease(&runtime, &run_id, &claim_id, lease, async {
         let provider_result = provider
@@ -993,12 +994,19 @@ pub async fn run_agent(
                     subagent_models: Arc::new(subagent_models),
                     subagent_launcher: request.subagent_launcher.clone(),
                     transcript_store: request.transcript_store.clone(),
+                    posthog_session_id: posthog_session_id.clone(),
                 },
             )
             .await;
 
         if let AgentProviderResult::Failed { error } = &provider_result {
-            crate::analytics::capture_run_failure(error, &context.run.user_id, &run_id).await;
+            crate::analytics::capture_run_failure(
+                error,
+                &context.run.user_id,
+                &run_id,
+                posthog_session_id.as_deref(),
+            )
+            .await;
         }
         finalize_provider_result(&runtime, &run_id, &claim_id, provider_result).await
     })

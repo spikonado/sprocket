@@ -33,6 +33,7 @@ impl SubagentLauncher for NativeSubagentLauncher {
                 workspace_path: request.workspace_path,
                 continuation_of_run_id: request.continuation_of_run_id,
                 execution_secret: Some(request.execution_secret),
+                posthog_session_id: request.posthog_session_id,
             };
             launch_agent(
                 self.host.clone(),
