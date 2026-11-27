@@ -7,11 +7,12 @@ use anyhow::Context;
 use process_wrap::tokio::{ChildWrapper, CommandWrap, KillOnDrop};
 use rmcp::model::{
     CallToolRequestParams, ClientCapabilities, ClientConfig, ElicitRequestParams, ElicitResult,
-    ElicitationAction, ElicitationCapability, ElicitationSchema, FormElicitationCapability,
-    Implementation, ProtocolVersion, SubscriptionFilter, Tool,
+    ElicitationAction, ElicitationCapability, ElicitationSchema, ErrorCode,
+    FormElicitationCapability, Implementation, ProtocolVersion, SubscriptionFilter, Tool,
 };
 use rmcp::service::{
     ClientCacheConfig, ClientLifecycleMode, ClientServiceExt, RequestContext, RunningService,
+    ServiceError,
 };
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use rmcp::transport::{IntoTransport, StreamableHttpClientTransport};
@@ -106,13 +107,22 @@ impl McpClient {
             .peer_info()
             .is_some_and(|info| info.protocol_version >= ProtocolVersion::V_2026_07_28)
         {
-            let mut subscription = service
+            match service
                 .peer()
                 .listen(SubscriptionFilter::builder().tools_list_changed().build())
-                .await?;
-            // rmcp invalidates the tool cache itself; draining keeps the buffer from
-            // overflowing, and the loop ends when the service closes.
-            tokio::spawn(async move { while let Ok(Some(_)) = subscription.next().await {} });
+                .await
+            {
+                Ok(mut subscription) => {
+                    // rmcp invalidates the tool cache itself; draining keeps the buffer from
+                    // overflowing, and the loop ends when the service closes.
+                    tokio::spawn(
+                        async move { while let Ok(Some(_)) = subscription.next().await {} },
+                    );
+                }
+                Err(ServiceError::McpError(error)) if error.code == ErrorCode::METHOD_NOT_FOUND => {
+                }
+                Err(error) => return Err(error.into()),
+            }
         }
         Ok(Self {
             service,
