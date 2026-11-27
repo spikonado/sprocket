@@ -145,7 +145,7 @@ it('uses reactive remote status without duplicating the merged host listing', as
 	await act(async () =>
 		convex.registerQuery(api.mcpServers.listMine, [{ ...server, status: 'connected' }])
 	);
-	expect(screen.getByText('Connected')).toBeTruthy();
+	expect(screen.getAllByText('Connected')).toHaveLength(2);
 	const card = screen.getByText('Linear').closest<HTMLDivElement>('.rounded-xl');
 
 	if (!card) throw new Error('Missing remote connector card.');
@@ -309,7 +309,7 @@ it('opens a browser popup before starting OAuth and follows the returned authori
 	expect(screen.getByText(/Finish connecting in your browser/)).toBeTruthy();
 });
 
-it('reuses a connected remote server when its request card is reopened', async () => {
+it('reuses a connected server by normalized URL when its request card is reopened', async () => {
 	const server = remoteServer({ status: 'connected' });
 	const convex = client([server]);
 	const onConnected = vi.fn();
@@ -324,7 +324,7 @@ it('reuses a connected remote server when its request card is reopened', async (
 				connector={{
 					type: 'http',
 					name: 'Linear',
-					url: server.url,
+					url: ' HTTPS://MCP.LINEAR.TEST:443/./mcp#request ',
 					headers: []
 				}}
 				onConnected={onConnected}

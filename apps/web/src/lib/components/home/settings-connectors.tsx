@@ -22,8 +22,7 @@ export default function SettingsConnectors({
 				<div className="max-w-xl space-y-4">
 					{!localApi ? (
 						<p className="text-muted-foreground text-sm leading-6">
-							Open Sprocket on your computer to manage local connectors. Remote MCP servers are
-							available on every computer signed in to your account.
+							Open Sprocket on your computer to manage GitHub, Vercel, and KiCad.
 						</p>
 					) : (
 						<>

@@ -63,6 +63,15 @@ function secretNames(transport: Transport) {
 	return transport.type === 'stdio' ? transport.env : transport.headers;
 }
 
+function normalizedMcpUrl(value: string) {
+	const url = URL.parse(value.trim());
+
+	if (!url) return null;
+	url.hash = '';
+
+	return url.href;
+}
+
 export default function McpConnectors({
 	userId,
 	localApi
@@ -165,11 +174,9 @@ function McpConnectorCard({
 							<span className="font-mono">{secrets.join(', ')}</span>
 						</p>
 					)}
-					{remote && (
-						<p className="text-muted-foreground mt-0.5 text-[12px]" role="status">
-							{remote.status === 'needs_auth' ? 'Needs sign-in' : 'Connected'}
-						</p>
-					)}
+					<p className="text-muted-foreground mt-0.5 text-[12px]" role="status">
+						{remote?.status === 'needs_auth' ? 'Needs sign-in' : 'Connected'}
+					</p>
 				</>
 			}
 			actions={
@@ -509,10 +516,7 @@ function CustomConnectorForm({
 						</Field>
 					</>
 				) : (
-					<Field
-						label="URL"
-						hint="Remote servers use HTTPS. Localhost servers stay on this computer."
-					>
+					<Field label="URL" hint="Use HTTPS, except for localhost.">
 						<input
 							className={cn(inputClass, 'font-mono')}
 							value={url}
@@ -595,11 +599,10 @@ export function RequestedConnectorSetup({
 	const addConnector = useAddMcpConnector(userId, localApi);
 	const remoteServers = useQuery(api.mcpServers.listMine, connector.type === 'http' ? {} : 'skip');
 	const [addedRemoteId, setAddedRemoteId] = useState<string | null>(null);
+	const requestedUrl = connector.type === 'http' ? normalizedMcpUrl(connector.url) : null;
 
 	const remote = remoteServers?.find((server) =>
-		addedRemoteId
-			? server.connectorId === addedRemoteId
-			: connector.type === 'http' && server.url === connector.url
+		addedRemoteId ? server.connectorId === addedRemoteId : server.url === requestedUrl
 	);
 
 	const names = secretNames(connector);
