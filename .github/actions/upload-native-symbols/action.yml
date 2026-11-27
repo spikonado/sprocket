@@ -30,11 +30,12 @@ runs:
           cp -RL "$BINARY.dSYM" .native-symbols/
           strip "$BINARY"
         else
-          readelf -n "$BINARY" | grep 'Build ID:'
-          cp "$BINARY" .native-symbols/
-          # GNU strip can't read the cross-compiled arm64 binary.
+          # GNU binutils can't read the cross-compiled arm64 binary.
           rustup component add llvm-tools
-          "$(rustc --print sysroot)/lib/rustlib/$(rustc --print host-tuple)/bin/llvm-strip" "$BINARY"
+          llvm_bin="$(rustc --print sysroot)/lib/rustlib/$(rustc --print host-tuple)/bin"
+          # Leaving the code out keeps a dev build's symbols under posthog-cli's 100 MB limit.
+          "$llvm_bin/llvm-objcopy" --only-keep-debug "$BINARY" .native-symbols/sprocket.debug
+          "$llvm_bin/llvm-strip" "$BINARY"
         fi
     - name: Upload debug symbols
       shell: bash
@@ -42,4 +43,7 @@ runs:
         POSTHOG_CLI_HOST: https://eu.posthog.com
         POSTHOG_CLI_API_KEY: ${{ inputs.api-key }}
         POSTHOG_CLI_PROJECT_ID: ${{ inputs.project-id }}
-      run: bunx posthog-cli symbol-sets upload --directory .native-symbols
+      run: |
+        bunx posthog-cli symbol-sets upload --directory .native-symbols 2>&1 | tee "$RUNNER_TEMP/symbol-upload.log"
+        # posthog-cli skips oversized symbol sets but still exits 0.
+        grep -q ' 0 too large)' "$RUNNER_TEMP/symbol-upload.log"
