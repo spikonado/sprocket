@@ -3,13 +3,15 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use rmcp::model::CallToolResult;
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
-use super::mcp::{self, McpCall, McpEndpoint};
+use super::mcp::{self, McpEndpoint};
 use super::msp::{Incoming, Msp, RpcError, command_id};
 use super::{ERROR_CODE, PLAN_REQUIRED, SIGNED_OUT, served_model_id, turn_error};
+use crate::cli_session::mcp::{Server, ToolCall};
 use crate::cli_session::{
     CliProcess, Event, MCP_SERVER, SessionStart, Spawn, error_event, inline_image_url,
 };
@@ -46,7 +48,7 @@ const BUNDLED_SKILLS: &[&str] = &[
 ];
 const PLUGIN_SKILLS: &[&str] = &["plugin://threejs/skills/threejs/SKILL.md"];
 
-type HeldCalls = Arc<Mutex<HashMap<String, oneshot::Sender<Value>>>>;
+type HeldCalls = Arc<Mutex<HashMap<String, oneshot::Sender<CallToolResult>>>>;
 
 pub(super) struct Process {
     prompts: mpsc::UnboundedSender<Vec<Value>>,
@@ -64,7 +66,7 @@ impl Drop for Process {
 impl Process {
     pub(super) fn spawn(executable: &Path, spawn: Spawn<'_>) -> anyhow::Result<Self> {
         let (calls, call_receiver) = mpsc::unbounded_channel();
-        let endpoint = mcp::serve(spawn.tools, calls)?;
+        let endpoint = mcp::serve(Server::new(spawn.tools, calls))?;
         let session = Session {
             executable: executable.to_path_buf(),
             cwd: spawn.cwd.to_path_buf(),
@@ -95,7 +97,7 @@ impl CliProcess for Process {
         let _ = self.prompts.send(content);
     }
 
-    fn answer(&self, tool_use_id: &str, result: Value) {
+    fn answer(&self, tool_use_id: &str, result: CallToolResult) {
         let call = self
             .held
             .lock()
@@ -173,7 +175,7 @@ impl Driver {
         session: Session,
         endpoint: McpEndpoint,
         mut prompts: mpsc::UnboundedReceiver<Vec<Value>>,
-        mut calls: mpsc::UnboundedReceiver<McpCall>,
+        mut calls: mpsc::UnboundedReceiver<ToolCall>,
     ) {
         let (msp, mut incoming) = match start(&session, &endpoint).await {
             Ok(started) => started,
@@ -228,7 +230,7 @@ impl Driver {
     }
 
     /// Muse runs MCP calls one at a time, so each call is a model step of its own.
-    fn tool_call(&mut self, call: McpCall) {
+    fn tool_call(&mut self, call: ToolCall) {
         let id = format!("toolu_{}", uuid::Uuid::new_v4().simple());
         let mut events = self.translator.tool_use(&id, &call.name, &call.arguments);
         events.extend(self.translator.end_step("tool_use"));

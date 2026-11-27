@@ -28,6 +28,7 @@ pulldown-cmark = { version = "0.13.6", default-features = false }
 regex = "1.13.2"
 reqwest = { workspace = true, features = ["gzip", "json", "rustls", "stream"] }
 rig = { version = "0.47.1", default-features = false, features = ["agent", "reqwest", "rustls"] }
+rmcp = { workspace = true, features = ["server", "transport-streamable-http-server"] }
 schemars = "1"
 serde.workspace = true
 serde_json.workspace = true

@@ -54,10 +54,8 @@ fn parse_reads_what_the_cli_takes() {
     assert_eq!(turn.system_prompt, "Base instructions\n\nWorkspace notes");
     assert_eq!(turn.launch.effort.as_deref(), Some("high"));
     assert_eq!(
-        turn.tools,
-        [
-            json!({ "name": "exec_cmd", "description": "Run a command", "inputSchema": { "type": "object" } })
-        ]
+        serde_json::to_value(&turn.tools).unwrap(),
+        json!([{ "name": "exec_cmd", "description": "Run a command", "inputSchema": { "type": "object" } }])
     );
     assert_eq!(turn.messages, [user("Hi")]);
 }
@@ -78,8 +76,8 @@ fn tool_results_answer_the_calls_the_cli_holds() {
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].0, "toolu_1");
     assert_eq!(
-        mcp_tool_result(&results[0].1),
-        json!({ "content": [{ "type": "text", "text": "Cargo.toml" }], "isError": false })
+        mcp::tool_result(&results[0].1),
+        CallToolResult::success(vec![rmcp::model::ContentBlock::text("Cargo.toml")])
     );
 }
 
@@ -191,20 +189,4 @@ fn checkpoint_after_tool_results_asks_to_continue() {
         content.last(),
         Some(&json!({ "type": "text", "text": "Continue from the checkpoint." }))
     );
-}
-
-#[test]
-fn mcp_tool_calls_wait_for_sprocket() {
-    let params = json!({ "name": "exec_cmd", "arguments": { "cmd": "ls" } });
-    let call = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": params });
-    let notification = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
-
-    assert_eq!(
-        mcp_reply(&call, &[]),
-        McpReply::ToolCall {
-            rpc_id: json!(2),
-            params,
-        }
-    );
-    assert_eq!(mcp_reply(&notification, &[]), McpReply::Ack);
 }

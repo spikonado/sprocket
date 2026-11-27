@@ -8711,16 +8711,22 @@ version = "3.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc4fa9a7558c480e1817c0f02e9a73782001ac1f47fb9d26cc073915963282ea"
 dependencies = [
+ "async-trait",
  "base64 0.23.1",
  "bytes",
  "futures",
  "http",
+ "http-body",
+ "http-body-util",
  "indexmap 2.14.2",
  "jiff 1.0.2",
  "libc",
+ "pastey 0.2.3",
  "percent-encoding",
  "pin-project-lite",
+ "rand 0.10.4",
  "reqwest 0.13.5",
+ "schemars 1.2.3",
  "serde",
  "serde_json",
  "sha2 0.11.1",
@@ -8729,9 +8735,11 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-util",
+ "tower-service",
  "tracing",
  "unicode-general-category",
  "unicode-normalization",
+ "uuid",
 ]
 
 [[package]]
@@ -9492,6 +9500,7 @@ dependencies = [
  "regex",
  "reqwest 0.13.5",
  "rig",
+ "rmcp",
  "schemars 1.2.3",
  "serde",
  "serde_json",
