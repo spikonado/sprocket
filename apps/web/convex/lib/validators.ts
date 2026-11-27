@@ -402,23 +402,6 @@ export const vAwaitQuestionPayload = v.object({
 	yieldTimeMs: v.optional(v.number())
 });
 
-const questionFieldKinds = ['string', 'number', 'integer', 'boolean', 'enum'] as const;
-
-const vQuestionFieldValue = v.union(v.string(), v.number(), v.boolean());
-
-export const vQuestionFormField = v.object({
-	name: v.string(),
-	title: v.optional(v.string()),
-	description: v.optional(v.string()),
-	required: v.boolean(),
-	kind: v.union(...literals(questionFieldKinds)),
-	enumValues: v.optional(v.array(v.string())),
-	enumLabels: v.optional(v.array(v.string())),
-	default: v.optional(vQuestionFieldValue)
-});
-
-export const vQuestionValues = v.record(v.string(), vQuestionFieldValue);
-
 const vStdioConnector = v.object({
 	type: v.literal('stdio'),
 	name: v.string(),
@@ -444,13 +427,7 @@ export const vAgentQuestionDetail = v.union(
 		arguments: v.string()
 	}),
 	v.object({
-		type: v.literal('form'),
-		connector: v.string(),
-		fields: v.array(vQuestionFormField)
-	}),
-	v.object({
 		type: v.literal('connector'),
-		reason: v.string(),
 		connector: v.union(
 			v.object({ type: v.literal('known'), id: v.string() }),
 			vStdioConnector,
@@ -478,7 +455,6 @@ export const vServiceCallPayload = v.object({
 export const vRequestConnectorPayload = v.object({
 	connector: v.optional(v.string()),
 	custom: v.optional(vCustomConnector),
-	reason: v.string(),
 	yieldTimeMs: v.optional(v.number()),
 	timeoutMs: v.optional(v.union(v.number(), v.null()))
 });
@@ -855,8 +831,7 @@ export const vSetCwdResult = v.object({
 export const vAskQuestionAnswer = v.object({
 	optionId: v.optional(v.string()),
 	optionLabel: v.optional(v.string()),
-	text: v.optional(v.string()),
-	values: v.optional(vQuestionValues)
+	text: v.optional(v.string())
 });
 
 const vQuestionResultFields = {

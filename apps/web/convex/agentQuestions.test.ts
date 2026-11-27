@@ -5,8 +5,7 @@ import type { Id } from '@convex/_generated/dataModel';
 import {
 	AGENT_DECIDE_OPTION_ID,
 	QUESTION_TIMEOUT_CHECKPOINT_MS,
-	type AgentQuestionDetail,
-	type QuestionValues
+	type AgentQuestionDetail
 } from '@convex/lib/agentQuestions';
 import {
 	createQueuedRun,
@@ -1103,7 +1102,7 @@ describe('agentQuestions', () => {
 				executionSecret
 			});
 
-			const answer = (args: { optionId?: string; values?: QuestionValues }) =>
+			const answer = (args: { optionId?: string }) =>
 				asUser.mutation(api.agentQuestions.answer, {
 					threadId,
 					questionId: created.questionId,
@@ -1126,7 +1125,6 @@ describe('agentQuestions', () => {
 			{
 				detail: {
 					type: 'connector',
-					reason: 'File issues',
 					connector: { type: 'known', id: 'github' }
 				},
 				optionIds: ['connected']
@@ -1156,42 +1154,5 @@ describe('agentQuestions', () => {
 				).toMatchObject({ detail, answer: { optionId: optionIds[0] } });
 			}
 		);
-
-		const form: AgentQuestionDetail = {
-			type: 'form',
-			connector: 'linear',
-			fields: [
-				{ name: 'title', title: 'Title', required: true, kind: 'string' },
-				{ name: 'estimate', title: 'Estimate', required: false, kind: 'integer' },
-				{
-					name: 'priority',
-					title: 'Priority',
-					required: false,
-					kind: 'enum',
-					enumValues: ['low', 'high']
-				}
-			]
-		};
-
-		it.each([
-			[{ estimate: 2 }, /Title is required/],
-			[{ title: 'Bug', estimate: 1.5 }, /Estimate must be an integer/],
-			[{ title: 'Bug', priority: 'urgent' }, /Priority must be one of/],
-			[{ title: 'Bug', assignee: 'me' }, /Unknown form field 'assignee'/]
-		] satisfies [QuestionValues, RegExp][])('rejects form values %j', async (values, error) => {
-			const { answer } = await createWithDetail(form);
-
-			await expect(answer({ values })).rejects.toThrow(error);
-		});
-
-		it('stores valid form values on the answer', async () => {
-			const { created, answer } = await createWithDetail(form);
-
-			expect(created.options).toEqual([]);
-
-			await expect(answer({ values: { title: 'Bug', priority: 'high' } })).resolves.toMatchObject({
-				question: { answer: { values: { title: 'Bug', priority: 'high' } } }
-			});
-		});
 	});
 });

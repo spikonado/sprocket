@@ -1299,37 +1299,6 @@ async function renderDetailedQuestion(
 	return { mutation, question };
 }
 
-it('answers a form question with typed values', async () => {
-	const { mutation, question } = await renderDetailedQuestion(
-		{
-			type: 'form',
-			connector: 'linear',
-			fields: [
-				{ name: 'title', title: 'Title', required: true, kind: 'string' },
-				{ name: 'estimate', title: 'Estimate', required: false, kind: 'integer' }
-			]
-		},
-		[]
-	);
-
-	fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
-	expect(await screen.findByText('Title is required.')).toBeTruthy();
-	fireEvent.change(screen.getByLabelText(/Title/), { target: { value: 'Bug' } });
-	fireEvent.change(screen.getByLabelText('Estimate'), { target: { value: '3' } });
-	fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
-
-	await waitFor(() =>
-		expect(mutation).toHaveBeenCalledWith(
-			api.agentQuestions.answer,
-			expect.objectContaining({
-				questionId: question.questionId,
-				values: { title: 'Bug', estimate: 3 }
-			}),
-			{}
-		)
-	);
-});
-
 it('answers a connector request once the requested server is added', async () => {
 	const addMcpConnector = vi.fn<LocalApi['addMcpConnector']>(async () => ({
 		id: 'linear',
@@ -1340,7 +1309,6 @@ it('answers a connector request once the requested server is added', async () =>
 	const { mutation, question } = await renderDetailedQuestion(
 		{
 			type: 'connector',
-			reason: 'To file the bug',
 			connector: {
 				type: 'stdio',
 				name: 'Linear',

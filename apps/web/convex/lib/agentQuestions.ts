@@ -1,12 +1,7 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { DatabaseReader } from '@convex/_generated/server';
 import type { Infer } from 'convex/values';
-import { z } from 'zod';
-import type {
-	vAgentQuestionDetail,
-	vQuestionFormField,
-	vQuestionValues
-} from '@convex/lib/validators';
+import type { vAgentQuestionDetail } from '@convex/lib/validators';
 
 export async function isPendingQuestionActionable(
 	db: DatabaseReader,
@@ -117,15 +112,10 @@ export type AgentQuestionOption = {
 
 export type AgentQuestionDetail = Infer<typeof vAgentQuestionDetail>;
 
-export type QuestionFormField = Infer<typeof vQuestionFormField>;
-
-export type QuestionValues = Infer<typeof vQuestionValues>;
-
 export type AgentQuestionAnswer = {
 	optionId?: string;
 	optionLabel?: string;
 	text?: string;
-	values?: QuestionValues;
 };
 
 export type AnsweredAgentQuestion = {
@@ -205,7 +195,6 @@ const DETAIL_OPTIONS: Record<AgentQuestionDetail['type'], AgentQuestionOption[]>
 		{ id: 'always', label: 'Always allow' },
 		{ id: 'deny', label: 'Deny' }
 	],
-	form: [],
 	connector: [{ id: CONNECTED_OPTION_ID, label: 'Connected' }]
 };
 
@@ -215,132 +204,48 @@ export function finalizeQuestionOptions(
 	detail?: AgentQuestionDetail
 ): AgentQuestionOption[] {
 	if (!detail) return [...validateAgentOptions(options), agentDecideOption()];
-	validateQuestionDetail(detail);
 
-	return DETAIL_OPTIONS[detail.type];
-}
-
-function validateQuestionDetail(detail: AgentQuestionDetail) {
 	if (detail.type === 'approval' && detail.arguments.length > MAX_APPROVAL_ARGUMENTS_CHARS) {
 		throw new Error(`Approval arguments cannot exceed ${MAX_APPROVAL_ARGUMENTS_CHARS} characters.`);
 	}
 
-	if (detail.type !== 'form') return;
-	const names = new Set<string>();
-
-	for (const field of detail.fields) {
-		// Answers store values in a Convex record, whose keys can't be empty or start with `$` or `_`.
-		if (!/^[^$_]/.test(field.name)) {
-			throw new Error(`Form field name '${field.name}' is not supported.`);
-		}
-
-		if (names.has(field.name)) throw new Error(`Duplicate form field '${field.name}'.`);
-		names.add(field.name);
-
-		if (field.kind === 'enum' && !field.enumValues?.length) {
-			throw new Error(`Form field '${field.name}' needs enum values.`);
-		}
-
-		if (field.enumLabels && field.enumLabels.length !== field.enumValues?.length) {
-			throw new Error(`Form field '${field.name}' needs one label per enum value.`);
-		}
-
-		if (field.default !== undefined && !formFieldAccepts(field, field.default)) {
-			throw new Error(`Form field '${field.name}' has a default of the wrong kind.`);
-		}
-	}
-}
-
-function formFieldSchema(field: QuestionFormField) {
-	switch (field.kind) {
-		case 'string':
-			return z.string();
-		case 'number':
-			return z.number();
-		case 'integer':
-			return z.int();
-		case 'boolean':
-			return z.boolean();
-		case 'enum':
-			return z.enum(field.enumValues ?? []);
-	}
-}
-
-function formFieldAccepts(field: QuestionFormField, value: string | number | boolean) {
-	return formFieldSchema(field).safeParse(value).success;
-}
-
-export function formValuesError(
-	fields: QuestionFormField[],
-	values: QuestionValues
-): string | null {
-	for (const name of Object.keys(values)) {
-		if (!fields.some((field) => field.name === name)) return `Unknown form field '${name}'.`;
-	}
-
-	for (const field of fields) {
-		const value = values[field.name];
-		const label = field.title ?? field.name;
-
-		if (value === undefined) {
-			if (field.required) return `${label} is required.`;
-			continue;
-		}
-
-		if (!formFieldAccepts(field, value)) {
-			return field.kind === 'enum'
-				? `${label} must be one of the listed choices.`
-				: `${label} must be ${field.kind === 'integer' ? 'an' : 'a'} ${field.kind}.`;
-		}
-	}
-
-	return null;
+	return DETAIL_OPTIONS[detail.type];
 }
 
 export function normalizeQuestionAnswer(args: {
 	options: AgentQuestionOption[];
-	detail?: AgentQuestionDetail;
 	optionId?: string;
 	text?: string;
-	values?: QuestionValues;
 }): AgentQuestionAnswer {
 	const text = args.text?.trim() || undefined;
 	const optionId = args.optionId?.trim() || undefined;
-	const { values } = args;
 
-	if (values) {
-		if (args.detail?.type !== 'form') throw new Error('This question takes no form values.');
-		const error = formValuesError(args.detail.fields, values);
-
-		if (error) throw new Error(error);
-	}
-
-	if (!optionId && !text && !values) {
+	if (!optionId && !text) {
 		throw new Error('Select an option or provide an answer.');
 	}
 
-	const answer: AgentQuestionAnswer = {};
-
-	if (optionId) {
-		const option = args.options.find((entry) => entry.id === optionId);
-
-		if (!option) {
-			throw new Error(`Unknown option id '${optionId}'.`);
-		}
-
-		answer.optionId = option.id;
-		answer.optionLabel = option.label;
+	if (!optionId) {
+		return { text };
 	}
 
-	if (text) answer.text = text;
+	const option = args.options.find((entry) => entry.id === optionId);
 
-	if (values) answer.values = values;
+	if (!option) {
+		throw new Error(`Unknown option id '${optionId}'.`);
+	}
+
+	const answer: AgentQuestionAnswer = {
+		optionId: option.id,
+		optionLabel: option.label
+	};
+
+	if (text) answer.text = text;
 
 	return answer;
 }
 
 function formatAnswer(answer: AgentQuestionAnswer): string {
-	return [answer.optionLabel, answer.values && JSON.stringify(answer.values), answer.text]
+	return [answer.optionLabel, answer.text]
 		.filter((part): part is string => Boolean(part))
 		.join(': ');
 }

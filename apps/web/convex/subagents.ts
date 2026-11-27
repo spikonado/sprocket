@@ -392,7 +392,7 @@ export const control = mutation({
 			const pending = await ctx.db.get('agentQuestions', args.questionId);
 
 			if (pending?.detail) {
-				throw new Error('Only the user can answer approvals, forms and connector requests.');
+				throw new Error('Only the user can answer approvals and connector requests.');
 			}
 
 			const result = await answerPendingQuestion(ctx, {

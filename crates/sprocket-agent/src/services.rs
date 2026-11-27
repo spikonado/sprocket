@@ -133,52 +133,6 @@ pub struct ServiceTool {
     pub policy: ToolPolicy,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum FieldKind {
-    String,
-    Number,
-    Integer,
-    Boolean,
-    Enum,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FormField {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    pub required: bool,
-    pub kind: FieldKind,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub enum_values: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub enum_labels: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub default: Option<Value>,
-}
-
-#[derive(Clone, Debug)]
-pub struct ElicitationForm {
-    pub message: String,
-    pub fields: Vec<FormField>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum ElicitationOutcome {
-    Accept(JsonObject),
-    Decline,
-    Cancel,
-}
-
-/// Asks the user to fill in a form a server requested during one `service_call`.
-pub trait Elicitor: Send + Sync {
-    fn elicit(&self, form: ElicitationForm) -> BoxFuture<'_, ElicitationOutcome>;
-}
-
 /// The machine's connected services for one run. Dropping it disconnects them.
 pub trait ServiceHub: Send + Sync {
     fn search<'a>(&'a self, query: &'a str, limit: usize) -> BoxFuture<'a, SearchResults>;
@@ -191,7 +145,6 @@ pub trait ServiceHub: Send + Sync {
         &'a self,
         path: &'a str,
         arguments: JsonObject,
-        elicitor: Arc<dyn Elicitor>,
     ) -> BoxFuture<'a, anyhow::Result<Value>>;
 
     fn save_policy<'a>(

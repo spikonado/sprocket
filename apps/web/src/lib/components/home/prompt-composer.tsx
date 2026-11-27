@@ -16,10 +16,7 @@ import {
 	type CatalogModelId,
 	type ModelCatalog
 } from '$lib/chat/model-catalog';
-import AgentQuestion, {
-	type QuestionAnswerInput,
-	type QuestionConnectorSetup
-} from '$lib/components/home/agent-question';
+import AgentQuestion, { type QuestionConnectorSetup } from '$lib/components/home/agent-question';
 import RunningCommands from '$lib/components/home/running-commands';
 import ComposerAttachments from '$lib/components/home/composer-attachments';
 import ComposerSkillMenu from '$lib/components/home/composer-skill-menu';
@@ -69,7 +66,7 @@ export type PromptComposerProps = {
 	usageThreadId?: Id<'threadRecords'> | null;
 	selectedQuestionOptionId?: string | null;
 	onSelectedQuestionOptionIdChange?: (optionId: string | null) => void;
-	onAnswerQuestion?: (answer: QuestionAnswerInput) => void;
+	onAnswerQuestion?: (optionId: string) => void;
 	questionConnectorSetup?: QuestionConnectorSetup | null;
 	canSend: boolean;
 	submitting: 'request' | 'agentLaunch' | null;
@@ -630,9 +627,8 @@ export default function PromptComposer({
 										runEnded={runEnded}
 										selectedOptionId={selectedQuestionOptionId}
 										onToggleOption={toggleQuestionOption}
-										onAnswer={(answer) => onAnswerQuestion?.(answer)}
+										onAnswer={(optionId) => onAnswerQuestion?.(optionId)}
 										connectorSetup={questionConnectorSetup}
-										disabled={isSubmitting}
 									/>
 								) : null}
 								{attachments.length > 0 && !answeringQuestion ? (

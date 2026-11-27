@@ -8,8 +8,8 @@ use rmcp::model::Tool;
 use serde::Serialize;
 use serde_json::Value;
 use sprocket_agent::services::{
-    Descriptions, Elicitor, JsonObject, SearchHit, SearchResults, ServiceHub, ServiceTool,
-    SharedServiceHub, ToolDescription, ToolPolicy, Unavailable, split_tool_path,
+    Descriptions, JsonObject, SearchHit, SearchResults, ServiceHub, ServiceTool, SharedServiceHub,
+    ToolDescription, ToolPolicy, Unavailable, split_tool_path,
 };
 
 use crate::Host;
@@ -306,7 +306,6 @@ impl ServiceHub for RunServiceHub {
         &'a self,
         path: &'a str,
         arguments: JsonObject,
-        elicitor: Arc<dyn Elicitor>,
     ) -> BoxFuture<'a, anyhow::Result<Value>> {
         Box::pin(async move {
             let (server, client, tool) = self.resolve(path).await?;
@@ -314,7 +313,7 @@ impl ServiceHub for RunServiceHub {
                 effective_policy(&server, &tool) != ToolPolicy::Disabled,
                 "This service tool is disabled in Settings."
             );
-            client.call(&tool.name, arguments, elicitor).await
+            client.call(&tool.name, arguments).await
         })
     }
 

@@ -1,28 +1,21 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::Context;
 use process_wrap::tokio::{ChildWrapper, CommandWrap, KillOnDrop};
 use rmcp::model::{
-    CallToolRequestParams, ClientCapabilities, ClientConfig, ElicitRequestParams, ElicitResult,
-    ElicitationAction, ElicitationCapability, ElicitationSchema, ErrorCode,
-    FormElicitationCapability, Implementation, ProtocolVersion, SubscriptionFilter, Tool,
+    CallToolRequestParams, ClientCapabilities, ClientConfig, ErrorCode, Implementation,
+    ProtocolVersion, SubscriptionFilter, Tool,
 };
 use rmcp::service::{
-    ClientCacheConfig, ClientLifecycleMode, ClientServiceExt, RequestContext, RunningService,
-    ServiceError,
+    ClientCacheConfig, ClientLifecycleMode, ClientServiceExt, RunningService, ServiceError,
 };
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use rmcp::transport::{IntoTransport, StreamableHttpClientTransport};
 use rmcp::{ClientHandler, RoleClient};
 use serde_json::Value;
-use sprocket_agent::services::{
-    ElicitationForm, ElicitationOutcome, Elicitor, FieldKind, FormField, JsonObject,
-    loopback_http_url,
-};
-use tokio_util::sync::CancellationToken;
+use sprocket_agent::services::{JsonObject, loopback_http_url};
 
 use crate::Host;
 use crate::mcp_store::{McpServer, McpTransport};
@@ -89,7 +82,7 @@ impl McpClient {
         T: IntoTransport<RoleClient, E, A>,
         E: std::error::Error + Send + Sync + 'static,
     {
-        let service = Handler::default()
+        let service = Handler
             .serve_with_lifecycle(
                 transport,
                 ClientLifecycleMode::Auto {
@@ -146,13 +139,7 @@ impl McpClient {
             .map_err(Into::into)
     }
 
-    pub(crate) async fn call(
-        &self,
-        name: &str,
-        arguments: JsonObject,
-        elicitor: Arc<dyn Elicitor>,
-    ) -> anyhow::Result<Value> {
-        let _guard = self.service.service().register(elicitor);
+    pub(crate) async fn call(&self, name: &str, arguments: JsonObject) -> anyhow::Result<Value> {
         let mut params = CallToolRequestParams::new(name.to_owned());
         params.arguments = Some(arguments);
         let result = self.service.call_tool(params).await?;
@@ -175,196 +162,15 @@ fn http_client() -> anyhow::Result<reqwest::Client> {
         .build()?)
 }
 
-#[derive(Default)]
-struct Handler {
-    calls: Mutex<Vec<Arc<ActiveCall>>>,
-}
-
-impl Handler {
-    fn register(&self, elicitor: Arc<dyn Elicitor>) -> CallGuard<'_> {
-        let call = Arc::new(ActiveCall {
-            elicitor,
-            cancellation: CancellationToken::new(),
-        });
-        self.calls
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(Arc::clone(&call));
-        CallGuard {
-            handler: self,
-            call,
-        }
-    }
-
-    async fn elicit(&self, request: ElicitRequestParams) -> ElicitResult {
-        let ElicitRequestParams::FormElicitationParams {
-            message,
-            requested_schema,
-            ..
-        } = request
-        else {
-            return ElicitResult::new(ElicitationAction::Decline);
-        };
-        let Some(fields) = form_fields(&requested_schema) else {
-            return ElicitResult::new(ElicitationAction::Decline);
-        };
-        let call = self
-            .calls
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .first()
-            .cloned();
-        let Some(call) = call else {
-            return ElicitResult::new(ElicitationAction::Decline);
-        };
-        let outcome = tokio::select! {
-            biased;
-            _ = call.cancellation.cancelled() => ElicitationOutcome::Cancel,
-            outcome = call.elicitor.elicit(ElicitationForm { message, fields }) => outcome,
-        };
-        match outcome {
-            ElicitationOutcome::Accept(values) => {
-                ElicitResult::new(ElicitationAction::Accept).with_content(Value::Object(values))
-            }
-            ElicitationOutcome::Decline => ElicitResult::new(ElicitationAction::Decline),
-            ElicitationOutcome::Cancel => ElicitResult::new(ElicitationAction::Cancel),
-        }
-    }
-}
-
-struct ActiveCall {
-    elicitor: Arc<dyn Elicitor>,
-    cancellation: CancellationToken,
-}
-
-struct CallGuard<'a> {
-    handler: &'a Handler,
-    call: Arc<ActiveCall>,
-}
-
-impl Drop for CallGuard<'_> {
-    fn drop(&mut self) {
-        self.call.cancellation.cancel();
-        self.handler
-            .calls
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .retain(|call| !Arc::ptr_eq(call, &self.call));
-    }
-}
+struct Handler;
 
 impl ClientHandler for Handler {
     fn get_info(&self) -> ClientConfig {
-        let mut capabilities = ClientCapabilities::default();
-        capabilities.elicitation =
-            Some(ElicitationCapability::new().with_form(FormElicitationCapability::default()));
         ClientConfig::new(
-            capabilities,
+            ClientCapabilities::default(),
             Implementation::new("sprocket", env!("CARGO_PKG_VERSION")),
         )
     }
-
-    async fn create_elicitation(
-        &self,
-        request: ElicitRequestParams,
-        context: RequestContext<RoleClient>,
-    ) -> Result<ElicitResult, rmcp::ErrorData> {
-        Ok(tokio::select! {
-            biased;
-            _ = context.ct.cancelled() => ElicitResult::new(ElicitationAction::Cancel),
-            result = self.elicit(request) => result,
-        })
-    }
-}
-
-fn form_fields(schema: &ElicitationSchema) -> Option<Vec<FormField>> {
-    let required = schema.required.as_deref().unwrap_or_default();
-    if required
-        .iter()
-        .any(|name| !schema.properties.contains_key(name))
-    {
-        return None;
-    }
-    let mut fields = Vec::with_capacity(schema.properties.len());
-    for (name, property) in &schema.properties {
-        let property = serde_json::to_value(property).ok()?;
-        let property = property.as_object()?;
-        // The question UI cannot enforce bounds, formats or array selections.
-        if property.keys().any(|key| {
-            !matches!(
-                key.as_str(),
-                "type" | "title" | "description" | "default" | "enum" | "enumNames" | "oneOf"
-            )
-        }) {
-            return None;
-        }
-        let mut field = FormField {
-            name: name.clone(),
-            title: property
-                .get("title")
-                .and_then(Value::as_str)
-                .map(str::to_owned),
-            description: property
-                .get("description")
-                .and_then(Value::as_str)
-                .map(str::to_owned),
-            required: required.contains(name),
-            kind: match property.get("type")?.as_str()? {
-                "string" => FieldKind::String,
-                "number" => FieldKind::Number,
-                "integer" => FieldKind::Integer,
-                "boolean" => FieldKind::Boolean,
-                _ => return None,
-            },
-            enum_values: None,
-            enum_labels: None,
-            default: property.get("default").cloned(),
-        };
-        if let Some(options) = property.get("oneOf") {
-            let options = options.as_array()?;
-            field.enum_values = Some(
-                options
-                    .iter()
-                    .map(|option| Some(option.get("const")?.as_str()?.to_owned()))
-                    .collect::<Option<_>>()?,
-            );
-            field.enum_labels = Some(
-                options
-                    .iter()
-                    .map(|option| Some(option.get("title")?.as_str()?.to_owned()))
-                    .collect::<Option<_>>()?,
-            );
-        } else if let Some(options) = property.get("enum") {
-            field.enum_values = Some(serde_json::from_value(options.clone()).ok()?);
-            field.enum_labels = property
-                .get("enumNames")
-                .map(|labels| serde_json::from_value(labels.clone()))
-                .transpose()
-                .ok()?;
-        }
-        if let Some(values) = &field.enum_values {
-            if field.kind != FieldKind::String
-                || values.is_empty()
-                || field
-                    .enum_labels
-                    .as_ref()
-                    .is_some_and(|labels| labels.len() != values.len())
-            {
-                return None;
-            }
-            field.kind = FieldKind::Enum;
-        }
-        fields.push(field);
-    }
-    if let Some(order) = &schema.property_order {
-        fields.sort_by_key(|field| {
-            order
-                .iter()
-                .position(|name| name == &field.name)
-                .unwrap_or(usize::MAX)
-        });
-    }
-    Some(fields)
 }
 
 struct Process(Box<dyn ChildWrapper>);

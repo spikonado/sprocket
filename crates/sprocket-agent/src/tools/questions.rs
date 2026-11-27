@@ -114,8 +114,6 @@ pub(super) struct QuestionAnswer {
     pub(super) option_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) text: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) values: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

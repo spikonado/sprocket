@@ -1,6 +1,3 @@
-use std::sync::{Arc, Mutex};
-
-use futures::future::BoxFuture;
 use rig::tool::{Tool, ToolExecutionError};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -15,8 +12,8 @@ use super::questions::{
 };
 use crate::secret_redaction::redact_secrets;
 use crate::services::{
-    Descriptions, ElicitationForm, ElicitationOutcome, Elicitor, JsonObject, McpTransport,
-    SearchResults, ServiceHub, ServiceTool, SharedServiceHub, ToolPolicy,
+    Descriptions, JsonObject, McpTransport, SearchResults, ServiceHub, ServiceTool,
+    SharedServiceHub, ToolPolicy,
 };
 
 const DEFAULT_SEARCH_LIMIT: usize = 10;
@@ -78,9 +75,6 @@ pub(crate) struct RequestConnectorArgs {
     /// An MCP server to add instead of a known connector.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) custom: Option<CustomConnector>,
-    /// Why the task needs it, shown to the user.
-    #[schemars(length(min = 1, max = 2000))]
-    pub(crate) reason: String,
     #[serde(
         rename = "yieldTimeMs",
         default = "default_yield_ms",
@@ -272,26 +266,9 @@ async fn call_service(
             }
         },
     }
-    let elicitor = Arc::new(QuestionElicitor {
-        context,
-        job_id,
-        connector: tool.connector,
-        replies: Mutex::default(),
-    });
-    let mut result = hub
-        .call(&args.path, args.arguments, elicitor.clone())
+    hub.call(&args.path, args.arguments)
         .await
-        .map_err(tool_error)?;
-    let replies = std::mem::take(&mut *elicitor.replies.lock().unwrap_or_else(|e| e.into_inner()));
-    if let Some(content) = result.get_mut("content").and_then(Value::as_array_mut) {
-        content.extend(replies.into_iter().map(|reply| {
-            json!({
-                "type": "text",
-                "text": format!("The user wrote in response to a form from this tool: {reply}"),
-            })
-        }));
-    }
-    Ok(result)
+        .map_err(tool_error)
 }
 
 #[derive(Debug, PartialEq)]
@@ -352,66 +329,6 @@ fn blocking_question(question: &str, detail: Value) -> NewQuestion {
     }
 }
 
-struct QuestionElicitor {
-    context: AgentToolContext,
-    job_id: String,
-    connector: String,
-    /// Free text the user sent instead of filling in a form.
-    replies: Mutex<Vec<String>>,
-}
-
-impl Elicitor for QuestionElicitor {
-    fn elicit(&self, form: ElicitationForm) -> BoxFuture<'_, ElicitationOutcome> {
-        Box::pin(async move {
-            if !self.context.can_ask_user {
-                return ElicitationOutcome::Decline;
-            }
-            let question = if form.message.trim().is_empty() {
-                format!("{} needs more information.", self.connector)
-            } else {
-                form.message
-            };
-            let detail = json!({
-                "type": "form",
-                "connector": self.connector,
-                "fields": form.fields,
-            });
-            let question = blocking_question(&question, detail);
-            match ask_and_settle(&self.context, &self.job_id, &question).await {
-                Ok(snapshot) => {
-                    let (outcome, reply) = elicitation_from_snapshot(&snapshot);
-                    if let Some(reply) = reply {
-                        self.replies
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .push(reply);
-                    }
-                    outcome
-                }
-                Err(error) => {
-                    tracing::warn!("failed to ask for {}'s form: {error}", self.connector);
-                    ElicitationOutcome::Cancel
-                }
-            }
-        })
-    }
-}
-
-fn elicitation_from_snapshot(snapshot: &QuestionSnapshot) -> (ElicitationOutcome, Option<String>) {
-    match snapshot.status.as_str() {
-        "answered" => {
-            let answer = snapshot.answer.clone().unwrap_or_default();
-            let text = answer.text.filter(|text| !text.trim().is_empty());
-            match answer.values {
-                Some(values) => (ElicitationOutcome::Accept(values), text),
-                None => (ElicitationOutcome::Decline, text),
-            }
-        }
-        "skipped" => (ElicitationOutcome::Decline, None),
-        _ => (ElicitationOutcome::Cancel, None),
-    }
-}
-
 impl rig::tool::Tool for RequestConnectorTool {
     const NAME: &'static str = "request_connector";
     type Error = ToolExecutionError;
@@ -457,15 +374,6 @@ fn prepare_connector_request(
     args: &RequestConnectorArgs,
     hub: &dyn ServiceHub,
 ) -> Result<NewQuestion, ToolExecutionError> {
-    let reason = args.reason.trim();
-    if reason.is_empty() {
-        return Err(tool_failure("reason cannot be empty"));
-    }
-    if reason.chars().count() > MAX_QUESTION_CHARS {
-        return Err(tool_failure(format!(
-            "reason cannot exceed {MAX_QUESTION_CHARS} characters."
-        )));
-    }
     let (name, connector) = match (&args.connector, &args.custom) {
         (Some(id), None) => {
             let name = hub.connector_name(id.trim()).ok_or_else(|| {
@@ -499,7 +407,7 @@ fn prepare_connector_request(
         question: format!("Connect {name}?"),
         options: Vec::new(),
         timeout_ms: args.timeout_ms,
-        detail: Some(json!({ "type": "connector", "reason": reason, "connector": connector })),
+        detail: Some(json!({ "type": "connector", "connector": connector })),
     })
 }
 

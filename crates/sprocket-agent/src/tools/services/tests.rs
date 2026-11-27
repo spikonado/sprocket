@@ -44,37 +44,6 @@ fn approvals_allow_only_the_allow_options_and_return_the_users_words() {
     assert!(approval_from_snapshot(&snapshot("cancelled", None)).is_err());
 }
 
-#[test]
-fn form_answers_map_to_elicitation_actions() {
-    let mut values = JsonObject::new();
-    values.insert("project".to_string(), json!("sprocket"));
-    let filled = Some(QuestionAnswer {
-        values: Some(values.clone()),
-        ..QuestionAnswer::default()
-    });
-    assert_eq!(
-        elicitation_from_snapshot(&snapshot("answered", filled)),
-        (ElicitationOutcome::Accept(values), None)
-    );
-    assert_eq!(
-        elicitation_from_snapshot(&snapshot("answered", text("not that one"))),
-        (
-            ElicitationOutcome::Decline,
-            Some("not that one".to_string())
-        )
-    );
-    assert_eq!(
-        elicitation_from_snapshot(&snapshot("skipped", None)),
-        (ElicitationOutcome::Decline, None)
-    );
-    for status in ["cancelled", "timedOut"] {
-        assert_eq!(
-            elicitation_from_snapshot(&snapshot(status, None)).0,
-            ElicitationOutcome::Cancel
-        );
-    }
-}
-
 fn has_reserved_convex_key(value: &Value) -> bool {
     match value {
         Value::Object(object) => object

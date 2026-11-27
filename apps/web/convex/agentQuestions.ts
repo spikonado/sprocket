@@ -11,7 +11,6 @@ import { v, type Infer } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import {
 	type AgentQuestionDetail,
-	type QuestionValues,
 	finalizeQuestionOptions,
 	headActionablePendingQuestion,
 	isPendingQuestionActionable,
@@ -26,12 +25,7 @@ import { toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { vAgentQuestionSnapshot } from '@convex/lib/docs';
 import { assertRunAcceptsWork } from '@convex/lib/runLease';
 import { isSettledExecutorJobStatus } from '@convex/lib/runs';
-import {
-	isRunFinalStatus,
-	vAgentQuestionDetail,
-	vAskQuestionOption,
-	vQuestionValues
-} from '@convex/lib/validators';
+import { isRunFinalStatus, vAgentQuestionDetail, vAskQuestionOption } from '@convex/lib/validators';
 import { changeThreadActivity } from '@convex/lib/threadHierarchy';
 
 export type AgentQuestionSnapshot = Infer<typeof vAgentQuestionSnapshot>;
@@ -186,8 +180,7 @@ export const answer = mutation({
 		threadId: v.id('threadRecords'),
 		questionId: v.id('agentQuestions'),
 		optionId: v.optional(v.string()),
-		text: v.optional(v.string()),
-		values: v.optional(vQuestionValues)
+		text: v.optional(v.string())
 	},
 	returns: v.object({
 		question: vAgentQuestionSnapshot,
@@ -231,7 +224,6 @@ export async function answerPendingQuestion(
 		questionId: Id<'agentQuestions'>;
 		optionId?: string;
 		text?: string;
-		values?: QuestionValues;
 	}
 ): Promise<QuestionAnswerResult> {
 	const question = await ctx.db.get('agentQuestions', args.questionId);
@@ -255,10 +247,8 @@ export async function answerPendingQuestion(
 
 	const answer = normalizeQuestionAnswer({
 		options: question.options,
-		detail: question.detail,
 		optionId: args.optionId,
-		text: args.text,
-		values: args.values
+		text: args.text
 	});
 
 	const run = await ctx.db.get('runs', question.runId);

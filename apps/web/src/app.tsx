@@ -40,7 +40,6 @@ import AuthGate from '$lib/components/home/auth-gate';
 import BrowserSignInOverlay from '$lib/components/home/browser-signin-overlay';
 import CalmCentered from '$lib/components/home/calm-centered';
 import PromptComposer from '$lib/components/home/prompt-composer';
-import type { QuestionAnswerInput } from '$lib/components/home/agent-question';
 import ConversationNotices from '$lib/components/home/conversation-notices';
 import PurchaseApprovals from '$lib/components/home/purchase-approvals';
 import CreateThreadHeading from '$lib/components/home/create-thread-heading';
@@ -1480,16 +1479,16 @@ export default function App({
 		if (currentThreadDeleted) leaveCurrentThreadRef.current();
 	}, [currentThreadDeleted, leaveCurrentThreadRef]);
 
-	async function settleAgentQuestion(action: 'answer' | 'skip', input?: QuestionAnswerInput) {
+	async function settleAgentQuestion(action: 'answer' | 'skip', optionId?: string) {
 		const question = pendingAgentQuestion;
 		const threadId = currentThreadId;
 		const userId = signedInUserIdRef.current;
 
 		if (!question || !threadId || !userId || answeringAgentQuestion) return;
 
-		const answerOptionId = input ? input.optionId : selectedQuestionOptionId;
+		const answerOptionId = optionId ?? selectedQuestionOptionId;
 
-		if (action === 'answer' && !answerOptionId && !input?.values && !prompt.trim()) return;
+		if (action === 'answer' && !answerOptionId && !prompt.trim()) return;
 
 		setAnsweringAgentQuestion(true);
 		setCurrentError(null);
@@ -1517,7 +1516,6 @@ export default function App({
 							threadId,
 							questionId: question.questionId,
 							optionId: answerOptionId ?? undefined,
-							values: input?.values,
 							text: answerText || undefined
 						})
 					: await skipAgentQuestion({ threadId, questionId: question.questionId });
@@ -2753,7 +2751,9 @@ export default function App({
 													usageThreadId={currentThreadId}
 													selectedQuestionOptionId={selectedQuestionOptionId}
 													onSelectedQuestionOptionIdChange={setSelectedQuestionOptionId}
-													onAnswerQuestion={(answer) => void settleAgentQuestion('answer', answer)}
+													onAnswerQuestion={(optionId) =>
+														void settleAgentQuestion('answer', optionId)
+													}
 													questionConnectorSetup={
 														localApi && signedInUserId ? { userId: signedInUserId, localApi } : null
 													}
