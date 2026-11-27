@@ -12,11 +12,14 @@ use rig::operation::Completion;
 use rig::providers::anthropic::AnthropicConfig;
 use rig::wasm_compat::WasmCompatSend;
 use rig::{DynModel, Model};
+use rmcp::model::{CallToolResult, Tool};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::sync::OwnedMutexGuard;
 
 use crate::anthropic::DEFAULT_MAX_TOKENS;
+
+pub(crate) mod mcp;
 
 pub(crate) const MCP_SERVER: &str = "sprocket";
 const UNUSED_ENDPOINT: &str = "http://cli-session.invalid";
@@ -40,7 +43,7 @@ pub(crate) trait Cli: Send + Sync + 'static {
 pub(crate) trait CliProcess: Send + 'static {
     fn send_user(&self, content: Vec<Value>);
 
-    fn answer(&self, tool_use_id: &str, result: Value);
+    fn answer(&self, tool_use_id: &str, result: CallToolResult);
 
     fn next_event(&mut self) -> impl Future<Output = Event> + Send;
 }
@@ -51,7 +54,7 @@ pub(crate) struct Spawn<'a> {
     pub(crate) effort: Option<&'a str>,
     pub(crate) system_prompt: &'a str,
     pub(crate) session: SessionStart,
-    pub(crate) tools: Vec<Value>,
+    pub(crate) tools: Vec<Tool>,
 }
 
 pub(crate) enum SessionStart {
@@ -127,65 +130,6 @@ pub(crate) fn resets_in(seconds: u64) -> String {
     }
 }
 
-pub(crate) fn mcp_tool_result(block: &Value) -> Value {
-    let content: Vec<Value> = match &block["content"] {
-        Value::String(text) => vec![json!({ "type": "text", "text": text })],
-        Value::Array(items) => items
-            .iter()
-            .map(|item| match item["type"].as_str() {
-                Some("text") => json!({ "type": "text", "text": item["text"] }),
-                Some("image") if item["source"]["type"] == "base64" => json!({
-                    "type": "image",
-                    "data": item["source"]["data"],
-                    "mimeType": item["source"]["media_type"],
-                }),
-                _ => json!({ "type": "text", "text": item.to_string() }),
-            })
-            .collect(),
-        _ => Vec::new(),
-    };
-    json!({ "content": content, "isError": block["is_error"] == true })
-}
-
-#[derive(Debug, PartialEq)]
-pub(crate) enum McpReply {
-    /// A notification or response, which gets no JSON-RPC reply.
-    Ack,
-    Respond(Value),
-    ToolCall {
-        rpc_id: Value,
-        params: Value,
-    },
-}
-
-pub(crate) fn mcp_reply(message: &Value, tools: &[Value]) -> McpReply {
-    let id = &message["id"];
-    let result =
-        |result: Value| McpReply::Respond(json!({ "jsonrpc": "2.0", "id": id, "result": result }));
-    let method = message["method"].as_str();
-    if id.is_null() || method.is_none() {
-        return McpReply::Ack;
-    }
-    match method {
-        Some("initialize") => result(json!({
-            "protocolVersion": message["params"]["protocolVersion"],
-            "capabilities": { "tools": {} },
-            "serverInfo": { "name": MCP_SERVER, "version": env!("CARGO_PKG_VERSION") },
-        })),
-        Some("tools/list") => result(json!({ "tools": tools })),
-        Some("ping") => result(json!({})),
-        Some("tools/call") => McpReply::ToolCall {
-            rpc_id: id.clone(),
-            params: message["params"].clone(),
-        },
-        _ => McpReply::Respond(rpc_error(id, -32601, "Method not found")),
-    }
-}
-
-pub(crate) fn rpc_error(id: &Value, code: i64, message: &str) -> Value {
-    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
-}
-
 struct Run<C: Cli> {
     cli: C,
     instructions: String,
@@ -236,7 +180,7 @@ enum Awaiting {
 struct Turn {
     launch: Launch,
     system_prompt: String,
-    tools: Vec<Value>,
+    tools: Vec<Tool>,
     messages: Vec<Value>,
     hashes: Vec<Digest32>,
 }
@@ -255,18 +199,18 @@ impl Turn {
             }
             system_prompt.push_str(text);
         }
-        let tools: Vec<Value> = body["tools"]
+        let tools = body["tools"]
             .as_array()
             .into_iter()
             .flatten()
             .map(|tool| {
-                json!({
+                serde_json::from_value::<Tool>(json!({
                     "name": tool["name"],
                     "description": tool["description"],
                     "inputSchema": tool["input_schema"],
-                })
+                }))
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
         let messages: Vec<Value> = body["messages"]
             .as_array()
             .into_iter()
@@ -278,7 +222,7 @@ impl Turn {
                 model,
                 effort: body["output_config"]["effort"].as_str().map(str::to_string),
                 system: digest(&Value::String(system_prompt.clone())),
-                tools: digest(&Value::Array(tools.clone())),
+                tools: digest(&serde_json::to_value(&tools)?),
             },
             system_prompt,
             tools,
@@ -671,7 +615,7 @@ impl<C: Cli> TurnStream<C> {
                 for (tool_use_id, result) in results {
                     session
                         .process
-                        .answer(&tool_use_id, mcp_tool_result(&result));
+                        .answer(&tool_use_id, mcp::tool_result(&result));
                 }
                 session.live.expect_turn(&turn);
             }
