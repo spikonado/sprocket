@@ -10,6 +10,8 @@ import {
 import { v, type Infer } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import {
+	type AgentQuestionDetail,
+	type QuestionValues,
 	finalizeQuestionOptions,
 	headActionablePendingQuestion,
 	isPendingQuestionActionable,
@@ -24,7 +26,12 @@ import { toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { vAgentQuestionSnapshot } from '@convex/lib/docs';
 import { assertRunAcceptsWork } from '@convex/lib/runLease';
 import { isSettledExecutorJobStatus } from '@convex/lib/runs';
-import { isRunFinalStatus, vAskQuestionOption } from '@convex/lib/validators';
+import {
+	isRunFinalStatus,
+	vAgentQuestionDetail,
+	vAskQuestionOption,
+	vQuestionValues
+} from '@convex/lib/validators';
 import { changeThreadActivity } from '@convex/lib/threadHierarchy';
 
 export type AgentQuestionSnapshot = Infer<typeof vAgentQuestionSnapshot>;
@@ -38,6 +45,8 @@ export function toAgentQuestionSnapshot(question: Doc<'agentQuestions'>): AgentQ
 		status: question.status,
 		sequence: question.sequence
 	};
+
+	if (question.detail) snapshot.detail = question.detail;
 
 	if (question.timeoutAt !== undefined) snapshot.timeoutAt = question.timeoutAt;
 
@@ -65,6 +74,7 @@ type CreateQuestionArgs = {
 	jobId?: Id<'executorJobs'>;
 	question: string;
 	options: Infer<typeof vAskQuestionOption>[];
+	detail?: AgentQuestionDetail;
 	timeoutMs?: number | null;
 	executionSecret: string;
 };
@@ -91,7 +101,7 @@ async function createQuestion(
 	}
 
 	const question = validateQuestionText(args.question);
-	const options = finalizeQuestionOptions(args.options);
+	const options = finalizeQuestionOptions(args.options, args.detail);
 
 	const timeoutMs = validateQuestionTimeoutMs(args.timeoutMs);
 	const now = Date.now();
@@ -105,6 +115,7 @@ async function createQuestion(
 			jobId: job._id,
 			question,
 			options,
+			detail: args.detail,
 			status: timeoutMs === 0 ? 'timedOut' : 'pending',
 			timeoutAt,
 			sequence
@@ -151,6 +162,7 @@ const vCreateQuestionArgs = {
 	jobId: v.optional(v.id('executorJobs')),
 	question: v.string(),
 	options: v.array(vAskQuestionOption),
+	detail: v.optional(vAgentQuestionDetail),
 	executionSecret: v.string()
 };
 
@@ -174,7 +186,8 @@ export const answer = mutation({
 		threadId: v.id('threadRecords'),
 		questionId: v.id('agentQuestions'),
 		optionId: v.optional(v.string()),
-		text: v.optional(v.string())
+		text: v.optional(v.string()),
+		values: v.optional(vQuestionValues)
 	},
 	returns: v.object({
 		question: vAgentQuestionSnapshot,
@@ -218,6 +231,7 @@ export async function answerPendingQuestion(
 		questionId: Id<'agentQuestions'>;
 		optionId?: string;
 		text?: string;
+		values?: QuestionValues;
 	}
 ): Promise<QuestionAnswerResult> {
 	const question = await ctx.db.get('agentQuestions', args.questionId);
@@ -241,8 +255,10 @@ export async function answerPendingQuestion(
 
 	const answer = normalizeQuestionAnswer({
 		options: question.options,
+		detail: question.detail,
 		optionId: args.optionId,
-		text: args.text
+		text: args.text,
+		values: args.values
 	});
 
 	const run = await ctx.db.get('runs', question.runId);

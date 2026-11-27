@@ -1,5 +1,12 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { DatabaseReader } from '@convex/_generated/server';
+import type { Infer } from 'convex/values';
+import { z } from 'zod';
+import type {
+	vAgentQuestionDetail,
+	vQuestionFormField,
+	vQuestionValues
+} from '@convex/lib/validators';
 
 export async function isPendingQuestionActionable(
 	db: DatabaseReader,
@@ -81,6 +88,10 @@ export const MAX_OPTION_ID_CHARS = 20;
 
 export const MAX_OPTION_LABEL_CHARS = 200;
 
+const MAX_APPROVAL_ARGUMENTS_CHARS = 4000;
+
+export const CONNECTED_OPTION_ID = 'connected';
+
 export const QUESTION_TIMEOUT_CHECKPOINT_MS = 365 * 24 * 60 * 60 * 1000;
 
 export function validateQuestionTimeoutMs(
@@ -104,10 +115,17 @@ export type AgentQuestionOption = {
 	label: string;
 };
 
+export type AgentQuestionDetail = Infer<typeof vAgentQuestionDetail>;
+
+export type QuestionFormField = Infer<typeof vQuestionFormField>;
+
+export type QuestionValues = Infer<typeof vQuestionValues>;
+
 export type AgentQuestionAnswer = {
 	optionId?: string;
 	optionLabel?: string;
 	text?: string;
+	values?: QuestionValues;
 };
 
 export type AnsweredAgentQuestion = {
@@ -181,44 +199,148 @@ function validateAgentOptions(options: AgentQuestionOption[]): AgentQuestionOpti
 	return normalized;
 }
 
-export function finalizeQuestionOptions(options: AgentQuestionOption[]): AgentQuestionOption[] {
-	return [...validateAgentOptions(options), agentDecideOption()];
+const DETAIL_OPTIONS: Record<AgentQuestionDetail['type'], AgentQuestionOption[]> = {
+	approval: [
+		{ id: 'allow', label: 'Allow once' },
+		{ id: 'always', label: 'Always allow' },
+		{ id: 'deny', label: 'Deny' }
+	],
+	form: [],
+	connector: [{ id: CONNECTED_OPTION_ID, label: 'Connected' }]
+};
+
+/** Questions with a `detail` get that kind's fixed options in place of the agent's. */
+export function finalizeQuestionOptions(
+	options: AgentQuestionOption[],
+	detail?: AgentQuestionDetail
+): AgentQuestionOption[] {
+	if (!detail) return [...validateAgentOptions(options), agentDecideOption()];
+	validateQuestionDetail(detail);
+
+	return DETAIL_OPTIONS[detail.type];
+}
+
+function validateQuestionDetail(detail: AgentQuestionDetail) {
+	if (detail.type === 'approval' && detail.arguments.length > MAX_APPROVAL_ARGUMENTS_CHARS) {
+		throw new Error(`Approval arguments cannot exceed ${MAX_APPROVAL_ARGUMENTS_CHARS} characters.`);
+	}
+
+	if (detail.type !== 'form') return;
+	const names = new Set<string>();
+
+	for (const field of detail.fields) {
+		// Answers store values in a Convex record, whose keys can't be empty or start with `$` or `_`.
+		if (!/^[^$_]/.test(field.name)) {
+			throw new Error(`Form field name '${field.name}' is not supported.`);
+		}
+
+		if (names.has(field.name)) throw new Error(`Duplicate form field '${field.name}'.`);
+		names.add(field.name);
+
+		if (field.kind === 'enum' && !field.enumValues?.length) {
+			throw new Error(`Form field '${field.name}' needs enum values.`);
+		}
+
+		if (field.enumLabels && field.enumLabels.length !== field.enumValues?.length) {
+			throw new Error(`Form field '${field.name}' needs one label per enum value.`);
+		}
+
+		if (field.default !== undefined && !formFieldAccepts(field, field.default)) {
+			throw new Error(`Form field '${field.name}' has a default of the wrong kind.`);
+		}
+	}
+}
+
+function formFieldSchema(field: QuestionFormField) {
+	switch (field.kind) {
+		case 'string':
+			return z.string();
+		case 'number':
+			return z.number();
+		case 'integer':
+			return z.int();
+		case 'boolean':
+			return z.boolean();
+		case 'enum':
+			return z.enum(field.enumValues ?? []);
+	}
+}
+
+function formFieldAccepts(field: QuestionFormField, value: string | number | boolean) {
+	return formFieldSchema(field).safeParse(value).success;
+}
+
+export function formValuesError(
+	fields: QuestionFormField[],
+	values: QuestionValues
+): string | null {
+	for (const name of Object.keys(values)) {
+		if (!fields.some((field) => field.name === name)) return `Unknown form field '${name}'.`;
+	}
+
+	for (const field of fields) {
+		const value = values[field.name];
+		const label = field.title ?? field.name;
+
+		if (value === undefined) {
+			if (field.required) return `${label} is required.`;
+			continue;
+		}
+
+		if (!formFieldAccepts(field, value)) {
+			return field.kind === 'enum'
+				? `${label} must be one of the listed choices.`
+				: `${label} must be ${field.kind === 'integer' ? 'an' : 'a'} ${field.kind}.`;
+		}
+	}
+
+	return null;
 }
 
 export function normalizeQuestionAnswer(args: {
 	options: AgentQuestionOption[];
+	detail?: AgentQuestionDetail;
 	optionId?: string;
 	text?: string;
+	values?: QuestionValues;
 }): AgentQuestionAnswer {
 	const text = args.text?.trim() || undefined;
 	const optionId = args.optionId?.trim() || undefined;
+	const { values } = args;
 
-	if (!optionId && !text) {
+	if (values) {
+		if (args.detail?.type !== 'form') throw new Error('This question takes no form values.');
+		const error = formValuesError(args.detail.fields, values);
+
+		if (error) throw new Error(error);
+	}
+
+	if (!optionId && !text && !values) {
 		throw new Error('Select an option or provide an answer.');
 	}
 
-	if (!optionId) {
-		return { text };
+	const answer: AgentQuestionAnswer = {};
+
+	if (optionId) {
+		const option = args.options.find((entry) => entry.id === optionId);
+
+		if (!option) {
+			throw new Error(`Unknown option id '${optionId}'.`);
+		}
+
+		answer.optionId = option.id;
+		answer.optionLabel = option.label;
 	}
-
-	const option = args.options.find((entry) => entry.id === optionId);
-
-	if (!option) {
-		throw new Error(`Unknown option id '${optionId}'.`);
-	}
-
-	const answer: AgentQuestionAnswer = {
-		optionId: option.id,
-		optionLabel: option.label
-	};
 
 	if (text) answer.text = text;
+
+	if (values) answer.values = values;
 
 	return answer;
 }
 
 function formatAnswer(answer: AgentQuestionAnswer): string {
-	return [answer.optionLabel, answer.text]
+	return [answer.optionLabel, answer.values && JSON.stringify(answer.values), answer.text]
 		.filter((part): part is string => Boolean(part))
 		.join(': ');
 }

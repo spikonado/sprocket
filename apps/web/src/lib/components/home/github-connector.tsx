@@ -8,7 +8,8 @@ import {
 	Switch,
 	rowPrimaryButtonClass,
 	rowSecondaryButtonClass,
-	useConnectorAction
+	useConnectorAction,
+	useOnConnected
 } from './connector-card-parts';
 import { DeviceSignInPanel, useDeviceSignIn, type SignInApi } from './device-sign-in';
 import { pollWhileInstalling, usePolledStatus } from './use-connectors';
@@ -26,10 +27,12 @@ const sourceLabels: Record<NonNullable<GitHubHostStatus['source']>, string> = {
 
 export default function GitHubConnector({
 	userId,
-	localApi
+	localApi,
+	onConnected
 }: {
 	userId: string;
 	localApi: GitHubApi;
+	onConnected?: () => void;
 }) {
 	const fetchStatus = useCallback(() => localApi.fetchGitHubStatus(userId), [localApi, userId]);
 
@@ -47,6 +50,11 @@ export default function GitHubConnector({
 	const enabled = status?.enabled ?? true;
 	const installed = status?.install.state === 'installed';
 	const busy = pending !== null;
+
+	useOnConnected(
+		installed && enabled && status.hosts.some((host) => host.enabled && host.login !== null),
+		onConnected
+	);
 
 	return (
 		<CliConnectorCard

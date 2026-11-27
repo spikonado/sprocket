@@ -46,6 +46,7 @@ import type * as lib_credits from "../lib/credits.js";
 import type * as lib_docs from "../lib/docs.js";
 import type * as lib_dodoProducts from "../lib/dodoProducts.js";
 import type * as lib_executorJobs from "../lib/executorJobs.js";
+import type * as lib_fileLimits from "../lib/fileLimits.js";
 import type * as lib_files from "../lib/files.js";
 import type * as lib_firecrawl from "../lib/firecrawl.js";
 import type * as lib_gatewayFetch from "../lib/gatewayFetch.js";
@@ -162,6 +163,7 @@ declare const fullApi: ApiFromModules<{
   "lib/docs": typeof lib_docs;
   "lib/dodoProducts": typeof lib_dodoProducts;
   "lib/executorJobs": typeof lib_executorJobs;
+  "lib/fileLimits": typeof lib_fileLimits;
   "lib/files": typeof lib_files;
   "lib/firecrawl": typeof lib_firecrawl;
   "lib/gatewayFetch": typeof lib_gatewayFetch;

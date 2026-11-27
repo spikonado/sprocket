@@ -1,6 +1,7 @@
 import { v } from 'convex/values';
 import schema from '@convex/schema';
 import {
+	vAgentQuestionDetail,
 	vAgentQuestionStatus,
 	vAskQuestionAnswer,
 	vAskQuestionOption,
@@ -33,6 +34,7 @@ export const vAgentQuestionSnapshot = v.object({
 	questionId: v.id('agentQuestions'),
 	question: v.string(),
 	options: v.array(vAskQuestionOption),
+	detail: v.optional(vAgentQuestionDetail),
 	status: vAgentQuestionStatus,
 	answer: v.optional(vAskQuestionAnswer),
 	sequence: v.number(),

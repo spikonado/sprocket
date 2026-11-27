@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useEffectEvent, useState, type ReactNode } from 'react';
 import { LoaderCircle, RefreshCw } from 'lucide-react';
 import { cn } from '$lib/utils';
 import type { ToolInstall } from '$lib/types/sprocket';
@@ -16,6 +16,9 @@ export const rowPrimaryButtonClass =
 
 export const rowSecondaryButtonClass =
 	'border-border text-foreground hover:bg-hover-fill inline-flex h-7 shrink-0 items-center rounded-md border px-2.5 text-[12px] transition disabled:opacity-50';
+
+export const inputClass =
+	'border-border bg-background text-foreground placeholder:text-muted-foreground focus:border-ring h-9 w-full min-w-0 rounded-lg border px-3 text-[13px] outline-none disabled:opacity-50';
 
 export function useConnectorAction<Key extends string>(name: string) {
 	const [pending, setPending] = useState<Key | null>(null);
@@ -36,6 +39,52 @@ export function useConnectorAction<Key extends string>(name: string) {
 	}
 
 	return { pending, error, act };
+}
+
+/** Calls `onConnected` whenever `connected` turns true, including on mount. */
+export function useOnConnected(connected: boolean, onConnected: (() => void) | undefined) {
+	const notify = useEffectEvent(() => onConnected?.());
+
+	useEffect(() => {
+		if (connected) notify();
+	}, [connected]);
+}
+
+export function ConnectorCardFrame({
+	logo,
+	name,
+	summary,
+	actions,
+	error,
+	children
+}: {
+	logo: ReactNode;
+	name: ReactNode;
+	summary: ReactNode;
+	actions?: ReactNode;
+	error: string | null;
+	children?: ReactNode;
+}) {
+	return (
+		<div className="border-border overflow-hidden rounded-xl border">
+			<div className="flex items-center gap-3 p-5">
+				{logo}
+				<div className="min-w-0 flex-1">
+					<div className="text-foreground flex items-center gap-2 text-[15px]">{name}</div>
+					{summary}
+				</div>
+				{actions}
+			</div>
+
+			{children}
+
+			{error && (
+				<p role="alert" className="text-destructive border-border border-t px-5 py-3 text-[12px]">
+					{error}
+				</p>
+			)}
+		</div>
+	);
 }
 
 export function CliConnectorCard({
@@ -70,11 +119,11 @@ export function CliConnectorCard({
 	children: ReactNode;
 }) {
 	return (
-		<div className="border-border overflow-hidden rounded-xl border">
-			<div className="flex items-center gap-3 p-5">
-				{logo}
-				<div className="min-w-0 flex-1">
-					<p className="text-foreground text-[15px]">{name}</p>
+		<ConnectorCardFrame
+			logo={logo}
+			name={name}
+			summary={
+				<>
 					{description && <ConnectorDescription>{description}</ConnectorDescription>}
 					{cli ? (
 						<CliInstallLine
@@ -88,39 +137,38 @@ export function CliConnectorCard({
 							{checking ? `Checking ${name}…` : 'Status unavailable'}
 						</p>
 					)}
-				</div>
-				{cli?.install.state === 'failed' && (
+				</>
+			}
+			actions={
+				<>
+					{cli?.install.state === 'failed' && (
+						<button
+							type="button"
+							className={primaryButtonClass}
+							disabled={retrying}
+							onClick={onRetry}
+						>
+							{retrying && <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />}
+							Retry
+						</button>
+					)}
 					<button
 						type="button"
-						className={primaryButtonClass}
-						disabled={retrying}
-						onClick={onRetry}
+						className="text-muted-foreground hover:text-foreground hover:bg-hover-fill flex size-7 shrink-0 items-center justify-center rounded-md transition disabled:opacity-50"
+						aria-label={`Check ${name} again`}
+						title="Check again"
+						disabled={checking || busy}
+						onClick={onRefresh}
 					>
-						{retrying && <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />}
-						Retry
+						<RefreshCw className={cn('size-3.5', checking && 'animate-spin')} />
 					</button>
-				)}
-				<button
-					type="button"
-					className="text-muted-foreground hover:text-foreground hover:bg-hover-fill flex size-7 shrink-0 items-center justify-center rounded-md transition disabled:opacity-50"
-					aria-label={`Check ${name} again`}
-					title="Check again"
-					disabled={checking || busy}
-					onClick={onRefresh}
-				>
-					<RefreshCw className={cn('size-3.5', checking && 'animate-spin')} />
-				</button>
-				{action}
-			</div>
-
+					{action}
+				</>
+			}
+			error={error}
+		>
 			{children}
-
-			{error && (
-				<p role="alert" className="text-destructive border-border border-t px-5 py-3 text-[12px]">
-					{error}
-				</p>
-			)}
-		</div>
+		</ConnectorCardFrame>
 	);
 }
 
