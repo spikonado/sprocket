@@ -39,6 +39,7 @@ sprocket-convex.workspace = true
 sprocket-kicad.workspace = true
 sprocket-transcript.workspace = true
 sprocket-workspace.workspace = true
+sse-stream = "0.2.6"
 tar = "0.4"
 tempfile.workspace = true
 tokio = { workspace = true, features = ["full"] }

@@ -1,5 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
+import { api } from '@convex/_generated/api';
+import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
 import type { ConnectorStatus, LocalApi, McpConnector } from '$lib/types/sprocket';
 import SettingsConnectors, { type ConnectorsApi } from './settings-connectors';
 
@@ -34,40 +36,44 @@ function mount(fetchConnectors: LocalApi['fetchConnectors'], mcp: Partial<Connec
 	const uninstallConnector = vi.fn<LocalApi['uninstallConnector']>(async () => kicad({}));
 	const installed = { state: 'installed' } as const;
 	const unused = async () => Promise.reject(new Error('Not used in this test.'));
+	const client = new ConvexTestClient();
+	client.registerQuery(api.mcpServers.listMine, []);
 
 	render(
-		<SettingsConnectors
-			userId="user-a"
-			localApi={{
-				fetchConnectors,
-				installOrUpdateConnector,
-				uninstallConnector,
-				fetchGitHubStatus: async () => ({
-					install: installed,
-					enabled: true,
-					cliVersion: '2.81.0',
-					hosts: []
-				}),
-				fetchVercelStatus: async () => ({
-					install: installed,
-					version: '50.1.0',
-					account: { state: 'signedOut' }
-				}),
-				updateGitHubSettings: unused,
-				signOutGitHub: unused,
-				signOutVercel: unused,
-				installConnectorCli: unused,
-				fetchConnectorSignIn: unused,
-				startConnectorSignIn: unused,
-				cancelConnectorSignIn: unused,
-				fetchMcpConnectors: async () => [],
-				addMcpConnector: unused,
-				removeMcpConnector: unused,
-				fetchMcpTools: unused,
-				setMcpToolPolicy: unused,
-				...mcp
-			}}
-		/>
+		<ConvexTestProvider client={client}>
+			<SettingsConnectors
+				userId="user-a"
+				localApi={{
+					fetchConnectors,
+					installOrUpdateConnector,
+					uninstallConnector,
+					fetchGitHubStatus: async () => ({
+						install: installed,
+						enabled: true,
+						cliVersion: '2.81.0',
+						hosts: []
+					}),
+					fetchVercelStatus: async () => ({
+						install: installed,
+						version: '50.1.0',
+						account: { state: 'signedOut' }
+					}),
+					updateGitHubSettings: unused,
+					signOutGitHub: unused,
+					signOutVercel: unused,
+					installConnectorCli: unused,
+					fetchConnectorSignIn: unused,
+					startConnectorSignIn: unused,
+					cancelConnectorSignIn: unused,
+					fetchMcpConnectors: async () => [],
+					addMcpConnector: unused,
+					removeMcpConnector: unused,
+					fetchMcpTools: unused,
+					setMcpToolPolicy: unused,
+					...mcp
+				}}
+			/>
+		</ConvexTestProvider>
 	);
 
 	return { installOrUpdateConnector };

@@ -262,12 +262,11 @@ impl Host {
         .flatten()
         .collect();
         match self.mcp.list() {
-            Ok(servers) => connectors.extend(servers.into_iter().map(|server| {
-                format!(
-                    "{} connector (MCP server; find its tools with service_search)",
-                    server.connector.name
-                )
-            })),
+            Ok(servers) => connectors.extend(
+                servers
+                    .into_iter()
+                    .map(|server| server.connector.prompt_line()),
+            ),
             Err(error) => tracing::warn!("couldn't list MCP connectors: {error:#}"),
         }
         connectors

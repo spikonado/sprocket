@@ -112,11 +112,11 @@ async fn delete(
 async fn tools(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    AuthorizedQuery(_): AuthorizedQuery<UserRequest>,
+    AuthorizedQuery(payload): AuthorizedQuery<UserRequest>,
 ) -> Result<Json<ToolsResponse>, ApiError> {
-    let tools = service_hub::list_server_tools(&state.host, &id)
+    let tools = service_hub::list_server_tools(&state.host, &payload.user_id, &id)
         .await
-        .map_err(ApiError::bad_request)?;
+        .map_err(|error| ApiError::internal_with("Could not load MCP tools", error))?;
     Ok(Json(ToolsResponse { tools }))
 }
 
@@ -125,11 +125,14 @@ async fn set_policy(
     Path(id): Path<String>,
     AuthorizedJson(payload): AuthorizedJson<PolicyRequest>,
 ) -> Result<Json<()>, ApiError> {
-    state
-        .host
-        .mcp
-        .run(move |store| store.set_policy(&id, &payload.tool, payload.policy))
-        .await
-        .map_err(ApiError::bad_request)?;
+    service_hub::set_tool_policy(
+        &state.host,
+        &payload.user_id,
+        &id,
+        &payload.tool,
+        payload.policy,
+    )
+    .await
+    .map_err(ApiError::bad_request)?;
     Ok(Json(()))
 }

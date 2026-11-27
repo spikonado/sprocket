@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { z } from 'zod';
+import { convexClientErrorMessage } from '$lib/convex-error';
 import type { ConnectorStatus, LocalApi, ToolInstall } from '$lib/types/sprocket';
 
 const INSTALL_POLL_MS = 2000;
@@ -7,7 +8,7 @@ const UPDATE_POLL_MS = 10 * 60_000;
 
 export const caughtMessage = z
 	.instanceof(Error)
-	.transform((error) => error.message)
+	.transform((error) => convexClientErrorMessage(error) ?? '')
 	.catch('');
 
 export function usePolledStatus<T>(

@@ -33,3 +33,18 @@ fn only_loopback_http_servers_are_accepted() {
         assert!(loopback_http_url(rejected).is_err(), "{rejected}");
     }
 }
+
+#[test]
+fn remote_requests_accept_https_and_keep_credentials_out_of_urls() {
+    let transport = |url: &str| McpTransport::Http {
+        url: url.into(),
+        headers: vec!["Authorization".into()],
+    };
+    assert!(transport("https://mcp.linear.app/mcp").validate().is_ok());
+    assert!(transport("http://mcp.linear.app/mcp").validate().is_err());
+    assert!(
+        transport("https://user:secret@mcp.linear.app/mcp")
+            .validate()
+            .is_err()
+    );
+}

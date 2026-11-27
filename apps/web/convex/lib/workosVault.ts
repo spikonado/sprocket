@@ -61,7 +61,7 @@ export function providerFetch(input: string | URL, init: RequestInit = {}): Prom
 	});
 }
 
-async function responseJson<T>(
+export async function responseJson<T>(
 	response: Response,
 	service: string,
 	schema: z.ZodType<T>,
@@ -136,18 +136,17 @@ export async function readVaultObject(name: string): Promise<VaultObject | null>
 	return object;
 }
 
-export async function storeVaultObject(
+/** Writes only if the object still matches `expected`; `null` means it must not exist yet. */
+export async function writeVaultObjectIfUnchanged(
 	name: string,
 	value: string,
-	expectedObject?: VaultObject | null
-): Promise<void> {
-	const existing = expectedObject === undefined ? await readVaultObject(name) : expectedObject;
-
-	const response = existing
-		? await providerFetch(`${WORKOS_VAULT_ORIGIN}/vault/v1/kv/${encodeURIComponent(existing.id)}`, {
+	expected: VaultObject | null
+): Promise<'written' | 'conflict'> {
+	const response = expected
+		? await providerFetch(`${WORKOS_VAULT_ORIGIN}/vault/v1/kv/${encodeURIComponent(expected.id)}`, {
 				method: 'PUT',
 				headers: workosHeaders(),
-				body: JSON.stringify({ value, version_check: existing.metadata.version_id })
+				body: JSON.stringify({ value, version_check: expected.metadata.version_id })
 			})
 		: await providerFetch(`${WORKOS_VAULT_ORIGIN}/vault/v1/kv`, {
 				method: 'POST',
@@ -159,7 +158,23 @@ export async function storeVaultObject(
 				})
 			});
 
+	if (response.status === 409 || (expected && response.status === 404)) return 'conflict';
+
 	if (!response.ok) throw new ConvexError('Couldn’t save the credential in WorkOS Vault.');
+
+	return 'written';
+}
+
+export async function storeVaultObject(
+	name: string,
+	value: string,
+	expectedObject?: VaultObject | null
+): Promise<void> {
+	const existing = expectedObject === undefined ? await readVaultObject(name) : expectedObject;
+
+	if ((await writeVaultObjectIfUnchanged(name, value, existing)) === 'conflict') {
+		throw new ConvexError('Couldn’t save the credential in WorkOS Vault.');
+	}
 }
 
 export async function deleteVaultObject(name: string, expectedObject?: VaultObject | null) {

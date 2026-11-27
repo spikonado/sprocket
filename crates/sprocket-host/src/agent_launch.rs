@@ -205,6 +205,8 @@ async fn launch_agent_inner(
         .begin(recovery, owner)
         .await
         .map_err(LaunchError::Internal)?;
+    let (service_hub, installed_connectors) =
+        crate::service_hub::for_run(&host, &payload.user_id).await;
     let request = RunAgentRequest {
         chatgpt_credentials: Some(host.chatgpt_credentials.for_user(payload.user_id.clone())),
         claude_code: host.claude_code.clone(),
@@ -234,8 +236,8 @@ async fn launch_agent_inner(
         automatic_recovery,
         subagent_launcher: Some(crate::subagent_launcher::launcher(&host)),
         transcript_store: Some(Arc::clone(&host.transcript)),
-        installed_connectors: host.installed_connectors(),
-        service_hub: Some(crate::service_hub::service_hub(&host)),
+        installed_connectors,
+        service_hub: Some(service_hub),
     };
 
     let cleanup_request = request.clone();
