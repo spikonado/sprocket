@@ -245,25 +245,21 @@ export const add = action({
 		url.hash = '';
 		const headers = validHeaders(args.headers ?? {});
 		const headerNames = Object.keys(headers);
-		const server = { userId, name, url: url.href, catalogId: args.catalogId, headerNames };
+		let auth: Doc<'mcpServers'>['auth'] = 'headers';
 
-		if (headerNames.length === 0) {
-			const resource = await discoverProtectedResource(url);
-
-			const created: string = await ctx.runMutation(internal.mcpServers.insertServer, {
-				...server,
-				auth: resource ? 'oauth' : 'none',
-				status: resource ? 'needs_auth' : 'connected'
-			});
-
-			return created;
-		}
+		if (headerNames.length === 0) auth = (await discoverProtectedResource(url)) ? 'oauth' : 'none';
 
 		const connectorId: string = await ctx.runMutation(internal.mcpServers.insertServer, {
-			...server,
-			auth: 'headers',
-			status: 'connected'
+			userId,
+			name,
+			url: url.href,
+			catalogId: args.catalogId,
+			headerNames,
+			auth,
+			status: auth === 'oauth' ? 'needs_auth' : 'connected'
 		});
+
+		if (auth !== 'headers') return connectorId;
 
 		try {
 			await storeVaultObject(
@@ -517,7 +513,6 @@ export const startOAuth = action({
 		const client = await selectClient(ctx, server, authorizationServer, args.client);
 		const state = randomToken();
 		const codeVerifier = randomToken();
-		const redirectUri = callbackUrl();
 
 		await ctx.runMutation(internal.mcpServers.insertOAuthState, {
 			state,
@@ -532,14 +527,13 @@ export const startOAuth = action({
 				authorizationServer.authorization_response_iss_parameter_supported === true,
 			tokenEndpoint: authorizationServer.token_endpoint,
 			resource: resource.resource,
-			redirectUri,
 			expiresAt: Date.now() + OAUTH_STATE_TTL_MS
 		});
 
 		const url = new URL(authorizationServer.authorization_endpoint);
 		url.searchParams.set('response_type', 'code');
 		url.searchParams.set('client_id', client.clientId);
-		url.searchParams.set('redirect_uri', redirectUri);
+		url.searchParams.set('redirect_uri', callbackUrl());
 		url.searchParams.set('state', state);
 		url.searchParams.set('code_challenge', await codeChallenge(codeVerifier));
 		url.searchParams.set('code_challenge_method', 'S256');
@@ -632,7 +626,7 @@ async function completeAuthorization(
 	const result = await requestTokens(pending.tokenEndpoint, client, {
 		grant_type: 'authorization_code',
 		code,
-		redirect_uri: pending.redirectUri,
+		redirect_uri: callbackUrl(),
 		code_verifier: pending.codeVerifier,
 		resource: pending.resource
 	});
@@ -657,9 +651,11 @@ async function completeAuthorization(
 
 	const name = await credentialVaultName(pending.userId, pending.connectorId);
 	await storeVaultObject(name, JSON.stringify(credential));
-	const owner = { userId: pending.userId, connectorId: pending.connectorId };
 
-	const authorized: boolean = await ctx.runMutation(internal.mcpServers.markAuthorized, owner);
+	const authorized: boolean = await ctx.runMutation(internal.mcpServers.markAuthorized, {
+		userId: pending.userId,
+		connectorId: pending.connectorId
+	});
 
 	if (!authorized) {
 		await deleteVaultObject(name);

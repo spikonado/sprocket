@@ -100,7 +100,6 @@ export default defineSchema({
 		issuerParameterRequired: v.boolean(),
 		tokenEndpoint: v.string(),
 		resource: v.string(),
-		redirectUri: v.string(),
 		expiresAt: v.number()
 	}).index('by_state', ['state']),
 	tiers: defineTable({

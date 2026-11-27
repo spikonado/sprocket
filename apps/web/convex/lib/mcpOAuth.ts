@@ -65,8 +65,9 @@ function isPrivateHost(hostname: string): boolean {
 
 	if (host === 'localhost' || host.endsWith('.localhost')) return true;
 
-	// Only global unicast (2000::/3) IPv6 literals are public.
-	if (host.startsWith('[')) return !/^\[[23][0-9a-f]{0,3}:/.test(host);
+	// Only global unicast (2000::/3) IPv6 literals are public. URL drops leading zeros, so those
+	// always start with a four-digit group.
+	if (host.startsWith('[')) return !/^\[[23][0-9a-f]{3}:/.test(host);
 
 	return isPrivateIpv4(host);
 }

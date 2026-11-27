@@ -119,6 +119,20 @@ describe('remote MCP servers', () => {
 		vi.unstubAllEnvs();
 	});
 
+	it('accepts only global unicast IPv6 literals', async () => {
+		stubVault(() => new Response(null));
+		const asUser = initConvexTest().withIdentity({ subject: USER });
+
+		const add = (host: string) =>
+			asUser.action(api.mcpServers.add, { name: 'IPv6 server', url: `https://[${host}]/mcp` });
+
+		for (const host of ['::1', 'fc00::1', '2::1', '30::1', '200::1']) {
+			await expect(add(host)).rejects.toThrow('public HTTPS server');
+		}
+
+		await expect(add('2606:4700:4700::1111')).resolves.toBeTypeOf('string');
+	});
+
 	it('picks the pasted client, then CIMD, then DCR, then asks for a client', async () => {
 		const cimdAndDcr = oauthServer({
 			client_id_metadata_document_supported: true,
