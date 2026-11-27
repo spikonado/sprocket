@@ -41,23 +41,16 @@ fn run(args: Vec<OsString>) -> ExitCode {
     exec(command)
 }
 
-#[cfg(unix)]
 fn exec(mut command: Command) -> ExitCode {
-    use std::os::unix::process::CommandExt;
-    let error = command.exec();
+    #[cfg(unix)]
+    let error = std::os::unix::process::CommandExt::exec(&mut command);
+    #[cfg(not(unix))]
+    let error = match command.status() {
+        Ok(status) => return ExitCode::from(status.code().map_or(1, |code| code as u8)),
+        Err(error) => error,
+    };
     eprintln!("Could not run agent-browser: {error}");
     ExitCode::from(127)
-}
-
-#[cfg(not(unix))]
-fn exec(mut command: Command) -> ExitCode {
-    match command.status() {
-        Ok(status) => ExitCode::from(status.code().map_or(1, |code| code as u8)),
-        Err(error) => {
-            eprintln!("Could not run agent-browser: {error}");
-            ExitCode::from(127)
-        }
-    }
 }
 
 struct Environment {
@@ -70,16 +63,11 @@ impl Environment {
     fn read() -> Self {
         let non_empty = |name| std::env::var_os(name).filter(|value| !value.is_empty());
         // Mirrors agent-browser's `get_socket_dir`, where each daemon writes `<session>.engine`.
-        let socket_dir = match (
-            non_empty("AGENT_BROWSER_SOCKET_DIR"),
-            non_empty("XDG_RUNTIME_DIR"),
-            std::env::home_dir(),
-        ) {
-            (Some(dir), _, _) => PathBuf::from(dir),
-            (None, Some(runtime), _) => Path::new(&runtime).join(NAME),
-            (None, None, Some(home)) => home.join(".agent-browser"),
-            (None, None, None) => std::env::temp_dir().join(NAME),
-        };
+        let socket_dir = non_empty("AGENT_BROWSER_SOCKET_DIR")
+            .map(PathBuf::from)
+            .or_else(|| non_empty("XDG_RUNTIME_DIR").map(|runtime| Path::new(&runtime).join(NAME)))
+            .or_else(|| std::env::home_dir().map(|home| home.join(".agent-browser")))
+            .unwrap_or_else(|| std::env::temp_dir().join(NAME));
         Self {
             engine: non_empty("AGENT_BROWSER_ENGINE"),
             session: non_empty("AGENT_BROWSER_SESSION"),
