@@ -248,10 +248,12 @@ async fn call_fulfils_mrtr_elicitation_and_preserves_the_result() {
             "structuredContent": { "saved": true }, "isError": false
         })
     );
-    let forms = elicitor.forms.lock().unwrap();
-    assert_eq!(forms[0].message, "Who are you?");
-    assert_eq!(forms[0].fields[0].title.as_deref(), Some("Name"));
-    assert!(forms[0].fields[0].required);
+    {
+        let forms = elicitor.forms.lock().unwrap();
+        assert_eq!(forms[0].message, "Who are you?");
+        assert_eq!(forms[0].fields[0].title.as_deref(), Some("Name"));
+        assert!(forms[0].fields[0].required);
+    }
     server.await.unwrap();
 }
 

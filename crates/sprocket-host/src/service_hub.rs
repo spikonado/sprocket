@@ -164,7 +164,7 @@ impl RunServiceHub {
                 keywords,
                 &[connector.id(), connector.name(), connector.keywords()],
             );
-            (score > 0).then(|| async move {
+            (score > 0).then_some(async move {
                 let set_up =
                     tokio::time::timeout(CLI_STATUS_TIMEOUT, connector.is_set_up(&self.host))
                         .await
@@ -248,7 +248,7 @@ impl ServiceHub for RunServiceHub {
                     }),
                 }
             }
-            hits.sort_by(|a, b| b.0.cmp(&a.0));
+            hits.sort_by_key(|hit| std::cmp::Reverse(hit.0));
             result.results = hits.into_iter().take(limit).map(|(_, hit)| hit).collect();
             result
         })
