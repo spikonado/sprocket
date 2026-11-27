@@ -41,20 +41,29 @@ export function registrableDomain(host: string): string | null {
 	return result.isIcann || result.isPrivate ? result.domain : null;
 }
 
-export function namespaceDomain(registryName: string): string | null {
-	const namespace = registryName.split('/')[0].toLowerCase();
+function namespace(registryName: string): string {
+	return registryName.split('/')[0].toLowerCase();
+}
 
-	if (namespace === 'io.github' || namespace.startsWith('io.github.')) return null;
-	const host = namespace.split('.').reverse().join('.');
+function isGitHubNamespace(registryName: string): boolean {
+	return namespace(registryName).startsWith('io.github.');
+}
+
+export function namespaceDomain(registryName: string): string | null {
+	if (isGitHubNamespace(registryName) || namespace(registryName) === 'io.github') return null;
+	const host = namespace(registryName).split('.').reverse().join('.');
 
 	return registrableDomain(host);
 }
 
+// The registry proves `io.github.<org>` namespaces through that GitHub org, so a reviewed vendor
+// entry may admit one when it pins the remote domains.
 export function remoteUrl(entry: RegistryEntry, allowedDomains: string[] = []): string | undefined {
 	const official = entry._meta?.['io.modelcontextprotocol.registry/official'];
 	const domain = namespaceDomain(entry.server.name);
+	const reviewedGitHub = isGitHubNamespace(entry.server.name) && allowedDomains.length > 0;
 
-	if (official?.status !== 'active' || !official.isLatest || !domain) return;
+	if (official?.status !== 'active' || !official.isLatest || (!domain && !reviewedGitHub)) return;
 
 	for (const remote of entry.server.remotes ?? []) {
 		if (remote.type !== 'streamable-http' || /[{}]|%7[bd]/i.test(remote.url)) continue;

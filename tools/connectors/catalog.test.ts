@@ -37,18 +37,18 @@ test('matches registrable domains, including multi-label suffixes and namespace 
 	);
 });
 
-test('allows a reviewed domain exception without admitting GitHub or non-domain namespaces', () => {
+test('allows reviewed domain exceptions, including for GitHub namespaces, but no other namespaces', () => {
 	assert.equal(
 		remoteUrl(entry('com.example/mcp', 'https://mcp.example.dev/mcp'), ['example.dev']),
 		'https://mcp.example.dev/mcp'
 	);
+	assert.equal(
+		remoteUrl(entry('io.github.example/mcp', 'https://mcp.example.dev/mcp'), ['example.dev']),
+		'https://mcp.example.dev/mcp'
+	);
+	assert.equal(remoteUrl(entry('io.github.example/mcp', 'https://mcp.example.dev/mcp')), undefined);
 
-	for (const name of [
-		'io.github.example/mcp',
-		'IO.GITHUB.example/mcp',
-		'example/mcp',
-		'invalidtld.example/mcp'
-	]) {
+	for (const name of ['io.github/mcp', 'example/mcp', 'invalidtld.example/mcp']) {
 		assert.equal(remoteUrl(entry(name, 'https://mcp.example.dev/mcp'), ['example.dev']), undefined);
 	}
 });

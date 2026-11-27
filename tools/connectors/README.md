@@ -4,13 +4,14 @@
 whose data is CC0. Run `bun tools/connectors/update-catalog.ts` from the repository root after
 `bun install`. Run the tests with `node --test tools/connectors/*.test.ts`.
 
-`vendors.json` is the reviewed inclusion list, keyed by reverse-DNS namespace. Each vendor picks one
+`vendors.json` is the reviewed inclusion list, keyed by registry namespace. Each vendor picks one
 official registry server and a stable connector id. `domains` allows extra registrable remote domains
-when they differ from the namespace domain. `githubName` identifies a different name for the same
-server in the GitHub registry, for example Notion's older SSE listing.
+when they differ from the namespace domain. A vendor that publishes under its GitHub org, such as
+`io.github.getsentry`, must list its remote domains there. `githubName` identifies a different name
+for the same server in the GitHub registry, for example Notion's older SSE listing.
 
-A server qualifies when it is active, latest, and domain-namespaced, and has an HTTPS Streamable
-HTTP remote without URL templates on an allowed domain. Domain checks use the Public Suffix List,
+A server qualifies when it is active and latest, and has an HTTPS Streamable HTTP remote without URL
+templates on an allowed domain. Domain checks use the Public Suffix List,
 including private suffixes. The first qualifying remote wins.
 
 The GitHub MCP Registry supplies only the advisory `listedOnGitHub` field, matched by registry

@@ -200,6 +200,12 @@
 		"server": "fly-mcp",
 		"domains": []
 	},
+	"io.github.getsentry": {
+		"id": "sentry",
+		"name": "Sentry",
+		"server": "sentry-mcp",
+		"domains": ["sentry.dev"]
+	},
 	"io.sanity.www": {
 		"id": "sanity",
 		"name": "Sanity",

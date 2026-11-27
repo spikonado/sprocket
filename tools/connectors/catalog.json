@@ -286,6 +286,17 @@
 		"listedOnGitHub": false
 	},
 	{
+		"id": "sentry",
+		"name": "Sentry",
+		"description": "MCP server for Sentry - error monitoring, issue tracking, and debugging for AI assistants",
+		"url": "https://mcp.sentry.dev/mcp",
+		"registryName": "io.github.getsentry/sentry-mcp",
+		"version": "0.51.0",
+		"websiteUrl": "https://mcp.sentry.dev",
+		"iconUrl": "https://mcp.sentry.dev/sentry-icon.png",
+		"listedOnGitHub": true
+	},
+	{
 		"id": "statsig",
 		"name": "Statsig",
 		"description": "MCP server for Statsig API - interact with Statsig's feature flags, experiments, and analytics",
