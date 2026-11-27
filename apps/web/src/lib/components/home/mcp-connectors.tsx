@@ -4,6 +4,7 @@ import { useAction, useMutation, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { AgentQuestionDetail } from '@convex/lib/agentQuestions';
 import { cn } from '$lib/utils';
+import { catalogConnector, connectorCatalog, type CatalogConnector } from '$lib/connectors/catalog';
 import type { LocalApi, McpConnector, McpTool, ToolPolicy } from '$lib/types/sprocket';
 import {
 	ConnectorCardFrame,
@@ -20,7 +21,7 @@ import {
 	useAddMcpConnector,
 	type RemoteMcpServer
 } from './mcp-connectors-client';
-import McpOAuth from './mcp-oauth';
+import { useMcpOAuth } from './mcp-oauth';
 
 export type McpApi = Pick<
 	LocalApi,
@@ -44,7 +45,22 @@ const policies: { value: ToolPolicy; label: string }[] = [
 	{ value: 'disabled', label: 'Disabled' }
 ];
 
-function McpLogo() {
+function McpLogo({ iconUrl }: { iconUrl?: string }) {
+	const [failed, setFailed] = useState(false);
+
+	if (iconUrl && !failed) {
+		return (
+			<img
+				src={iconUrl}
+				alt=""
+				className="size-8 shrink-0 object-contain"
+				loading="lazy"
+				referrerPolicy="no-referrer"
+				onError={() => setFailed(true)}
+			/>
+		);
+	}
+
 	return <Plug className="text-foreground size-8 shrink-0 p-1.5" aria-hidden="true" />;
 }
 
@@ -79,6 +95,27 @@ export default function McpConnectors({
 	localApi: McpApi | null;
 }) {
 	const remoteServers = useQuery(api.mcpServers.listMine, {});
+	const [browsing, setBrowsing] = useState(false);
+	const [query, setQuery] = useState('');
+	const keywords = query.toLowerCase().split(/\s+/).filter(Boolean);
+
+	const matchingCatalog = connectorCatalog.filter((entry) => {
+		const text = `${entry.id} ${entry.name} ${entry.description}`.toLowerCase();
+
+		return keywords.every((keyword) => text.includes(keyword));
+	});
+
+	const catalogServers = new Map<string, RemoteMcpServer>();
+
+	for (const server of remoteServers ?? []) {
+		if (
+			server.catalogId &&
+			catalogConnector(server.catalogId) &&
+			!catalogServers.has(server.catalogId)
+		) {
+			catalogServers.set(server.catalogId, server);
+		}
+	}
 
 	const fetchConnectors = useCallback(
 		() => (localApi ? localApi.fetchMcpConnectors(userId) : Promise.resolve([])),
@@ -110,23 +147,70 @@ export default function McpConnectors({
 					}
 				/>
 			))}
-			{remoteServers?.map((server) => {
-				const connector = remoteMcpConnector(server);
+			{remoteServers
+				?.filter((server) => !server.catalogId || catalogServers.get(server.catalogId) !== server)
+				.map((server) => {
+					const connector = remoteMcpConnector(server);
 
-				return (
-					<McpConnectorCard
-						key={connector.id}
-						userId={userId}
-						localApi={localApi}
-						connector={connector}
-						remote={server}
-					/>
-				);
-			})}
+					return (
+						<McpConnectorCard
+							key={connector.id}
+							userId={userId}
+							localApi={localApi}
+							connector={connector}
+							remote={server}
+							catalog={catalogConnector(server.catalogId)}
+						/>
+					);
+				})}
 			{loadError && (
 				<p role="alert" className="text-destructive text-sm">
 					{loadError}
 				</p>
+			)}
+			<button
+				type="button"
+				className={secondaryButtonClass}
+				aria-expanded={browsing}
+				onClick={() => {
+					setBrowsing((value) => !value);
+					setQuery('');
+				}}
+			>
+				Browse connectors
+				<ChevronRight
+					className={cn('ml-1 size-3.5 transition-transform', browsing && 'rotate-90')}
+					aria-hidden="true"
+				/>
+			</button>
+			{browsing && (
+				<input
+					type="search"
+					className={inputClass}
+					aria-label="Search connectors"
+					placeholder="Search connectors"
+					value={query}
+					onChange={(event) => setQuery(event.currentTarget.value)}
+				/>
+			)}
+			{matchingCatalog.map((entry) => {
+				const remote = catalogServers.get(entry.id);
+
+				if (!browsing && !remote) return null;
+
+				return (
+					<CatalogConnectorCard
+						key={entry.id}
+						userId={userId}
+						localApi={localApi}
+						entry={entry}
+						remote={remote}
+						loading={remoteServers === undefined}
+					/>
+				);
+			})}
+			{browsing && matchingCatalog.length === 0 && (
+				<p className="text-muted-foreground text-sm">No connectors match your search.</p>
 			)}
 			<CustomConnectorForm
 				userId={userId}
@@ -143,7 +227,9 @@ function McpConnectorCard({
 	connector,
 	onRemoved,
 	remote,
-	onConnected
+	onConnected,
+	catalog,
+	loading = false
 }: {
 	userId: string;
 	localApi: McpApi | null;
@@ -151,25 +237,42 @@ function McpConnectorCard({
 	onRemoved?: () => void;
 	remote?: RemoteMcpServer;
 	onConnected?: () => void;
+	catalog?: CatalogConnector;
+	loading?: boolean;
 }) {
 	const removeRemote = useAction(api.mcpServers.remove);
 	useOnConnected(remote?.status === 'connected', onConnected);
 	const [open, setOpen] = useState(false);
 	const { pending, error, act } = useConnectorAction<'remove'>(connector.name);
 	const needsAuth = remote?.status === 'needs_auth';
-	const toolsApi = needsAuth ? null : localApi;
+	const notConnected = catalog !== undefined && !remote;
+	const toolsApi = needsAuth || notConnected ? null : localApi;
 	const line = transportLine(connector.transport);
 	const secrets = secretNames(connector.transport);
 
+	const oauth = useMcpOAuth(
+		loading
+			? null
+			: needsAuth
+				? { connectorId: remote.connectorId }
+				: notConnected
+					? { catalog }
+					: null
+	);
+
 	return (
 		<ConnectorCardFrame
-			logo={<McpLogo />}
+			logo={<McpLogo iconUrl={catalog?.iconUrl} />}
 			name={connector.name}
 			summary={
 				<>
-					<p className="text-muted-foreground mt-0.5 truncate font-mono text-[12px]" title={line}>
-						{line}
-					</p>
+					{catalog ? (
+						<ConnectorDescription>{catalog.description}</ConnectorDescription>
+					) : (
+						<p className="text-muted-foreground mt-0.5 truncate font-mono text-[12px]" title={line}>
+							{line}
+						</p>
+					)}
 					{secrets.length > 0 && (
 						<p className="text-muted-foreground mt-0.5 truncate text-[12px]">
 							{connector.transport.type === 'stdio' ? 'Environment' : 'Headers'}:{' '}
@@ -177,44 +280,55 @@ function McpConnectorCard({
 						</p>
 					)}
 					<p className="text-muted-foreground mt-0.5 text-[12px]" role="status">
-						{needsAuth ? 'Needs sign-in' : 'Connected'}
+						{loading
+							? 'Checking connector…'
+							: notConnected
+								? 'Not connected'
+								: needsAuth
+									? 'Needs sign-in'
+									: 'Connected'}
 					</p>
 				</>
 			}
 			actions={
 				<>
-					<button
-						type="button"
-						className={secondaryButtonClass}
-						aria-expanded={open}
-						disabled={!toolsApi}
-						onClick={() => setOpen((value) => !value)}
-					>
-						Tools
-						<ChevronRight
-							className={cn('ml-1 size-3.5 transition-transform', open && 'rotate-90')}
-							aria-hidden="true"
-						/>
-					</button>
-					<button
-						type="button"
-						className={secondaryButtonClass}
-						disabled={pending !== null}
-						onClick={() =>
-							void act('remove', async () => {
-								if (remote) await removeRemote({ connectorId: remote.connectorId });
-								else if (localApi) await localApi.removeMcpConnector(userId, connector.id);
-								onRemoved?.();
-							})
-						}
-					>
-						Remove
-					</button>
+					{!notConnected && (
+						<>
+							<button
+								type="button"
+								className={secondaryButtonClass}
+								aria-expanded={open}
+								disabled={!toolsApi}
+								onClick={() => setOpen((value) => !value)}
+							>
+								Tools
+								<ChevronRight
+									className={cn('ml-1 size-3.5 transition-transform', open && 'rotate-90')}
+									aria-hidden="true"
+								/>
+							</button>
+							<button
+								type="button"
+								className={secondaryButtonClass}
+								disabled={pending !== null}
+								onClick={() =>
+									void act('remove', async () => {
+										if (remote) await removeRemote({ connectorId: remote.connectorId });
+										else if (localApi) await localApi.removeMcpConnector(userId, connector.id);
+										onRemoved?.();
+									})
+								}
+							>
+								Remove
+							</button>
+						</>
+					)}
+					{oauth.button}
 				</>
 			}
 			error={error}
 		>
-			{remote?.status === 'needs_auth' && <McpOAuth connectorId={remote.connectorId} />}
+			{oauth.details}
 			{open && toolsApi && (
 				<McpToolList
 					userId={userId}
@@ -224,6 +338,68 @@ function McpConnectorCard({
 				/>
 			)}
 		</ConnectorCardFrame>
+	);
+}
+
+function CatalogConnectorCard({
+	userId,
+	localApi,
+	entry,
+	remote,
+	onConnected,
+	loading
+}: {
+	userId: string;
+	localApi: McpApi | null;
+	entry: CatalogConnector;
+	remote?: RemoteMcpServer;
+	onConnected?: () => void;
+	loading: boolean;
+}) {
+	return (
+		<McpConnectorCard
+			userId={userId}
+			localApi={localApi}
+			connector={
+				remote
+					? remoteMcpConnector(remote)
+					: {
+							id: entry.id,
+							name: entry.name,
+							transport: { type: 'http', url: entry.url, headers: [] }
+						}
+			}
+			remote={remote}
+			catalog={entry}
+			onConnected={onConnected}
+			loading={loading}
+		/>
+	);
+}
+
+export function RequestedCatalogConnectorSetup({
+	userId,
+	localApi,
+	entry,
+	onConnected
+}: {
+	userId: string;
+	localApi: McpApi | null;
+	entry: CatalogConnector;
+	onConnected: () => void;
+}) {
+	const servers = useQuery(api.mcpServers.listMine, {});
+	const remote = servers?.find((server) => server.catalogId === entry.id);
+
+	return (
+		<CatalogConnectorCard
+			userId={userId}
+			localApi={localApi}
+			entry={entry}
+			remote={remote}
+			onConnected={onConnected}
+			loading={servers === undefined}
+		/>
 	);
 }
 
@@ -728,6 +904,7 @@ export function RequestedRemoteConnectorSetup({
 			localApi={localApi}
 			connector={remoteMcpConnector(remote)}
 			remote={remote}
+			catalog={catalogConnector(remote.catalogId)}
 			onConnected={onConnected}
 		/>
 	);

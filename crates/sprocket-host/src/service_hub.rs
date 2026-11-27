@@ -14,6 +14,7 @@ use sprocket_agent::services::{
 };
 
 use crate::Host;
+use crate::connector_catalog;
 use crate::mcp_client::McpClient;
 use crate::mcp_store::{McpConnector, McpServer, McpTransport};
 use crate::tool_install::ToolInstall;
@@ -41,6 +42,7 @@ enum ConnectorStatus {
 #[serde(rename_all = "camelCase")]
 struct RemoteServer {
     connector_id: String,
+    catalog_id: Option<String>,
     name: String,
     url: String,
     header_names: Vec<String>,
@@ -361,7 +363,6 @@ impl ServiceHub for RunServiceHub {
                 self.remote_servers()
             );
             let mut servers = Vec::new();
-            let mut not_connected = Vec::new();
             match local {
                 Ok(local) => servers.extend(local),
                 Err(error) => result.unavailable.push(Unavailable {
@@ -369,31 +370,27 @@ impl ServiceHub for RunServiceHub {
                     error: format!("{error:#}"),
                 }),
             }
-            match remote {
+            let remote = match remote {
                 Ok(remote) => {
-                    for server in remote {
-                        if server.status == ConnectorStatus::Connected {
-                            servers.push(server.config());
-                            continue;
-                        }
-                        let id = server.id();
-                        let score = keyword_score(&keywords, &[&id, &server.name]);
-                        if score > 0 {
-                            not_connected.push((
-                                score,
-                                SearchHit::NotConnected {
-                                    connector: server.name,
-                                    connector_id: id,
-                                },
-                            ));
-                        }
-                    }
+                    servers.extend(
+                        remote
+                            .iter()
+                            .filter(|server| server.status == ConnectorStatus::Connected)
+                            .map(RemoteServer::config),
+                    );
+                    remote
                 }
-                Err(error) => result.unavailable.push(Unavailable {
-                    connector: "Remote MCP connectors".into(),
-                    error: format!("{error:#}"),
-                }),
-            }
+                Err(error) => {
+                    result.unavailable.push(Unavailable {
+                        connector: "Remote MCP connectors".into(),
+                        error: format!("{error:#}"),
+                    });
+                    self.remote
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .clone()
+                }
+            };
             let (servers, mut hits) = tokio::join!(
                 join_all(servers.into_iter().map(|server| async move {
                     let tools = async { self.connection(&server).await?.tools().await }.await;
@@ -401,7 +398,7 @@ impl ServiceHub for RunServiceHub {
                 })),
                 self.cli_hits(&keywords)
             );
-            hits.extend(not_connected);
+            hits.extend(connector_hits(&keywords, &remote));
             for (server, tools) in servers {
                 match tools {
                     Ok(tools) => hits.extend(tools.into_iter().filter_map(|tool| {
@@ -525,6 +522,9 @@ impl ServiceHub for RunServiceHub {
         if let Some(connector) = CliConnector::from_id(id) {
             return Some(connector.name().to_string());
         }
+        if let Some(connector) = connector_catalog::find(id) {
+            return Some(connector.name.clone());
+        }
         let remote_id = remote_connector_id(id)?;
         self.remote
             .lock()
@@ -533,6 +533,51 @@ impl ServiceHub for RunServiceHub {
             .find(|s| s.connector_id == remote_id)
             .map(|s| s.name.clone())
     }
+}
+
+fn connector_hits(keywords: &[String], remote: &[RemoteServer]) -> Vec<(usize, SearchHit)> {
+    let needs_auth = remote
+        .iter()
+        .filter(|server| server.status == ConnectorStatus::NeedsAuth)
+        .map(|server| {
+            let catalog = server
+                .catalog_id
+                .as_deref()
+                .and_then(connector_catalog::find);
+            (server.id(), &server.name, catalog)
+        });
+    let not_added = connector_catalog::CATALOG
+        .iter()
+        .filter(|connector| {
+            !remote
+                .iter()
+                .any(|server| server.catalog_id.as_deref() == Some(connector.id.as_str()))
+        })
+        .map(|connector| (connector.id.clone(), &connector.name, Some(connector)));
+    needs_auth
+        .chain(not_added)
+        .filter_map(|(id, name, catalog)| {
+            let score = keyword_score(
+                keywords,
+                &[
+                    &id,
+                    name,
+                    catalog.map_or("", |c| &c.id),
+                    catalog.map_or("", |c| &c.name),
+                    catalog.map_or("", |c| &c.description),
+                ],
+            );
+            (score > 0).then(|| {
+                (
+                    score,
+                    SearchHit::NotConnected {
+                        connector: name.clone(),
+                        connector_id: id,
+                    },
+                )
+            })
+        })
+        .collect()
 }
 
 fn read_only(tool: &Tool) -> bool {

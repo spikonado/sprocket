@@ -1,0 +1,52 @@
+[
+	{
+		"id": "compare",
+		"registryName": "ac.compare/air-conditioners",
+		"url": "https://compare.ac/api/mcp"
+	},
+	{
+		"id": "mizan",
+		"registryName": "ac.mizan/registry",
+		"url": "https://mizan.ac/mcp"
+	},
+	{
+		"id": "snag",
+		"registryName": "ac.snag/snag",
+		"url": "https://mcp.snag.ac/mcp"
+	},
+	{
+		"id": "tandem",
+		"registryName": "ac.tandem/docs-mcp",
+		"url": "https://tandem.ac/mcp"
+	},
+	{
+		"id": "apexai",
+		"registryName": "academy.apexai/apex-ai-academy",
+		"url": "https://apexai.academy/mcp"
+	},
+	{
+		"id": "ase",
+		"registryName": "academy.ase/periodic-system",
+		"url": "https://ase.academy/mcp"
+	},
+	{
+		"id": "jasonlau",
+		"registryName": "academy.jasonlau/classes",
+		"url": "https://jasonlau.academy/mcp"
+	},
+	{
+		"id": "mycontent",
+		"registryName": "academy.mycontent/google-ads",
+		"url": "https://googleads-mcp.mycontent.academy/mcp"
+	},
+	{
+		"id": "serviceengineer",
+		"registryName": "academy.serviceengineer/se-ai",
+		"url": "https://api.serviceengineer.academy/mcp"
+	},
+	{
+		"id": "apogee",
+		"registryName": "ad.apogee/apogee",
+		"url": "https://app.apogee.ad/mcp"
+	}
+]

@@ -6,9 +6,14 @@ import {
 	type AgentQuestionDetail,
 	type AgentQuestionOption
 } from '@convex/lib/agentQuestions';
+import { catalogConnector } from '$lib/connectors/catalog';
 import GitHubConnector from './github-connector';
 import KiCadConnector from './kicad-connector';
-import { RequestedConnectorSetup, RequestedRemoteConnectorSetup } from './mcp-connectors';
+import {
+	RequestedCatalogConnectorSetup,
+	RequestedConnectorSetup,
+	RequestedRemoteConnectorSetup
+} from './mcp-connectors';
 import { REMOTE_MCP_PREFIX } from './mcp-connectors-client';
 import type { ConnectorsApi } from './settings-connectors';
 import VercelConnector from './vercel-connector';
@@ -150,6 +155,7 @@ function ConnectorRequest({
 	onConnected: () => void;
 }) {
 	const { connector } = detail;
+	const catalog = connector.type === 'known' ? catalogConnector(connector.id) : undefined;
 
 	const openSprocket = (
 		<p className="text-muted-foreground text-[13px]">
@@ -166,6 +172,13 @@ function ConnectorRequest({
 					userId={setup.userId}
 					localApi={setup.localApi}
 					connector={connector}
+					onConnected={onConnected}
+				/>
+			) : catalog ? (
+				<RequestedCatalogConnectorSetup
+					userId={setup.userId}
+					localApi={setup.localApi}
+					entry={catalog}
 					onConnected={onConnected}
 				/>
 			) : connector.id.startsWith(REMOTE_MCP_PREFIX) ? (

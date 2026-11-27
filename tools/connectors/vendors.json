@@ -1,0 +1,221 @@
+{
+	"ai.exa": {
+		"id": "exa",
+		"name": "Exa",
+		"server": "exa",
+		"domains": []
+	},
+	"ai.fireflies": {
+		"id": "fireflies",
+		"name": "Fireflies.ai",
+		"server": "fireflies",
+		"domains": []
+	},
+	"app.linear": {
+		"id": "linear",
+		"name": "Linear",
+		"server": "linear",
+		"domains": []
+	},
+	"co.huggingface": {
+		"id": "huggingface",
+		"name": "Hugging Face",
+		"server": "hf-mcp-server",
+		"domains": []
+	},
+	"com.airtable": {
+		"id": "airtable",
+		"name": "Airtable",
+		"server": "mcp",
+		"domains": []
+	},
+	"com.amplitude": {
+		"id": "amplitude",
+		"name": "Amplitude",
+		"server": "mcp-server",
+		"domains": []
+	},
+	"com.atlassian": {
+		"id": "atlassian",
+		"name": "Atlassian Rovo",
+		"server": "atlassian-mcp-server",
+		"domains": []
+	},
+	"com.canva.mcp": {
+		"id": "canva",
+		"name": "Canva",
+		"server": "mcp",
+		"domains": []
+	},
+	"com.circleci": {
+		"id": "circleci",
+		"name": "CircleCI",
+		"server": "mcp",
+		"domains": []
+	},
+	"com.clerk": {
+		"id": "clerk",
+		"name": "Clerk",
+		"server": "mcp",
+		"domains": []
+	},
+	"com.cloudflare.mcp": {
+		"id": "cloudflare",
+		"name": "Cloudflare Docs",
+		"server": "mcp",
+		"domains": []
+	},
+	"com.digitalocean": {
+		"id": "digitalocean",
+		"name": "DigitalOcean",
+		"server": "mcp",
+		"domains": []
+	},
+	"com.figma.mcp": {
+		"id": "figma",
+		"name": "Figma",
+		"server": "mcp",
+		"domains": []
+	},
+	"com.gitlab": {
+		"id": "gitlab",
+		"name": "GitLab",
+		"server": "mcp",
+		"domains": []
+	},
+	"com.make": {
+		"id": "make",
+		"name": "Make",
+		"server": "mcp-server",
+		"domains": []
+	},
+	"com.microsoft": {
+		"id": "microsoft-learn",
+		"name": "Microsoft Learn",
+		"server": "microsoft-learn-mcp",
+		"domains": []
+	},
+	"com.mintlify": {
+		"id": "mintlify",
+		"name": "Mintlify Admin",
+		"server": "adminmcp",
+		"domains": []
+	},
+	"com.monday": {
+		"id": "monday",
+		"name": "monday.com",
+		"server": "monday.com",
+		"domains": []
+	},
+	"com.neon": {
+		"id": "neon",
+		"name": "Neon",
+		"server": "mcp",
+		"domains": ["neon.tech"],
+		"githubName": "neondatabase/mcp-server-neon"
+	},
+	"com.newrelic": {
+		"id": "newrelic",
+		"name": "New Relic",
+		"server": "mcp-server",
+		"domains": []
+	},
+	"com.notion": {
+		"id": "notion",
+		"name": "Notion",
+		"server": "mcp",
+		"domains": [],
+		"githubName": "makenotion/notion-mcp-server"
+	},
+	"com.paypal.mcp": {
+		"id": "paypal",
+		"name": "PayPal",
+		"server": "mcp",
+		"domains": []
+	},
+	"com.posthog": {
+		"id": "posthog",
+		"name": "PostHog",
+		"server": "mcp",
+		"domains": []
+	},
+	"com.postman": {
+		"id": "postman",
+		"name": "Postman",
+		"server": "postman-mcp-server",
+		"domains": []
+	},
+	"com.railway": {
+		"id": "railway",
+		"name": "Railway",
+		"server": "mcp",
+		"domains": []
+	},
+	"com.resend": {
+		"id": "resend",
+		"name": "Resend",
+		"server": "mcp",
+		"domains": []
+	},
+	"com.statsig": {
+		"id": "statsig",
+		"name": "Statsig",
+		"server": "statsig-mcp-server",
+		"domains": []
+	},
+	"com.stripe": {
+		"id": "stripe",
+		"name": "Stripe",
+		"server": "mcp",
+		"domains": []
+	},
+	"com.supabase": {
+		"id": "supabase",
+		"name": "Supabase",
+		"server": "mcp",
+		"domains": []
+	},
+	"com.webflow": {
+		"id": "webflow",
+		"name": "Webflow",
+		"server": "mcp",
+		"domains": []
+	},
+	"com.zapier": {
+		"id": "zapier",
+		"name": "Zapier",
+		"server": "mcp",
+		"domains": [],
+		"githubName": "zapier/zapier-mcp"
+	},
+	"io.elevenlabs": {
+		"id": "elevenlabs",
+		"name": "ElevenLabs",
+		"server": "mcp",
+		"domains": []
+	},
+	"io.fly": {
+		"id": "fly",
+		"name": "Fly.io",
+		"server": "fly-mcp",
+		"domains": []
+	},
+	"io.github.getsentry": {
+		"id": "sentry",
+		"name": "Sentry",
+		"server": "sentry-mcp",
+		"domains": ["sentry.dev"]
+	},
+	"io.sanity.www": {
+		"id": "sanity",
+		"name": "Sanity",
+		"server": "mcp",
+		"domains": []
+	},
+	"net.todoist": {
+		"id": "todoist",
+		"name": "Todoist",
+		"server": "mcp",
+		"domains": []
+	}
+}
