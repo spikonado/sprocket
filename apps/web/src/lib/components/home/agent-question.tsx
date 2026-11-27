@@ -8,11 +8,14 @@ import {
 } from '@convex/lib/agentQuestions';
 import GitHubConnector from './github-connector';
 import KiCadConnector from './kicad-connector';
-import { RequestedConnectorSetup } from './mcp-connectors';
+import { RequestedConnectorSetup, RequestedRemoteConnectorSetup } from './mcp-connectors';
+import { REMOTE_MCP_PREFIX } from './mcp-connectors-client';
 import type { ConnectorsApi } from './settings-connectors';
 import VercelConnector from './vercel-connector';
 
-export type QuestionConnectorSetup = { userId: string; localApi: ConnectorsApi };
+export type QuestionAnswerInput = { optionId?: string; values?: QuestionValues };
+
+export type QuestionConnectorSetup = { userId: string; localApi: ConnectorsApi | null };
 
 type Props = {
 	question: string;
@@ -150,12 +153,16 @@ function ConnectorRequest({
 }) {
 	const { connector } = detail;
 
+	const openSprocket = (
+		<p className="text-muted-foreground text-[13px]">
+			Open Sprocket on the computer running this agent to set up the connector.
+		</p>
+	);
+
 	return (
 		<div className="mt-2 space-y-3">
 			{!setup ? (
-				<p className="text-muted-foreground text-[13px]">
-					Open Sprocket on the computer running this agent to set up the connector.
-				</p>
+				openSprocket
 			) : connector.type !== 'known' ? (
 				<RequestedConnectorSetup
 					userId={setup.userId}
@@ -163,12 +170,29 @@ function ConnectorRequest({
 					connector={connector}
 					onConnected={onConnected}
 				/>
+			) : connector.id.startsWith(REMOTE_MCP_PREFIX) ? (
+				<RequestedRemoteConnectorSetup
+					userId={setup.userId}
+					localApi={setup.localApi}
+					connectorId={connector.id}
+					onConnected={onConnected}
+				/>
+			) : !setup.localApi ? (
+				openSprocket
 			) : connector.id === 'github' ? (
-				<GitHubConnector {...setup} onConnected={onConnected} />
+				<GitHubConnector
+					userId={setup.userId}
+					localApi={setup.localApi}
+					onConnected={onConnected}
+				/>
 			) : connector.id === 'vercel' ? (
-				<VercelConnector {...setup} onConnected={onConnected} />
+				<VercelConnector
+					userId={setup.userId}
+					localApi={setup.localApi}
+					onConnected={onConnected}
+				/>
 			) : connector.id === 'kicad' ? (
-				<KiCadConnector {...setup} onConnected={onConnected} />
+				<KiCadConnector userId={setup.userId} localApi={setup.localApi} onConnected={onConnected} />
 			) : (
 				<p className="text-muted-foreground text-[13px]">
 					This version of Sprocket can’t set up “{connector.id}”.

@@ -2755,7 +2755,7 @@ export default function App({
 														void settleAgentQuestion('answer', optionId)
 													}
 													questionConnectorSetup={
-														localApi && signedInUserId ? { userId: signedInUserId, localApi } : null
+														signedInUserId ? { userId: signedInUserId, localApi } : null
 													}
 													canSend={canSend}
 													submitting={

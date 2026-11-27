@@ -1,5 +1,7 @@
 import { useCallback, useState, type FormEvent, type ReactNode } from 'react';
 import { ChevronRight, Plug, Plus, X } from 'lucide-react';
+import { useAction, useMutation, useQuery } from 'convex/react';
+import { api } from '@convex/_generated/api';
 import type { AgentQuestionDetail } from '@convex/lib/agentQuestions';
 import { cn } from '$lib/utils';
 import type { LocalApi, McpConnector, McpTool, ToolPolicy } from '$lib/types/sprocket';
@@ -9,9 +11,17 @@ import {
 	inputClass,
 	primaryButtonClass,
 	secondaryButtonClass,
-	useConnectorAction
+	useConnectorAction,
+	useOnConnected
 } from './connector-card-parts';
 import { caughtMessage, usePolledStatus } from './use-connectors';
+import {
+	REMOTE_MCP_PREFIX,
+	remoteMcpConnector,
+	useAddMcpConnector,
+	type RemoteMcpServer
+} from './mcp-connectors-client';
+import McpOAuth from './mcp-oauth';
 
 export type McpApi = Pick<
 	LocalApi,
@@ -53,9 +63,17 @@ function secretNames(transport: Transport) {
 	return transport.type === 'stdio' ? transport.env : transport.headers;
 }
 
-export default function McpConnectors({ userId, localApi }: { userId: string; localApi: McpApi }) {
+export default function McpConnectors({
+	userId,
+	localApi
+}: {
+	userId: string;
+	localApi: McpApi | null;
+}) {
+	const remoteServers = useQuery(api.mcpServers.listMine, {});
+
 	const fetchConnectors = useCallback(
-		() => localApi.fetchMcpConnectors(userId),
+		() => (localApi ? localApi.fetchMcpConnectors(userId) : Promise.resolve([])),
 		[localApi, userId]
 	);
 
@@ -71,17 +89,28 @@ export default function McpConnectors({ userId, localApi }: { userId: string; lo
 
 	return (
 		<>
-			{connectors?.map((connector) => (
+			{connectors
+				?.filter((connector) => !connector.id.startsWith(REMOTE_MCP_PREFIX))
+				.map((connector) => (
+					<McpConnectorCard
+						key={connector.id}
+						userId={userId}
+						localApi={localApi}
+						connector={connector}
+						onRemoved={() =>
+							setConnectors(
+								(current) => current && current.filter((entry) => entry.id !== connector.id)
+							)
+						}
+					/>
+				))}
+			{remoteServers?.map((server) => (
 				<McpConnectorCard
-					key={connector.id}
+					key={`${REMOTE_MCP_PREFIX}${server.connectorId}`}
 					userId={userId}
 					localApi={localApi}
-					connector={connector}
-					onRemoved={() =>
-						setConnectors(
-							(current) => current && current.filter((entry) => entry.id !== connector.id)
-						)
-					}
+					connector={remoteMcpConnector(server)}
+					remote={server}
 				/>
 			))}
 			{loadError && (
@@ -102,15 +131,22 @@ function McpConnectorCard({
 	userId,
 	localApi,
 	connector,
-	onRemoved
+	onRemoved,
+	remote,
+	onConnected
 }: {
 	userId: string;
-	localApi: McpApi;
+	localApi: McpApi | null;
 	connector: McpConnector;
-	onRemoved: () => void;
+	onRemoved?: () => void;
+	remote?: RemoteMcpServer;
+	onConnected?: () => void;
 }) {
+	const removeRemote = useAction(api.mcpServers.remove);
+	useOnConnected(remote?.status === 'connected', onConnected);
 	const [open, setOpen] = useState(false);
 	const { pending, error, act } = useConnectorAction<'remove'>(connector.name);
+	const toolsApi = remote?.status === 'needs_auth' ? null : localApi;
 	const line = transportLine(connector.transport);
 	const secrets = secretNames(connector.transport);
 
@@ -129,6 +165,11 @@ function McpConnectorCard({
 							<span className="font-mono">{secrets.join(', ')}</span>
 						</p>
 					)}
+					{remote && (
+						<p className="text-muted-foreground mt-0.5 text-[12px]" role="status">
+							{remote.status === 'needs_auth' ? 'Needs sign-in' : 'Connected'}
+						</p>
+					)}
 				</>
 			}
 			actions={
@@ -137,6 +178,7 @@ function McpConnectorCard({
 						type="button"
 						className={secondaryButtonClass}
 						aria-expanded={open}
+						disabled={!toolsApi}
 						onClick={() => setOpen((value) => !value)}
 					>
 						Tools
@@ -151,8 +193,9 @@ function McpConnectorCard({
 						disabled={pending !== null}
 						onClick={() =>
 							void act('remove', async () => {
-								await localApi.removeMcpConnector(userId, connector.id);
-								onRemoved();
+								if (remote) await removeRemote({ connectorId: remote.connectorId });
+								else if (localApi) await localApi.removeMcpConnector(userId, connector.id);
+								onRemoved?.();
 							})
 						}
 					>
@@ -162,7 +205,15 @@ function McpConnectorCard({
 			}
 			error={error}
 		>
-			{open && <McpToolList userId={userId} localApi={localApi} connectorId={connector.id} />}
+			{remote?.status === 'needs_auth' && <McpOAuth connectorId={remote.connectorId} />}
+			{open && toolsApi && (
+				<McpToolList
+					userId={userId}
+					localApi={toolsApi}
+					connectorId={connector.id}
+					remote={remote}
+				/>
+			)}
 		</ConnectorCardFrame>
 	);
 }
@@ -170,12 +221,37 @@ function McpConnectorCard({
 function McpToolList({
 	userId,
 	localApi,
-	connectorId
+	connectorId,
+	remote
 }: {
 	userId: string;
 	localApi: McpApi;
 	connectorId: string;
+	remote?: RemoteMcpServer;
 }) {
+	const setRemotePolicy = useMutation(api.mcpServers.setPolicy).withOptimisticUpdate(
+		(store, { connectorId, tool, policy }) => {
+			const servers = store.getQuery(api.mcpServers.listMine, {});
+
+			if (!servers) return;
+			store.setQuery(
+				api.mcpServers.listMine,
+				{},
+				servers.map((server) =>
+					server.connectorId === connectorId
+						? {
+								...server,
+								policies: [
+									...server.policies.filter((entry) => entry.tool !== tool),
+									{ tool, policy }
+								]
+							}
+						: server
+				)
+			);
+		}
+	);
+
 	const fetchTools = useCallback(
 		() => localApi.fetchMcpTools(userId, connectorId),
 		[localApi, userId, connectorId]
@@ -197,13 +273,15 @@ function McpToolList({
 	}
 
 	async function changePolicy(tool: McpTool, policy: ToolPolicy) {
-		withPolicy(tool.name, policy);
+		if (!remote) withPolicy(tool.name, policy);
 		setSaveError(null);
 
 		try {
-			await localApi.setMcpToolPolicy(userId, connectorId, tool.name, policy);
+			if (remote)
+				await setRemotePolicy({ connectorId: remote.connectorId, tool: tool.name, policy });
+			else await localApi.setMcpToolPolicy(userId, connectorId, tool.name, policy);
 		} catch (caught) {
-			withPolicy(tool.name, tool.policy);
+			if (!remote) withPolicy(tool.name, tool.policy);
 			setSaveError(caughtMessage.parse(caught) || 'Couldn’t save the tool setting.');
 		}
 	}
@@ -240,7 +318,9 @@ function McpToolList({
 							</div>
 							<PolicyControl
 								tool={tool.name}
-								value={tool.policy}
+								value={
+									remote?.policies.find((entry) => entry.tool === tool.name)?.policy ?? tool.policy
+								}
 								onChange={(policy) => void changePolicy(tool, policy)}
 							/>
 						</li>
@@ -315,10 +395,11 @@ function CustomConnectorForm({
 	onAdded
 }: {
 	userId: string;
-	localApi: McpApi;
+	localApi: McpApi | null;
 	onAdded: (connector: McpConnector) => void;
 }) {
-	const [type, setType] = useState<'stdio' | 'http'>('stdio');
+	const addConnector = useAddMcpConnector(userId, localApi);
+	const [type, setType] = useState<'stdio' | 'http'>(localApi ? 'stdio' : 'http');
 	const [name, setName] = useState('');
 	const [command, setCommand] = useState('');
 	const [args, setArgs] = useState('');
@@ -332,7 +413,7 @@ function CustomConnectorForm({
 		event.preventDefault();
 
 		void act('add', async () => {
-			const added = await localApi.addMcpConnector(userId, {
+			const added = await addConnector({
 				name: name.trim(),
 				transport:
 					type === 'stdio'
@@ -345,7 +426,7 @@ function CustomConnectorForm({
 						: { type, url: url.trim(), headers: secretRecord(secrets) }
 			});
 
-			onAdded(added);
+			if (added.type === 'local') onAdded(added.connector);
 			setName('');
 			setCommand('');
 			setArgs('');
@@ -364,11 +445,7 @@ function CustomConnectorForm({
 		<ConnectorCardFrame
 			logo={<Plus className="text-foreground size-8 shrink-0 p-1.5" aria-hidden="true" />}
 			name="Custom connector"
-			summary={
-				<ConnectorDescription>
-					Add an MCP server that runs as a command or listens on this computer
-				</ConnectorDescription>
-			}
+			summary={<ConnectorDescription>Add an MCP server by command or URL</ConnectorDescription>}
 			error={error}
 		>
 			<form className="space-y-3 px-5 pb-5" onSubmit={submit} aria-label="Custom connector">
@@ -382,6 +459,7 @@ function CustomConnectorForm({
 						<button
 							key={value}
 							type="button"
+							disabled={busy || (value === 'stdio' && !localApi)}
 							aria-pressed={type === value}
 							className={cn(
 								'h-7 rounded-md border px-2.5 text-[12px] transition',
@@ -431,7 +509,10 @@ function CustomConnectorForm({
 						</Field>
 					</>
 				) : (
-					<Field label="URL" hint="Only servers on this computer (localhost) for now.">
+					<Field
+						label="URL"
+						hint="Remote servers use HTTPS. Localhost servers stay on this computer."
+					>
 						<input
 							className={cn(inputClass, 'font-mono')}
 							value={url}
@@ -507,10 +588,20 @@ export function RequestedConnectorSetup({
 	onConnected
 }: {
 	userId: string;
-	localApi: Pick<LocalApi, 'addMcpConnector'>;
+	localApi: McpApi | null;
 	connector: RequestedMcpConnector;
 	onConnected: () => void;
 }) {
+	const addConnector = useAddMcpConnector(userId, localApi);
+	const remoteServers = useQuery(api.mcpServers.listMine, connector.type === 'http' ? {} : 'skip');
+	const [addedRemoteId, setAddedRemoteId] = useState<string | null>(null);
+
+	const remote = remoteServers?.find((server) =>
+		addedRemoteId
+			? server.connectorId === addedRemoteId
+			: connector.type === 'http' && server.url === connector.url
+	);
+
 	const names = secretNames(connector);
 	const [values, setValues] = useState<Record<string, string>>({});
 	const { pending, error, act } = useConnectorAction<'connect'>(connector.name);
@@ -521,15 +612,30 @@ export function RequestedConnectorSetup({
 		const secrets = Object.fromEntries(names.map((name) => [name, values[name] ?? '']));
 
 		void act('connect', async () => {
-			await localApi.addMcpConnector(userId, {
+			const added = await addConnector({
 				name: connector.name,
 				transport:
 					connector.type === 'stdio'
 						? { type: 'stdio', command: connector.command, args: connector.args, env: secrets }
 						: { type: 'http', url: connector.url, headers: secrets }
 			});
-			onConnected();
+
+			if (added.type === 'remote') setAddedRemoteId(added.connectorId);
+			else onConnected();
 		});
+	}
+
+	if (remote) {
+		return (
+			<McpConnectorCard
+				userId={userId}
+				localApi={localApi}
+				connector={remoteMcpConnector(remote)}
+				remote={remote}
+				onConnected={onConnected}
+				onRemoved={() => setAddedRemoteId(null)}
+			/>
+		);
 	}
 
 	return (
@@ -570,17 +676,55 @@ export function RequestedConnectorSetup({
 					</Field>
 				))}
 				{names.length > 0 && (
-					<p className="text-muted-foreground text-[12px]">
-						These values stay on this computer. The agent never sees them.
-					</p>
+					<p className="text-muted-foreground text-[12px]">The agent never sees these values.</p>
 				)}
 				<div className="flex justify-end">
-					<button type="submit" className={primaryButtonClass} disabled={busy}>
+					<button
+						type="submit"
+						className={primaryButtonClass}
+						disabled={busy || addedRemoteId !== null}
+					>
 						Connect
 					</button>
 				</div>
 			</form>
 		</ConnectorCardFrame>
+	);
+}
+
+export function RequestedRemoteConnectorSetup({
+	userId,
+	localApi,
+	connectorId,
+	onConnected
+}: {
+	userId: string;
+	localApi: McpApi | null;
+	connectorId: string;
+	onConnected: () => void;
+}) {
+	const servers = useQuery(api.mcpServers.listMine, {});
+
+	const remote = servers?.find((server) => remoteMcpConnector(server).id === connectorId);
+
+	if (!remote) {
+		return (
+			<p className="text-muted-foreground text-[13px]">
+				{servers === undefined
+					? 'Checking connector…'
+					: 'This connector was removed. Add it again in Settings → Connectors.'}
+			</p>
+		);
+	}
+
+	return (
+		<McpConnectorCard
+			userId={userId}
+			localApi={localApi}
+			connector={remoteMcpConnector(remote)}
+			remote={remote}
+			onConnected={onConnected}
+		/>
 	);
 }
 
