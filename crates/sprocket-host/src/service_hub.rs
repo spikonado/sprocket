@@ -654,6 +654,9 @@ pub async fn list_server_tools(
     user_id: &str,
     id: &str,
 ) -> anyhow::Result<Vec<ServerTool>> {
+    if remote_connector_id(id).is_some() {
+        host.machines.register(user_id).await?;
+    }
     let hub = RunServiceHub::new(host, user_id);
     let server = hub.server(id).await?;
     let client = hub.connection(&server).await?;

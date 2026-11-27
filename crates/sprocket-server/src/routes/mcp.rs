@@ -122,7 +122,7 @@ async fn tools(
 ) -> Result<Json<ToolsResponse>, ApiError> {
     let tools = service_hub::list_server_tools(&state.host, &payload.user_id, &id)
         .await
-        .map_err(ApiError::bad_request)?;
+        .map_err(|error| ApiError::internal_with("Could not load MCP tools", error))?;
     Ok(Json(ToolsResponse { tools }))
 }
 
