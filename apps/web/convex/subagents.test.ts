@@ -3,6 +3,7 @@ import agentErrorMessages from '@convex/lib/agentErrorCodes.json';
 import type { FunctionArgs } from 'convex/server';
 import { api, internal } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
+import type { AgentQuestionDetail } from '@convex/lib/agentQuestions';
 import { executionSecretHash } from '@convex/lib/auth';
 import { appendTranscriptPart } from '@convex/lib/transcriptParts';
 import { CANCELLATION_FORCE_AFTER_MS } from '@convex/lib/runCancellation';
@@ -1154,7 +1155,8 @@ describe('subagents.control', () => {
 
 	async function childWithPendingQuestion(
 		t: ConvexTestInstance,
-		timeoutMs: number | null = 60_000
+		timeoutMs: number | null = 60_000,
+		detail?: AgentQuestionDetail
 	) {
 		const caller = await startCallerRun(t);
 		const childArgs = createArgs(caller);
@@ -1179,6 +1181,7 @@ describe('subagents.control', () => {
 				{ id: 'two', label: 'Two' }
 			],
 			timeoutMs,
+			detail,
 			executionSecret: childRun.executionSecret
 		});
 
@@ -1383,6 +1386,37 @@ describe('subagents.control', () => {
 
 		const stored = await t.run((ctx) => ctx.db.get('agentQuestions', questionId));
 		expect(stored?.answer).toMatchObject({ optionId: 'one' });
+	});
+
+	it('leaves a child tool approval to the user', async () => {
+		const t = initConvexTest();
+
+		const { caller, child, questionId } = await childWithPendingQuestion(t, null, {
+			type: 'approval',
+			connector: 'linear',
+			tool: 'create_issue',
+			arguments: '{}'
+		});
+
+		await expect(
+			t.mutation(api.subagents.control, {
+				runId: caller.runId,
+				claimId: caller.claimId,
+				executionSecret: caller.executionSecret,
+				threadId: child.threadId,
+				action: 'answer_question',
+				questionId,
+				optionId: 'allow'
+			})
+		).rejects.toThrow(/Only the user/);
+
+		await expect(
+			caller.asUser.mutation(api.agentQuestions.answer, {
+				threadId: child.threadId,
+				questionId,
+				optionId: 'allow'
+			})
+		).resolves.toMatchObject({ question: { answer: { optionId: 'allow' } } });
 	});
 
 	it.each(['tool', 'ui', 'executor'] as const)(
