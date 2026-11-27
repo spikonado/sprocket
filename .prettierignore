@@ -11,6 +11,7 @@ flake*
 crates/sprocket-workspace/skills/agent-browser/SKILL.md
 crates/sprocket-workspace/skills/agent-desktop/SKILL.md
 crates/sprocket-workspace/skills/frontend-design/SKILL.md
+crates/sprocket-workspace/skills/modern-web-guidance/SKILL.md
 crates/sprocket-workspace/skills/ui-sdk/SKILL.md
 
 # Vendored Oxlint plugin
