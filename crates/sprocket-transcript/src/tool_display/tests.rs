@@ -113,6 +113,18 @@ fn tool_labels_and_summaries() {
             Some("Future Tool"),
             "Future Tool",
         ),
+        (
+            "service_describe",
+            json!({"paths": ["linear/search", "linear/create_issue"]}),
+            Some("Described Service Tools"),
+            "linear/search, linear/create_issue",
+        ),
+        (
+            "request_connector",
+            json!({"custom": {"type": "http", "name": "Local issues", "url": "http://localhost/mcp"}}),
+            Some("Requested Connector"),
+            "Local issues",
+        ),
     ] {
         let actual = display(name, input, None);
         assert_eq!(actual.label.as_deref(), expected_label, "{name}");

@@ -314,6 +314,27 @@ impl<'a> ToolDisplayInput<'a> {
                 })
                 .unwrap_or_else(|| "Pull requests".into()),
             "poll_pr" => pull_request(input).unwrap_or_else(|| "Pull request".into()),
+            "service_search" => field("query").unwrap_or("Services").into(),
+            "service_describe" => input
+                .get("paths")
+                .and_then(Value::as_array)
+                .map(|paths| {
+                    paths
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_else(|| "Service tools".into()),
+            "service_call" => field("path").unwrap_or("Service tool").into(),
+            "request_connector" => field("connector")
+                .or_else(|| {
+                    input
+                        .get("custom")
+                        .and_then(|custom| string(custom, "name"))
+                })
+                .unwrap_or("Connector")
+                .into(),
             "web_search" => {
                 let mut summary = field("query").unwrap_or("Web search").to_owned();
                 if let Some(results) = self
@@ -388,6 +409,10 @@ fn label(name: &str) -> Option<String> {
             "set_cwd" => "Changed Directory",
             "link_prs" => "Linked PRs",
             "lookup_parts" => "Checked Parts",
+            "service_search" => "Searched Services",
+            "service_describe" => "Described Service Tools",
+            "service_call" => "Called Service Tool",
+            "request_connector" => "Requested Connector",
             name => return Some(titleize(name)),
         }
         .into(),
