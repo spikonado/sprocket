@@ -20,6 +20,13 @@ const SKILLS = {
 		description:
 			"Guidance for distinctive, intentional visual design when building new UI or reshaping an existing one. Helps with aesthetic direction, typography, and making choices that don't read as templated defaults."
 	},
+	'modern-web-guidance': {
+		// What `agent-browser skills get modern-web-guidance` prints.
+		upstream: 'vercel-labs/agent-browser/v{version}/skill-data/modern-web-guidance/SKILL.md',
+		tool: 'agent-browser',
+		description:
+			"Use when building or modernizing web UI with current platform features and Baseline data from Chrome's Modern Web Guidance, or when checking that a change fixed layout shift, respects reduced motion or the color scheme, or gives a dialog correct focus and inertness in the built page."
+	},
 	'ui-sdk': {
 		upstream: 'vercel-labs/ui/main/packages/core/skills/ui-sdk/SKILL.md',
 		description:
@@ -29,7 +36,7 @@ const SKILLS = {
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-for (const [name, { upstream, description }] of Object.entries(SKILLS)) {
+for (const [name, { upstream, tool = name, description }] of Object.entries(SKILLS)) {
 	if (!upstream.includes('{version}') && !process.argv.includes('--include-unversioned')) {
 		continue;
 	}
@@ -38,7 +45,7 @@ for (const [name, { upstream, description }] of Object.entries(SKILLS)) {
 
 	if (upstream.includes('{version}')) {
 		const { version } = JSON.parse(
-			await readFile(join(root, 'tools', name, 'releases.json'), 'utf8')
+			await readFile(join(root, 'tools', tool, 'releases.json'), 'utf8')
 		);
 
 		source = upstream.replace('{version}', version);

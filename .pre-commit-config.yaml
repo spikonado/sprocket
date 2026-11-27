@@ -52,7 +52,7 @@ repos:
         language: system
         entry: node tools/sync-skills.mjs
         pass_filenames: false
-        files: ^(tools/(sync-skills\.mjs|agent-(browser|desktop)/releases\.json)|crates/sprocket-workspace/skills/(agent-(browser|desktop)|frontend-design|ui-sdk)/)
+        files: ^(tools/(sync-skills\.mjs|agent-(browser|desktop)/releases\.json)|crates/sprocket-workspace/skills/(agent-(browser|desktop)|frontend-design|modern-web-guidance|ui-sdk)/)
 
       - id: cargo-fmt
         name: cargo-fmt
