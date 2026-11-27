@@ -86,7 +86,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-      - run: bun install --frozen-lockfile
+      # @posthog/cli's postinstall unzips with Windows PowerShell 5.1, which fails
+      # when it inherits PowerShell 7's module path.
+      - shell: bash
+        run: env -u PSModulePath bun install --frozen-lockfile
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
         with:
