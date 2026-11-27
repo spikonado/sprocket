@@ -269,6 +269,107 @@ fn ping_message() -> ClientJsonRpcMessage {
 }
 
 #[tokio::test]
+async fn remote_servers_list_tools_over_sse_without_optional_subscriptions() {
+    for legacy in [true, false] {
+        remote_sse_tools_case(legacy).await;
+    }
+}
+
+async fn remote_sse_tools_case(legacy: bool) {
+    use axum::{Json, body::Body, http::StatusCode, response::Response, routing::post};
+
+    let methods = Arc::new(Mutex::new(Vec::new()));
+    let app = axum::Router::new().route(
+        "/",
+        post({
+            let methods = methods.clone();
+            move |Json(request): Json<Value>| {
+                let methods = methods.clone();
+                async move {
+                    let method = request["method"].as_str().unwrap();
+                    methods.lock().unwrap().push(method.to_owned());
+                    let response = match method {
+                        "server/discover" if legacy => json!({
+                            "jsonrpc": "2.0", "id": request["id"],
+                            "error": { "code": -32601, "message": "Method not found" }
+                        }),
+                        "server/discover" => json!({
+                            "jsonrpc": "2.0", "id": request["id"], "result": {
+                                "resultType": "complete", "supportedVersions": ["2026-07-28"],
+                                "capabilities": { "tools": { "listChanged": true } },
+                                "ttlMs": 0, "cacheScope": "private"
+                            }
+                        }),
+                        "initialize" => json!({
+                            "jsonrpc": "2.0", "id": request["id"], "result": {
+                                "protocolVersion": "2025-11-25", "capabilities": { "tools": { "listChanged": true } },
+                                "serverInfo": { "name": "legacy-sse", "version": "1" }
+                            }
+                        }),
+                        "notifications/initialized" => {
+                            return Response::builder()
+                                .status(StatusCode::ACCEPTED)
+                                .body(Body::empty())
+                                .unwrap();
+                        }
+                        "subscriptions/listen" => json!({
+                            "jsonrpc": "2.0", "id": request["id"],
+                            "error": { "code": -32601, "message": "Method not found" }
+                        }),
+                        "tools/list" => {
+                            if !legacy {
+                                assert_eq!(
+                                    request["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"],
+                                    "2026-07-28"
+                                );
+                            }
+                            json!({
+                                "jsonrpc": "2.0", "id": request["id"], "result": {
+                                    "tools": [{ "name": "read_wiki", "inputSchema": { "type": "object" } }]
+                                }
+                            })
+                        }
+                        _ => panic!("unexpected MCP request: {request}"),
+                    };
+                    Response::builder()
+                        .header("content-type", "text/event-stream")
+                        .body(Body::from(format!("event: message\ndata: {response}\n\n")))
+                        .unwrap()
+                }
+            }
+        }),
+    );
+    let (url, server) = http_fixture(app).await;
+    let (issue, _) = credential_issuer(vec![("token", None)]);
+    let transport = StreamableHttpClientTransport::with_client(
+        RemoteHttpClient::new(issue).await.unwrap(),
+        StreamableHttpClientTransportConfig::with_uri(url),
+    );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let client = McpClient::serve(transport, None).await.unwrap();
+        let tools = client.tools().await.unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "read_wiki");
+        assert_eq!(
+            *methods.lock().unwrap(),
+            if legacy {
+                vec![
+                    "server/discover",
+                    "initialize",
+                    "notifications/initialized",
+                    "tools/list",
+                ]
+            } else {
+                vec!["server/discover", "subscriptions/listen", "tools/list"]
+            }
+        );
+    })
+    .await
+    .unwrap();
+    server.abort();
+}
+
+#[tokio::test]
 async fn remote_requests_force_refresh_once_on_401_and_replay_the_original_request() {
     use axum::{body::Body, http::StatusCode, response::Response, routing::any};
 
