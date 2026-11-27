@@ -1,7 +1,7 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import type { ConnectorStatus, LocalApi } from '$lib/types/sprocket';
-import SettingsConnectors from './settings-connectors';
+import type { ConnectorStatus, LocalApi, McpConnector } from '$lib/types/sprocket';
+import SettingsConnectors, { type ConnectorsApi } from './settings-connectors';
 
 afterEach(() => {
 	cleanup();
@@ -20,7 +20,13 @@ function kicad(overrides: Partial<ConnectorStatus>): ConnectorStatus {
 	};
 }
 
-function mount(fetchConnectors: LocalApi['fetchConnectors']) {
+const linear: McpConnector = {
+	id: 'linear',
+	name: 'Linear',
+	transport: { type: 'stdio', command: 'npx', args: ['-y', 'linear-mcp'], env: ['LINEAR_API_KEY'] }
+};
+
+function mount(fetchConnectors: LocalApi['fetchConnectors'], mcp: Partial<ConnectorsApi> = {}) {
 	const installOrUpdateConnector = vi.fn<LocalApi['installOrUpdateConnector']>(async () =>
 		kicad({ state: 'installing' })
 	);
@@ -53,7 +59,13 @@ function mount(fetchConnectors: LocalApi['fetchConnectors']) {
 				installConnectorCli: unused,
 				fetchConnectorSignIn: unused,
 				startConnectorSignIn: unused,
-				cancelConnectorSignIn: unused
+				cancelConnectorSignIn: unused,
+				fetchMcpConnectors: async () => [],
+				addMcpConnector: unused,
+				removeMcpConnector: unused,
+				fetchMcpTools: unused,
+				setMcpToolPolicy: unused,
+				...mcp
 			}}
 		/>
 	);
@@ -100,4 +112,74 @@ it('keeps an older install usable after a failed update', async () => {
 	expect(await screen.findByRole('button', { name: 'Update' })).toBeTruthy();
 	expect(screen.getByRole('button', { name: 'Uninstall' })).toBeTruthy();
 	expect(screen.getByText('Download failed.')).toBeTruthy();
+});
+
+it('saves an MCP tool permission and reverts it when the save fails', async () => {
+	const setMcpToolPolicy = vi
+		.fn<LocalApi['setMcpToolPolicy']>()
+		.mockResolvedValueOnce()
+		.mockRejectedValueOnce(new Error('Config is read-only.'));
+
+	mount(async () => [], {
+		fetchMcpConnectors: async () => [linear],
+		fetchMcpTools: async () => [
+			{ name: 'create_issue', readOnly: false, destructive: false, policy: 'ask' }
+		],
+		setMcpToolPolicy
+	});
+
+	fireEvent.click(await screen.findByRole('button', { name: 'Tools' }));
+	const control = await screen.findByRole('group', { name: 'create_issue permission' });
+	const pressed = () =>
+		within(control)
+			.getAllByRole('button')
+			.find((button) => button.getAttribute('aria-pressed') === 'true')?.textContent;
+
+	fireEvent.click(within(control).getByRole('button', { name: 'Enabled' }));
+	expect(setMcpToolPolicy).toHaveBeenCalledWith('user-a', 'linear', 'create_issue', 'enabled');
+	expect(pressed()).toBe('Enabled');
+
+	fireEvent.click(within(control).getByRole('button', { name: 'Disabled' }));
+	expect(await screen.findByText('Config is read-only.')).toBeTruthy();
+	expect(pressed()).toBe('Enabled');
+});
+
+it('adds a custom connector by URL with its header values', async () => {
+	const addMcpConnector = vi
+		.fn<LocalApi['addMcpConnector']>()
+		.mockRejectedValueOnce(new Error('Only loopback URLs are supported.'))
+		.mockResolvedValueOnce({
+			id: 'docs',
+			name: 'Docs',
+			transport: { type: 'http', url: 'http://127.0.0.1:3000/mcp', headers: ['Authorization'] }
+		});
+
+	mount(async () => [], { addMcpConnector });
+	const form = await screen.findByRole('form', { name: 'Custom connector' });
+	fireEvent.click(within(form).getByRole('button', { name: 'URL' }));
+	fireEvent.change(within(form).getByLabelText('Name'), { target: { value: 'Docs' } });
+	fireEvent.change(within(form).getByLabelText('URL'), {
+		target: { value: 'http://127.0.0.1:3000/mcp' }
+	});
+	fireEvent.click(within(form).getByRole('button', { name: 'Add header' }));
+	fireEvent.change(within(form).getByLabelText('header 1 name'), {
+		target: { value: 'Authorization' }
+	});
+	fireEvent.change(within(form).getByLabelText('header 1 value'), {
+		target: { value: 'Bearer secret' }
+	});
+
+	fireEvent.click(within(form).getByRole('button', { name: 'Add connector' }));
+	expect(await screen.findByText('Only loopback URLs are supported.')).toBeTruthy();
+	fireEvent.click(within(form).getByRole('button', { name: 'Add connector' }));
+
+	expect(await screen.findByText('Docs', { selector: 'div' })).toBeTruthy();
+	expect(addMcpConnector).toHaveBeenLastCalledWith('user-a', {
+		name: 'Docs',
+		transport: {
+			type: 'http',
+			url: 'http://127.0.0.1:3000/mcp',
+			headers: { Authorization: 'Bearer secret' }
+		}
+	});
 });

@@ -1,26 +1,9 @@
-import { useState } from 'react';
-import { LoaderCircle } from 'lucide-react';
-import type { ConnectorStatus, LocalApi } from '$lib/types/sprocket';
-import {
-	ConnectorDescription,
-	primaryButtonClass,
-	secondaryButtonClass,
-	VersionLine
-} from './connector-card-parts';
 import GitHubConnector, { type GitHubApi } from './github-connector';
-import { caughtMessage, useConnectors } from './use-connectors';
+import KiCadConnector, { type KiCadApi } from './kicad-connector';
+import McpConnectors, { type McpApi } from './mcp-connectors';
 import VercelConnector, { type VercelApi } from './vercel-connector';
 
-type ConnectorsApi = GitHubApi &
-	VercelApi &
-	Pick<LocalApi, 'fetchConnectors' | 'installOrUpdateConnector' | 'uninstallConnector'>;
-
-const details: Record<ConnectorStatus['id'], { logo: string; description: string }> = {
-	kicad: {
-		logo: `${import.meta.env.BASE_URL}kicad.svg`,
-		description: 'Lets the agent design PCBs'
-	}
-};
+export type ConnectorsApi = GitHubApi & VercelApi & KiCadApi & McpApi;
 
 export default function SettingsConnectors({
 	userId,
@@ -29,8 +12,6 @@ export default function SettingsConnectors({
 	userId: string;
 	localApi: ConnectorsApi | null;
 }) {
-	const { connectors, loadError, replace } = useConnectors(userId, localApi);
-
 	return (
 		<section className="flex h-full min-h-0 flex-col overflow-hidden">
 			<header className="flex h-12 shrink-0 items-center px-6">
@@ -48,111 +29,12 @@ export default function SettingsConnectors({
 						<>
 							<GitHubConnector userId={userId} localApi={localApi} />
 							<VercelConnector userId={userId} localApi={localApi} />
-							{connectors?.map((connector) => (
-								<ConnectorCard
-									key={connector.id}
-									connector={connector}
-									onInstall={() => localApi.installOrUpdateConnector(userId, connector.id)}
-									onUninstall={() => localApi.uninstallConnector(userId, connector.id)}
-									onStatus={replace}
-								/>
-							))}
+							<KiCadConnector userId={userId} localApi={localApi} />
+							<McpConnectors userId={userId} localApi={localApi} />
 						</>
-					)}
-
-					{loadError && (
-						<p role="alert" className="text-destructive text-sm">
-							{loadError}
-						</p>
 					)}
 				</div>
 			</div>
 		</section>
-	);
-}
-
-function ConnectorCard({
-	connector,
-	onInstall,
-	onUninstall,
-	onStatus
-}: {
-	connector: ConnectorStatus;
-	onInstall: () => Promise<ConnectorStatus>;
-	onUninstall: () => Promise<ConnectorStatus>;
-	onStatus: (status: ConnectorStatus) => void;
-}) {
-	const [pending, setPending] = useState(false);
-	const [requestError, setRequestError] = useState<string | null>(null);
-	const installing = connector.state === 'installing';
-	const busy = pending || installing;
-	const error = requestError ?? connector.error;
-
-	async function run(action: () => Promise<ConnectorStatus>) {
-		setPending(true);
-		setRequestError(null);
-
-		try {
-			onStatus(await action());
-		} catch (caught) {
-			setRequestError(caughtMessage.parse(caught) || 'Something went wrong.');
-		} finally {
-			setPending(false);
-		}
-	}
-
-	return (
-		<div className="border-border flex items-center gap-3 rounded-xl border p-5">
-			<img src={details[connector.id].logo} alt="" className="size-8 shrink-0" />
-			<div className="min-w-0 flex-1">
-				<p className="text-foreground flex items-center gap-2 text-[15px]">
-					{connector.name}
-					<span className="border-border text-muted-foreground rounded-full border px-1.5 text-[11px] leading-4 font-normal">
-						Experimental
-					</span>
-				</p>
-				<ConnectorDescription>{details[connector.id].description}</ConnectorDescription>
-				{connector.kicadVersion && (
-					<VersionLine name={connector.name} version={connector.kicadVersion} />
-				)}
-				{error && (
-					<p className="text-destructive mt-0.5 truncate text-[12px]" title={error}>
-						{error}
-					</p>
-				)}
-			</div>
-			{connector.state === 'installed' ? (
-				<>
-					{connector.updateAvailable && (
-						<button
-							type="button"
-							className={primaryButtonClass}
-							disabled={busy}
-							onClick={() => void run(onInstall)}
-						>
-							Update
-						</button>
-					)}
-					<button
-						type="button"
-						className={secondaryButtonClass}
-						disabled={busy}
-						onClick={() => void run(onUninstall)}
-					>
-						Uninstall
-					</button>
-				</>
-			) : (
-				<button
-					type="button"
-					className={primaryButtonClass}
-					disabled={busy}
-					onClick={() => void run(onInstall)}
-				>
-					{installing && <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />}
-					{installing ? 'Installing…' : connector.state === 'failed' ? 'Retry' : 'Install'}
-				</button>
-			)}
-		</div>
 	);
 }
