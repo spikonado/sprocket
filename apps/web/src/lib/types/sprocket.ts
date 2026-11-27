@@ -52,6 +52,7 @@ export type AgentRunRequest = {
 	fastMode: boolean;
 	workspacePath: string;
 	continuationOfRunId?: Id<'runs'>;
+	posthogSessionId?: string;
 };
 
 export type AgentRunStart = {

@@ -506,14 +506,22 @@ impl std::error::Error for AgentRunFailed<'_> {
     }
 }
 
-pub(crate) async fn capture_run_failure(error: &anyhow::Error, user_id: &str, run_id: &str) {
+pub(crate) async fn capture_run_failure(
+    error: &anyhow::Error,
+    user_id: &str,
+    run_id: &str,
+    session_id: Option<&str>,
+) {
     if !is_sprocket_fixable(error) {
         return;
     }
-    let Ok(options) = posthog_rs::CaptureExceptionOptions::new()
+    let mut options = posthog_rs::CaptureExceptionOptions::new()
         .distinct_id(user_id)
-        .property("run_id", run_id)
-    else {
+        .property("run_id", run_id);
+    if let Some(session_id) = session_id {
+        options = options.and_then(|options| options.property("$session_id", session_id));
+    }
+    let Ok(options) = options else {
         return;
     };
     let _ = posthog_rs::capture_exception_with(&AgentRunFailed(error), options).await;

@@ -273,6 +273,7 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) subagent_models: Arc<Vec<crate::catalog::SubagentModelChoice>>,
     pub(crate) subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
     pub(crate) transcript_store: Option<Arc<sprocket_transcript::TranscriptStore>>,
+    pub(crate) posthog_session_id: Option<String>,
 }
 
 pub(crate) enum AgentProviderResult {

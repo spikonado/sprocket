@@ -209,6 +209,7 @@ async fn prepare_run(
         workspace_path: attachment.workspace_path,
         continuation_of_run_id: None,
         execution_secret: None,
+        posthog_session_id: None,
     })
 }
 

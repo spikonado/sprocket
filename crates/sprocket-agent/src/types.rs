@@ -218,6 +218,7 @@ pub struct RunAgentRequest {
     pub workspace_path: String,
     pub installation_id: String,
     pub continuation_of_run_id: Option<String>,
+    pub posthog_session_id: Option<String>,
     pub automatic_recovery: bool,
     pub subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
     pub transcript_store: Option<Arc<sprocket_transcript::TranscriptStore>>,

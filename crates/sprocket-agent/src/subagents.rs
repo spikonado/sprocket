@@ -112,6 +112,7 @@ pub struct SubagentLaunchRequest {
     pub reasoning_effort: String,
     pub fast_mode: bool,
     pub continuation_of_run_id: Option<String>,
+    pub posthog_session_id: Option<String>,
 }
 
 impl std::fmt::Debug for SubagentLaunchRequest {
