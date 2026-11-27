@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { api, internal } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
-import { AGENT_DECIDE_OPTION_ID, QUESTION_TIMEOUT_CHECKPOINT_MS } from '@convex/lib/agentQuestions';
+import {
+	AGENT_DECIDE_OPTION_ID,
+	QUESTION_TIMEOUT_CHECKPOINT_MS,
+	type AgentQuestionDetail
+} from '@convex/lib/agentQuestions';
 import {
 	createQueuedRun,
 	initConvexTest,
@@ -1081,5 +1085,74 @@ describe('agentQuestions', () => {
 				executionSecret
 			})
 		).rejects.toThrow(/cancelled/);
+	});
+
+	describe('detail', () => {
+		async function createWithDetail(detail: AgentQuestionDetail) {
+			const t = initConvexTest();
+			const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
+			const { executionSecret, claimId, runId } = await startRun(t, threadId);
+
+			const created = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
+				runId,
+				claimId,
+				question: 'Needs the user',
+				options: [],
+				detail,
+				executionSecret
+			});
+
+			const answer = (args: { optionId?: string }) =>
+				asUser.mutation(api.agentQuestions.answer, {
+					threadId,
+					questionId: created.questionId,
+					...args
+				});
+
+			return { t, asUser, threadId, runId, executionSecret, created, answer };
+		}
+
+		it.each([
+			{
+				detail: {
+					type: 'approval',
+					connector: 'linear',
+					tool: 'create_issue',
+					arguments: '{"title":"Bug"}'
+				},
+				optionIds: ['allow', 'always', 'deny']
+			},
+			{
+				detail: {
+					type: 'connector',
+					connector: { type: 'known', id: 'github' }
+				},
+				optionIds: ['connected']
+			}
+		] satisfies { detail: AgentQuestionDetail; optionIds: string[] }[])(
+			'gives $detail.type questions fixed options and returns the detail to the UI and agent',
+			async ({ detail, optionIds }) => {
+				const { t, asUser, threadId, runId, executionSecret, created, answer } =
+					await createWithDetail(detail);
+
+				expect(created.options.map((option) => option.id)).toEqual(optionIds);
+
+				expect(
+					await asUser.query(api.agentQuestions.headPendingForThread, { threadId })
+				).toMatchObject({ detail });
+
+				await expect(answer({ optionId: optionIds[0] })).resolves.toMatchObject({
+					question: { status: 'answered', answer: { optionId: optionIds[0] } }
+				});
+
+				expect(
+					await t.query(api.agentQuestions.getForExecutor, {
+						runId,
+						questionId: created.questionId,
+						executionSecret
+					})
+				).toMatchObject({ detail, answer: { optionId: optionIds[0] } });
+			}
+		);
 	});
 });

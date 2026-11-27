@@ -402,6 +402,62 @@ export const vAwaitQuestionPayload = v.object({
 	yieldTimeMs: v.optional(v.number())
 });
 
+const vStdioConnector = v.object({
+	type: v.literal('stdio'),
+	name: v.string(),
+	command: v.string(),
+	args: v.array(v.string()),
+	env: v.array(v.string())
+});
+
+const vHttpConnector = v.object({
+	type: v.literal('http'),
+	name: v.string(),
+	url: v.string(),
+	headers: v.array(v.string())
+});
+
+const vCustomConnector = v.union(vStdioConnector, vHttpConnector);
+
+export const vAgentQuestionDetail = v.union(
+	v.object({
+		type: v.literal('approval'),
+		connector: v.string(),
+		tool: v.string(),
+		arguments: v.string()
+	}),
+	v.object({
+		type: v.literal('connector'),
+		connector: v.union(
+			v.object({ type: v.literal('known'), id: v.string() }),
+			vStdioConnector,
+			vHttpConnector
+		)
+	})
+);
+
+export const vServiceSearchPayload = v.object({
+	query: v.string(),
+	limit: v.optional(v.number())
+});
+
+export const vServiceDescribePayload = v.object({
+	paths: v.array(v.string())
+});
+
+// MCP arguments, schemas and content are JSON strings because Convex rejects object keys that
+// start with `$` or `_`, such as `$schema` and `_meta`.
+export const vServiceCallPayload = v.object({
+	path: v.string(),
+	arguments: v.string()
+});
+
+export const vRequestConnectorPayload = v.object({
+	connector: v.union(v.string(), vCustomConnector),
+	yieldTimeMs: v.optional(v.number()),
+	timeoutMs: v.optional(v.union(v.number(), v.null()))
+});
+
 export const vParseFilePayload = v.union(
 	v.object({ path: v.string() }),
 	v.object({ url: v.string() })
@@ -472,6 +528,10 @@ export const vCurrentExecutorJobPayload = v.union(
 	vApplyPatchPayload,
 	vAskQuestionPayload,
 	vAwaitQuestionPayload,
+	vRequestConnectorPayload,
+	vServiceSearchPayload,
+	vServiceDescribePayload,
+	vServiceCallPayload,
 	vExecCommandPayload,
 	vReadSkillPayload,
 	vSetCwdPayload,
@@ -829,7 +889,8 @@ export const vSubagentSettings = v.object({
 const vSubagentPendingQuestion = v.object({
 	questionId: v.id('agentQuestions'),
 	question: v.string(),
-	options: v.array(vAskQuestionOption)
+	options: v.array(vAskQuestionOption),
+	detail: v.optional(vAgentQuestionDetail)
 });
 
 const vSubagentMonitorEntry = v.union(
@@ -969,6 +1030,47 @@ const vListConnectorsResult = v.object({
 	connectors: v.array(v.object({ name: v.string(), version: v.string() }))
 });
 
+const vToolPolicy = v.union(v.literal('enabled'), v.literal('ask'), v.literal('disabled'));
+
+const vServiceSearchResult = v.object({
+	results: v.array(
+		v.union(
+			v.object({
+				path: v.string(),
+				connector: v.string(),
+				description: v.optional(v.string()),
+				policy: vToolPolicy
+			}),
+			v.object({
+				connector: v.string(),
+				connectorId: v.string(),
+				status: v.literal('not_connected')
+			})
+		)
+	),
+	unavailable: v.optional(v.array(v.object({ connector: v.string(), error: v.string() })))
+});
+
+const vServiceDescribeResult = v.object({
+	tools: v.array(
+		v.object({
+			path: v.string(),
+			description: v.optional(v.string()),
+			inputSchema: v.string(),
+			outputSchema: v.optional(v.string()),
+			annotations: v.optional(v.any()),
+			policy: vToolPolicy
+		})
+	),
+	missing: v.optional(v.array(v.string()))
+});
+
+const vServiceCallResult = v.object({
+	content: v.string(),
+	structuredContent: v.optional(v.string()),
+	isError: v.optional(v.boolean())
+});
+
 const vParsedFileSource = v.union(
 	v.object({ type: v.literal('path'), path: v.string() }),
 	v.object({ type: v.literal('url'), url: v.string() })
@@ -1023,6 +1125,9 @@ export const vExecutorJobResult = v.union(
 	vArtifactResult,
 	vListArtifactsResult,
 	vListConnectorsResult,
+	vServiceSearchResult,
+	vServiceDescribeResult,
+	vServiceCallResult,
 	vPollPrResult,
 	vPollPrsResult,
 	vBrowserTaskResult,
@@ -1054,6 +1159,10 @@ export const vCurrentExecutorJobKind = v.union(
 	v.literal('apply_patch'),
 	v.literal('ask_question'),
 	v.literal('poll_question'),
+	v.literal('request_connector'),
+	v.literal('service_search'),
+	v.literal('service_describe'),
+	v.literal('service_call'),
 	v.literal('exec_cmd'),
 	v.literal('get_workspace_instructions'),
 	v.literal('mandate_setup'),

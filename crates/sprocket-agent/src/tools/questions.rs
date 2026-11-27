@@ -14,7 +14,7 @@ use tokio::sync::Mutex;
 use tokio::time::{Instant, sleep_until};
 
 use super::async_tools::{YieldMode, default_yield_ms, is_default_yield_ms, yield_time_schema};
-use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure};
+use super::context::{AgentToolContext, cancelled_error, cancelled_read, tool_error, tool_failure};
 use super::job::{execute_serialized_tool_job, execute_tool_job_with_id};
 use crate::convex::RuntimeClient;
 
@@ -33,7 +33,13 @@ pub(crate) struct AskQuestionTool(pub(super) AgentToolContext);
 pub(crate) struct PollQuestionTool(pub(super) AgentToolContext);
 
 fn ask_question_parameters(max_yield_ms: u64) -> serde_json::Value {
-    let mut schema = json!(schemars::schema_for!(AskQuestionArgs));
+    with_question_waits(json!(schemars::schema_for!(AskQuestionArgs)), max_yield_ms)
+}
+
+pub(super) fn with_question_waits(
+    mut schema: serde_json::Value,
+    max_yield_ms: u64,
+) -> serde_json::Value {
     schema["properties"]["yieldTimeMs"] = yield_time_schema(
         YieldMode::Action,
         max_yield_ms,
@@ -101,21 +107,21 @@ pub(crate) struct PollQuestionArgs {
     pub(crate) yield_time_ms: u64,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct QuestionAnswer {
+pub(super) struct QuestionAnswer {
     #[serde(skip_serializing_if = "Option::is_none")]
-    option_id: Option<String>,
+    pub(super) option_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    text: Option<String>,
+    pub(super) text: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct QuestionSnapshot {
-    question_id: String,
-    status: String,
-    answer: Option<QuestionAnswer>,
+pub(super) struct QuestionSnapshot {
+    pub(super) question_id: String,
+    pub(super) status: String,
+    pub(super) answer: Option<QuestionAnswer>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -178,27 +184,17 @@ impl rig::tool::Tool for AskQuestionTool {
         _context: &mut rig::tool::ToolContext,
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
-        let prepared = prepare_ask_question(&args)?;
+        let question = prepare_ask_question(&args)?;
         let yield_time_ms = YieldMode::Action.normalize(args.yield_time_ms, self.0.max_yield_ms);
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         execute_tool_job_with_id(&self.0, Self::NAME, payload, |cancellation, job_id| {
-            let runtime = self.0.runtime.clone();
-            let run_id = self.0.run_id.clone();
-            let claim_id = self.0.claim_id.clone();
+            let context = self.0.clone();
             async move {
-                tokio::select! {
-                    biased;
-                    _ = cancellation.cancelled() => Err(cancelled_error()),
-                    result = async {
-                        let created = create_agent_question(
-                            &runtime, &run_id, &claim_id, &job_id, &prepared.question,
-                            &prepared.options, args.timeout_ms,
-                        ).await?;
-                        let snapshot = fetch_question_snapshot(&runtime, &run_id, &created.question_id).await?;
-                        let result = observe_question(&runtime, &run_id, &snapshot, yield_time_ms).await?;
-                        Ok(question_creation_result(result, &created.question_id, yield_time_ms))
-                    } => result,
-                }
+                cancelled_read(
+                    &cancellation,
+                    ask_and_observe(&context, &job_id, &question, yield_time_ms),
+                )
+                .await
             }
         })
         .await
@@ -256,14 +252,16 @@ impl rig::tool::Tool for PollQuestionTool {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct PreparedAskQuestion {
+pub(super) struct NewQuestion {
     pub(super) question: String,
     pub(super) options: Vec<AskQuestionOption>,
+    pub(super) timeout_ms: Option<u64>,
+    pub(super) detail: Option<serde_json::Value>,
 }
 
 pub(super) fn prepare_ask_question(
     args: &AskQuestionArgs,
-) -> Result<PreparedAskQuestion, ToolExecutionError> {
+) -> Result<NewQuestion, ToolExecutionError> {
     let question = args.question.trim();
     if question.is_empty() {
         return Err(tool_failure("Question cannot be empty."));
@@ -314,38 +312,71 @@ pub(super) fn prepare_ask_question(
         });
     }
 
-    Ok(PreparedAskQuestion {
+    Ok(NewQuestion {
         question: question.to_string(),
         options,
+        timeout_ms: args.timeout_ms,
+        detail: None,
     })
 }
 
-async fn create_agent_question(
-    runtime: &RuntimeClient,
-    run_id: &str,
-    claim_id: &str,
+/// Creates the question and waits up to `yield_time_ms` for an answer, returning `ask_question`'s result.
+pub(super) async fn ask_and_observe(
+    context: &AgentToolContext,
     job_id: &str,
-    question: &str,
-    options: &[AskQuestionOption],
-    timeout_ms: Option<u64>,
-) -> Result<CreateQuestionResponse, ToolExecutionError> {
+    question: &NewQuestion,
+    yield_time_ms: u64,
+) -> Result<serde_json::Value, ToolExecutionError> {
+    let snapshot = create_agent_question(context, job_id, question).await?;
+    let result =
+        observe_question(&context.runtime, &context.run_id, &snapshot, yield_time_ms).await?;
+    Ok(question_creation_result(
+        result,
+        &snapshot.question_id,
+        yield_time_ms,
+    ))
+}
+
+/// Creates the question and waits until it leaves `pending`.
+pub(super) async fn ask_and_settle(
+    context: &AgentToolContext,
+    job_id: &str,
+    question: &NewQuestion,
+) -> Result<QuestionSnapshot, ToolExecutionError> {
+    let snapshot = create_agent_question(context, job_id, question).await?;
+    settle_question(&context.runtime, &context.run_id, &snapshot, None).await
+}
+
+async fn create_agent_question(
+    context: &AgentToolContext,
+    job_id: &str,
+    question: &NewQuestion,
+) -> Result<QuestionSnapshot, ToolExecutionError> {
     let mut args = BTreeMap::new();
-    args.insert("runId".to_string(), run_id.to_string().into());
-    args.insert("claimId".to_string(), claim_id.to_string().into());
+    args.insert("runId".to_string(), context.run_id.clone().into());
+    args.insert("claimId".to_string(), context.claim_id.clone().into());
     args.insert("jobId".to_string(), job_id.to_string().into());
-    args.insert("question".to_string(), question.to_string().into());
+    args.insert("question".to_string(), question.question.clone().into());
     args.insert(
         "options".to_string(),
-        Value::try_from(serde_json::to_value(options).map_err(|e| tool_error(e.into()))?)
+        Value::try_from(serde_json::to_value(&question.options).map_err(|e| tool_error(e.into()))?)
             .map_err(tool_error)?,
     );
-    if let Some(timeout_ms) = timeout_ms {
+    if let Some(timeout_ms) = question.timeout_ms {
         args.insert("timeoutMs".to_string(), Value::Float64(timeout_ms as f64));
     }
-    runtime
+    if let Some(detail) = &question.detail {
+        args.insert(
+            "detail".to_string(),
+            Value::try_from(detail.clone()).map_err(tool_error)?,
+        );
+    }
+    let created: CreateQuestionResponse = context
+        .runtime
         .mutation_json("agentQuestions:createWithOptionalExpiry", args)
         .await
-        .map_err(tool_error)
+        .map_err(tool_error)?;
+    fetch_question_snapshot(&context.runtime, &context.run_id, &created.question_id).await
 }
 
 async fn fetch_question_snapshot(
@@ -399,8 +430,22 @@ async fn observe_question(
     if yield_time_ms == 0 || snapshot.status != "pending" {
         return question_result_from_snapshot(snapshot);
     }
-
     let deadline = Instant::now() + Duration::from_millis(yield_time_ms);
+    question_result_from_snapshot(
+        &settle_question(runtime, run_id, snapshot, Some(deadline)).await?,
+    )
+}
+
+/// Waits until the question leaves `pending`, or for the deadline's authoritative read.
+async fn settle_question(
+    runtime: &RuntimeClient,
+    run_id: &str,
+    snapshot: &QuestionSnapshot,
+    deadline: Option<Instant>,
+) -> Result<QuestionSnapshot, ToolExecutionError> {
+    if snapshot.status != "pending" {
+        return Ok(snapshot.clone());
+    }
     let mut args = BTreeMap::new();
     args.insert("runId".to_string(), run_id.to_string().into());
     args.insert(
@@ -429,24 +474,29 @@ async fn observe_question(
 async fn wait_for_question_updates<S, F, Fut>(
     updates: &mut S,
     initial: &QuestionSnapshot,
-    deadline: Instant,
+    deadline: Option<Instant>,
     fetch: F,
-) -> Result<serde_json::Value, ToolExecutionError>
+) -> Result<QuestionSnapshot, ToolExecutionError>
 where
     S: Stream<Item = Result<Option<QuestionSnapshot>, ToolExecutionError>> + Unpin,
     F: FnOnce() -> Fut,
     Fut: Future<Output = Result<QuestionSnapshot, ToolExecutionError>>,
 {
+    let deadline_reached = async {
+        match deadline {
+            Some(deadline) => sleep_until(deadline).await,
+            None => std::future::pending().await,
+        }
+    };
+    tokio::pin!(deadline_reached);
     loop {
-        if Instant::now() >= deadline {
-            return question_result_from_snapshot(&fetch().await?);
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            return fetch().await;
         }
         let update = tokio::select! {
             biased;
             update = updates.next() => update,
-            _ = sleep_until(deadline) => {
-                return question_result_from_snapshot(&fetch().await?);
-            },
+            _ = &mut deadline_reached => return fetch().await,
         };
 
         let Some(update) = update else {
@@ -459,7 +509,7 @@ where
             )));
         };
         if snapshot.status != "pending" {
-            return question_result_from_snapshot(&snapshot);
+            return Ok(snapshot);
         }
     }
 }

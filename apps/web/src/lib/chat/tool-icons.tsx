@@ -15,14 +15,17 @@ import {
 	ListChecks,
 	NotebookPen,
 	PackageSearch,
+	Plug,
 	Receipt,
 	ScrollText,
 	Save,
 	Search,
 	SquareTerminal,
 	Terminal,
+	TextSearch,
 	Trash2,
 	Wrench,
+	Unplug,
 	type LucideIcon
 } from 'lucide-react';
 
@@ -90,6 +93,14 @@ export function toolKindIcon(kind: string): LucideIcon {
 			return Search;
 		case 'lookup_parts':
 			return PackageSearch;
+		case 'service_search':
+			return TextSearch;
+		case 'service_describe':
+			return BookOpen;
+		case 'service_call':
+			return Plug;
+		case 'request_connector':
+			return Unplug;
 		case 'write_stdin':
 			return SquareTerminal;
 		default:

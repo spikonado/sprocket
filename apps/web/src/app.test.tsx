@@ -6,6 +6,7 @@ import { api } from '@convex/_generated/api';
 import { defaultProviderOrder } from '@convex/lib/providerOrder';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { AgentQuestionSnapshot } from '@convex/agentQuestions';
+import type { AgentQuestionDetail } from '@convex/lib/agentQuestions';
 import { authState, resetAuthRuntime } from '$lib/auth';
 import type { ModelCatalog } from '$lib/chat/model-catalog';
 import { ConvexTestClient, ConvexTestProvider, fixtureId } from '$lib/convex-test-client';
@@ -161,6 +162,11 @@ function createLocalApi(overrides: Partial<LocalApi> = {}): LocalApi {
 		fetchConnectors: unused,
 		installOrUpdateConnector: unused,
 		uninstallConnector: unused,
+		fetchMcpConnectors: unused,
+		addMcpConnector: unused,
+		removeMcpConnector: unused,
+		fetchMcpTools: unused,
+		setMcpToolPolicy: unused,
 		fetchClaudeCodeStatus: async () => claudeCodeStatus('installed'),
 		installClaudeCode: unused,
 		startClaudeCodeLogin: unused,
@@ -1251,6 +1257,90 @@ it('replaces Stop with Skip question while a question is pending', async () => {
 	await waitFor(() =>
 		expect(mutation).toHaveBeenCalledWith(api.agentRuntime.requestCancellation, { runId })
 	);
+});
+
+async function renderDetailedQuestion(
+	detail: AgentQuestionDetail,
+	options: AgentQuestionSnapshot['options'],
+	localApi: Partial<LocalApi> = {}
+) {
+	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+	const thread = threadRecord('thread-1', 'repo-alpha', 'Fix the robot');
+
+	const question: AgentQuestionSnapshot = {
+		threadId: thread._id,
+		questionId: fixtureId<'agentQuestions'>('question-1'),
+		question: 'Needs you',
+		options,
+		detail,
+		status: 'pending',
+		sequence: 1
+	};
+
+	const client = createConvexFixtures();
+	client.registerPaginatedQuery(api.inbox.list, [thread]);
+	client.registerQuery(api.threads.getByThreadId, thread);
+	client.registerQuery(api.agentQuestions.headPendingForThread, question);
+	client.registerMutation(api.agentQuestions.answer, {
+		question: { ...question, status: 'answered' },
+		continuation: undefined
+	});
+
+	const mutation = vi.spyOn(client, 'mutation');
+
+	await renderApp(
+		client,
+		createRuntime(createLocalApi({ listProjectAttachments: async () => [alpha], ...localApi }))
+	);
+	await projectTrigger('Alpha');
+	fireEvent.click(await screen.findByText('Fix the robot'));
+	expect(await screen.findByText('Needs you')).toBeTruthy();
+
+	return { mutation, question };
+}
+
+it('answers a connector request once the requested server is added', async () => {
+	const addMcpConnector = vi.fn<LocalApi['addMcpConnector']>(async () => ({
+		id: 'linear',
+		name: 'Linear',
+		transport: { type: 'stdio', command: 'npx', args: ['linear-mcp'], env: ['LINEAR_API_KEY'] }
+	}));
+
+	const { mutation, question } = await renderDetailedQuestion(
+		{
+			type: 'connector',
+			connector: {
+				type: 'stdio',
+				name: 'Linear',
+				command: 'npx',
+				args: ['linear-mcp'],
+				env: ['LINEAR_API_KEY']
+			}
+		},
+		[{ id: 'connected', label: 'Connected' }],
+		{ addMcpConnector }
+	);
+
+	expect(screen.getByText('npx linear-mcp')).toBeTruthy();
+	fireEvent.change(screen.getByLabelText('LINEAR_API_KEY'), { target: { value: 'lin_secret' } });
+	fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+
+	await waitFor(() =>
+		expect(mutation).toHaveBeenCalledWith(
+			api.agentQuestions.answer,
+			expect.objectContaining({ questionId: question.questionId, optionId: 'connected' }),
+			{}
+		)
+	);
+	expect(addMcpConnector).toHaveBeenCalledWith(expect.any(String), {
+		name: 'Linear',
+		transport: {
+			type: 'stdio',
+			command: 'npx',
+			args: ['linear-mcp'],
+			env: { LINEAR_API_KEY: 'lin_secret' }
+		}
+	});
 });
 
 it.each([

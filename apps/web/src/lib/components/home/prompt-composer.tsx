@@ -1,7 +1,11 @@
 import { ArrowUp, Paperclip, Square } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Id } from '@convex/_generated/dataModel';
-import { canSubmitQuestionAnswer, type AgentQuestionOption } from '@convex/lib/agentQuestions';
+import {
+	canSubmitQuestionAnswer,
+	type AgentQuestionDetail,
+	type AgentQuestionOption
+} from '@convex/lib/agentQuestions';
 import type { ComposerAttachment } from '$lib/chat/attachments';
 import { containsDraggedFiles, shouldSubmitComposerFromKeydown } from '$lib/chat/composer';
 import { applyPathSelection, getActiveAtMention } from '$lib/chat/at-paths';
@@ -12,7 +16,7 @@ import {
 	type CatalogModelId,
 	type ModelCatalog
 } from '$lib/chat/model-catalog';
-import AgentQuestion from '$lib/components/home/agent-question';
+import AgentQuestion, { type QuestionConnectorSetup } from '$lib/components/home/agent-question';
 import RunningCommands from '$lib/components/home/running-commands';
 import ComposerAttachments from '$lib/components/home/composer-attachments';
 import ComposerSkillMenu from '$lib/components/home/composer-skill-menu';
@@ -31,6 +35,7 @@ export type PendingAgentQuestion = {
 	questionId: string;
 	question: string;
 	options: AgentQuestionOption[];
+	detail?: AgentQuestionDetail;
 };
 
 type SkillsLoad = {
@@ -61,6 +66,8 @@ export type PromptComposerProps = {
 	usageThreadId?: Id<'threadRecords'> | null;
 	selectedQuestionOptionId?: string | null;
 	onSelectedQuestionOptionIdChange?: (optionId: string | null) => void;
+	onAnswerQuestion?: (optionId: string) => void;
+	questionConnectorSetup?: QuestionConnectorSetup | null;
 	canSend: boolean;
 	submitting: 'request' | 'agentLaunch' | null;
 	isRunning: boolean;
@@ -111,6 +118,8 @@ export default function PromptComposer({
 	usageThreadId = null,
 	selectedQuestionOptionId = null,
 	onSelectedQuestionOptionIdChange,
+	onAnswerQuestion,
+	questionConnectorSetup = null,
 	canSend,
 	submitting,
 	isRunning,
@@ -614,9 +623,12 @@ export default function PromptComposer({
 										key={pendingQuestion.questionId}
 										question={pendingQuestion.question}
 										options={pendingQuestion.options}
+										detail={pendingQuestion.detail}
 										runEnded={runEnded}
 										selectedOptionId={selectedQuestionOptionId}
 										onToggleOption={toggleQuestionOption}
+										onAnswer={(optionId) => onAnswerQuestion?.(optionId)}
+										connectorSetup={questionConnectorSetup}
 									/>
 								) : null}
 								{attachments.length > 0 && !answeringQuestion ? (

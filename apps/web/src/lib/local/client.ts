@@ -294,6 +294,37 @@ const connectorStatusSchema = z.object({
 	kicadVersion: z.string().nullable()
 });
 
+const mcpConnectorSchema = z.object({
+	id: z.string(),
+	name: z.string(),
+	transport: z.discriminatedUnion('type', [
+		z.object({
+			type: z.literal('stdio'),
+			command: z.string(),
+			args: z.array(z.string()),
+			env: z.array(z.string())
+		}),
+		z.object({ type: z.literal('http'), url: z.string(), headers: z.array(z.string()) })
+	])
+});
+
+const mcpToolsSchema = z.object({
+	tools: z.array(
+		z.object({
+			name: z.string(),
+			title: z.string().nullish(),
+			description: z.string().nullish(),
+			readOnly: z.boolean(),
+			destructive: z.boolean(),
+			policy: z.enum(['enabled', 'ask', 'disabled'])
+		})
+	)
+});
+
+function mcpConnectorPath(id: string, action: string) {
+	return `/api/connectors/mcp/${encodeURIComponent(id)}/${action}`;
+}
+
 const chatGptBrowserLoginResultSchema = z.object({
 	status: z.enum(['pending', 'complete', 'error']),
 	error: z.string().optional()
@@ -832,6 +863,36 @@ export function createLocalClient(baseUrl: string): LocalApi {
 				method: 'POST',
 				body: JSON.stringify({ userId })
 			}),
+		fetchMcpConnectors: async (userId) =>
+			await request(
+				`/api/connectors/mcp?${new URLSearchParams({ userId }).toString()}`,
+				z.array(mcpConnectorSchema)
+			),
+		addMcpConnector: async (userId, connector) =>
+			await request('/api/connectors/mcp', mcpConnectorSchema, {
+				method: 'POST',
+				body: JSON.stringify({ userId, ...connector })
+			}),
+		removeMcpConnector: async (userId, id) => {
+			await transport.response(mcpConnectorPath(id, 'delete'), {
+				method: 'POST',
+				body: JSON.stringify({ userId })
+			});
+		},
+		fetchMcpTools: async (userId, id) => {
+			const { tools } = await request(
+				`${mcpConnectorPath(id, 'tools')}?${new URLSearchParams({ userId }).toString()}`,
+				mcpToolsSchema
+			);
+
+			return tools;
+		},
+		setMcpToolPolicy: async (userId, id, tool, policy) => {
+			await transport.response(mcpConnectorPath(id, 'policy'), {
+				method: 'POST',
+				body: JSON.stringify({ userId, tool, policy })
+			});
+		},
 		fetchClaudeCodeStatus: async (userId) =>
 			await request(
 				`/api/claude-code?${new URLSearchParams({ userId }).toString()}`,

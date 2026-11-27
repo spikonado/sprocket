@@ -221,6 +221,7 @@ pub struct RunAgentRequest {
     pub posthog_session_id: Option<String>,
     pub automatic_recovery: bool,
     pub subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
+    pub service_hub: Option<crate::services::SharedServiceHub>,
     pub transcript_store: Option<Arc<sprocket_transcript::TranscriptStore>>,
     /// One line per installed connector, such as `KiCad connector v0.1.0 (KiCad 10.0.1)`.
     pub installed_connectors: Vec<String>,

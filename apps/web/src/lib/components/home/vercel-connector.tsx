@@ -4,7 +4,8 @@ import {
 	CliConnectorCard,
 	rowPrimaryButtonClass,
 	rowSecondaryButtonClass,
-	useConnectorAction
+	useConnectorAction,
+	useOnConnected
 } from './connector-card-parts';
 import { DeviceSignInPanel, useDeviceSignIn, type SignInApi } from './device-sign-in';
 import { pollWhileInstalling, usePolledStatus } from './use-connectors';
@@ -14,10 +15,12 @@ export type VercelApi = SignInApi &
 
 export default function VercelConnector({
 	userId,
-	localApi
+	localApi,
+	onConnected
 }: {
 	userId: string;
 	localApi: VercelApi;
+	onConnected?: () => void;
 }) {
 	const fetchStatus = useCallback(() => localApi.fetchVercelStatus(userId), [localApi, userId]);
 
@@ -32,6 +35,8 @@ export default function VercelConnector({
 	const installed = status?.install.state === 'installed';
 	const account = installed ? status.account : null;
 	const busy = pending !== null;
+
+	useOnConnected(account?.state === 'signedIn', onConnected);
 
 	let action = null;
 

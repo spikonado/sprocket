@@ -1479,14 +1479,16 @@ export default function App({
 		if (currentThreadDeleted) leaveCurrentThreadRef.current();
 	}, [currentThreadDeleted, leaveCurrentThreadRef]);
 
-	async function settleAgentQuestion(action: 'answer' | 'skip') {
+	async function settleAgentQuestion(action: 'answer' | 'skip', optionId?: string) {
 		const question = pendingAgentQuestion;
 		const threadId = currentThreadId;
 		const userId = signedInUserIdRef.current;
 
 		if (!question || !threadId || !userId || answeringAgentQuestion) return;
 
-		if (action === 'answer' && !selectedQuestionOptionId && !prompt.trim()) return;
+		const answerOptionId = optionId ?? selectedQuestionOptionId;
+
+		if (action === 'answer' && !answerOptionId && !prompt.trim()) return;
 
 		setAnsweringAgentQuestion(true);
 		setCurrentError(null);
@@ -1513,7 +1515,7 @@ export default function App({
 					? await answerAgentQuestion({
 							threadId,
 							questionId: question.questionId,
-							optionId: submittedOptionId ?? undefined,
+							optionId: answerOptionId ?? undefined,
 							text: answerText || undefined
 						})
 					: await skipAgentQuestion({ threadId, questionId: question.questionId });
@@ -2749,6 +2751,12 @@ export default function App({
 													usageThreadId={currentThreadId}
 													selectedQuestionOptionId={selectedQuestionOptionId}
 													onSelectedQuestionOptionIdChange={setSelectedQuestionOptionId}
+													onAnswerQuestion={(optionId) =>
+														void settleAgentQuestion('answer', optionId)
+													}
+													questionConnectorSetup={
+														localApi && signedInUserId ? { userId: signedInUserId, localApi } : null
+													}
 													canSend={canSend}
 													submitting={
 														hasPendingAgentLaunch

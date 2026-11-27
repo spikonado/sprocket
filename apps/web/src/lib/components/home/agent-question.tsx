@@ -1,21 +1,39 @@
 import { ChevronRight } from 'lucide-react';
 import { useState } from 'react';
-import { AGENT_DECIDE_OPTION_ID, type AgentQuestionOption } from '@convex/lib/agentQuestions';
+import {
+	AGENT_DECIDE_OPTION_ID,
+	CONNECTED_OPTION_ID,
+	type AgentQuestionDetail,
+	type AgentQuestionOption
+} from '@convex/lib/agentQuestions';
+import GitHubConnector from './github-connector';
+import KiCadConnector from './kicad-connector';
+import { RequestedConnectorSetup } from './mcp-connectors';
+import type { ConnectorsApi } from './settings-connectors';
+import VercelConnector from './vercel-connector';
+
+export type QuestionConnectorSetup = { userId: string; localApi: ConnectorsApi };
 
 type Props = {
 	question: string;
 	options: AgentQuestionOption[];
+	detail?: AgentQuestionDetail;
 	runEnded: boolean;
 	selectedOptionId: string | null;
 	onToggleOption: (optionId: string) => void;
+	onAnswer: (optionId: string) => void;
+	connectorSetup: QuestionConnectorSetup | null;
 };
 
 export default function AgentQuestion({
 	question,
 	options,
+	detail,
 	runEnded,
 	selectedOptionId,
-	onToggleOption
+	onToggleOption,
+	onAnswer,
+	connectorSetup
 }: Props) {
 	const [expanded, setExpanded] = useState(!runEnded);
 	const [previousRunEnded, setPreviousRunEnded] = useState(runEnded);
@@ -47,7 +65,15 @@ export default function AgentQuestion({
 					/>
 				</button>
 			</div>
-			{expanded ? (
+			{expanded && detail?.type === 'approval' && <ApprovalDetail detail={detail} />}
+			{expanded && detail?.type === 'connector' && (
+				<ConnectorRequest
+					detail={detail}
+					setup={connectorSetup}
+					onConnected={() => onAnswer(CONNECTED_OPTION_ID)}
+				/>
+			)}
+			{expanded && detail?.type !== 'connector' ? (
 				<ul className="mt-2 flex flex-col gap-1.5" aria-label="Answer options">
 					{options.map((option) => {
 						const isAgentDecide = option.id === AGENT_DECIDE_OPTION_ID;
@@ -74,6 +100,80 @@ export default function AgentQuestion({
 					})}
 				</ul>
 			) : null}
+		</div>
+	);
+}
+
+function prettyJson(text: string) {
+	try {
+		return JSON.stringify(JSON.parse(text), null, 2);
+	} catch {
+		return text;
+	}
+}
+
+function ApprovalDetail({
+	detail
+}: {
+	detail: Extract<AgentQuestionDetail, { type: 'approval' }>;
+}) {
+	return (
+		<div className="border-border mt-2 rounded-lg border text-[13px]">
+			<p className="text-muted-foreground px-3 pt-2">
+				<span className="text-foreground">{detail.connector}</span> ·{' '}
+				<span className="text-foreground font-mono">{detail.tool}</span>
+			</p>
+			<details className="group px-3 py-2">
+				<summary className="text-muted-foreground hover:text-foreground flex cursor-pointer list-none items-center gap-1 text-[12px]">
+					<ChevronRight
+						className="size-3.5 transition-transform group-open:rotate-90"
+						aria-hidden="true"
+					/>
+					Arguments
+				</summary>
+				<pre className="bg-hover-fill/60 text-foreground mt-2 max-h-48 overflow-auto rounded-md px-3 py-2 font-mono text-[12px] leading-5">
+					{prettyJson(detail.arguments)}
+				</pre>
+			</details>
+		</div>
+	);
+}
+
+function ConnectorRequest({
+	detail,
+	setup,
+	onConnected
+}: {
+	detail: Extract<AgentQuestionDetail, { type: 'connector' }>;
+	setup: QuestionConnectorSetup | null;
+	onConnected: () => void;
+}) {
+	const { connector } = detail;
+
+	return (
+		<div className="mt-2 space-y-3">
+			{!setup ? (
+				<p className="text-muted-foreground text-[13px]">
+					Open Sprocket on the computer running this agent to set up the connector.
+				</p>
+			) : connector.type !== 'known' ? (
+				<RequestedConnectorSetup
+					userId={setup.userId}
+					localApi={setup.localApi}
+					connector={connector}
+					onConnected={onConnected}
+				/>
+			) : connector.id === 'github' ? (
+				<GitHubConnector {...setup} onConnected={onConnected} />
+			) : connector.id === 'vercel' ? (
+				<VercelConnector {...setup} onConnected={onConnected} />
+			) : connector.id === 'kicad' ? (
+				<KiCadConnector {...setup} onConnected={onConnected} />
+			) : (
+				<p className="text-muted-foreground text-[13px]">
+					This version of Sprocket can’t set up “{connector.id}”.
+				</p>
+			)}
 		</div>
 	);
 }

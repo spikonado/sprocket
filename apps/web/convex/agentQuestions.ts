@@ -10,6 +10,7 @@ import {
 import { v, type Infer } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import {
+	type AgentQuestionDetail,
 	finalizeQuestionOptions,
 	headActionablePendingQuestion,
 	isPendingQuestionActionable,
@@ -24,7 +25,7 @@ import { toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { vAgentQuestionSnapshot } from '@convex/lib/docs';
 import { assertRunAcceptsWork } from '@convex/lib/runLease';
 import { isSettledExecutorJobStatus } from '@convex/lib/runs';
-import { isRunFinalStatus, vAskQuestionOption } from '@convex/lib/validators';
+import { isRunFinalStatus, vAgentQuestionDetail, vAskQuestionOption } from '@convex/lib/validators';
 import { changeThreadActivity } from '@convex/lib/threadHierarchy';
 
 export type AgentQuestionSnapshot = Infer<typeof vAgentQuestionSnapshot>;
@@ -38,6 +39,8 @@ export function toAgentQuestionSnapshot(question: Doc<'agentQuestions'>): AgentQ
 		status: question.status,
 		sequence: question.sequence
 	};
+
+	if (question.detail) snapshot.detail = question.detail;
 
 	if (question.timeoutAt !== undefined) snapshot.timeoutAt = question.timeoutAt;
 
@@ -65,6 +68,7 @@ type CreateQuestionArgs = {
 	jobId?: Id<'executorJobs'>;
 	question: string;
 	options: Infer<typeof vAskQuestionOption>[];
+	detail?: AgentQuestionDetail;
 	timeoutMs?: number | null;
 	executionSecret: string;
 };
@@ -91,7 +95,7 @@ async function createQuestion(
 	}
 
 	const question = validateQuestionText(args.question);
-	const options = finalizeQuestionOptions(args.options);
+	const options = finalizeQuestionOptions(args.options, args.detail);
 
 	const timeoutMs = validateQuestionTimeoutMs(args.timeoutMs);
 	const now = Date.now();
@@ -105,6 +109,7 @@ async function createQuestion(
 			jobId: job._id,
 			question,
 			options,
+			detail: args.detail,
 			status: timeoutMs === 0 ? 'timedOut' : 'pending',
 			timeoutAt,
 			sequence
@@ -151,6 +156,7 @@ const vCreateQuestionArgs = {
 	jobId: v.optional(v.id('executorJobs')),
 	question: v.string(),
 	options: v.array(vAskQuestionOption),
+	detail: v.optional(vAgentQuestionDetail),
 	executionSecret: v.string()
 };
 

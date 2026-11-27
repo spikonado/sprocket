@@ -110,6 +110,7 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .merge(routes::github::routes())
         .merge(routes::vercel::routes())
         .merge(routes::connectors::routes())
+        .merge(routes::mcp::routes())
         .merge(routes::cli::routes())
         .merge(routes::workspace::routes())
         .merge(routes::agent::routes())

@@ -5,6 +5,7 @@ import { vCreditPackExpiry, vPackPrice, vPrice } from '@convex/lib/pricingValida
 import { workMembership } from '@convex/lib/workSections';
 import { vProviderOrderEntry } from '@convex/lib/providerOrder';
 import {
+	vAgentQuestionDetail,
 	vAgentQuestionStatus,
 	vAskQuestionAnswer,
 	vAskQuestionOption,
@@ -403,6 +404,7 @@ export default defineSchema({
 		jobId: v.id('executorJobs'),
 		question: v.string(),
 		options: v.array(vAskQuestionOption),
+		detail: v.optional(vAgentQuestionDetail),
 		status: vAgentQuestionStatus,
 		answer: v.optional(vAskQuestionAnswer),
 		requiresContinuation: v.optional(v.boolean()),

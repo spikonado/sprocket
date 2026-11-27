@@ -1,5 +1,7 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { DatabaseReader } from '@convex/_generated/server';
+import type { Infer } from 'convex/values';
+import type { vAgentQuestionDetail } from '@convex/lib/validators';
 
 export async function isPendingQuestionActionable(
 	db: DatabaseReader,
@@ -81,6 +83,10 @@ export const MAX_OPTION_ID_CHARS = 20;
 
 export const MAX_OPTION_LABEL_CHARS = 200;
 
+const MAX_APPROVAL_ARGUMENTS_CHARS = 4000;
+
+export const CONNECTED_OPTION_ID = 'connected';
+
 export const QUESTION_TIMEOUT_CHECKPOINT_MS = 365 * 24 * 60 * 60 * 1000;
 
 export function validateQuestionTimeoutMs(
@@ -103,6 +109,8 @@ export type AgentQuestionOption = {
 	id: string;
 	label: string;
 };
+
+export type AgentQuestionDetail = Infer<typeof vAgentQuestionDetail>;
 
 export type AgentQuestionAnswer = {
 	optionId?: string;
@@ -181,8 +189,27 @@ function validateAgentOptions(options: AgentQuestionOption[]): AgentQuestionOpti
 	return normalized;
 }
 
-export function finalizeQuestionOptions(options: AgentQuestionOption[]): AgentQuestionOption[] {
-	return [...validateAgentOptions(options), agentDecideOption()];
+const DETAIL_OPTIONS: Record<AgentQuestionDetail['type'], AgentQuestionOption[]> = {
+	approval: [
+		{ id: 'allow', label: 'Allow once' },
+		{ id: 'always', label: 'Always allow' },
+		{ id: 'deny', label: 'Deny' }
+	],
+	connector: [{ id: CONNECTED_OPTION_ID, label: 'Connected' }]
+};
+
+/** Questions with a `detail` get that kind's fixed options in place of the agent's. */
+export function finalizeQuestionOptions(
+	options: AgentQuestionOption[],
+	detail?: AgentQuestionDetail
+): AgentQuestionOption[] {
+	if (!detail) return [...validateAgentOptions(options), agentDecideOption()];
+
+	if (detail.type === 'approval' && detail.arguments.length > MAX_APPROVAL_ARGUMENTS_CHARS) {
+		throw new Error(`Approval arguments cannot exceed ${MAX_APPROVAL_ARGUMENTS_CHARS} characters.`);
+	}
+
+	return DETAIL_OPTIONS[detail.type];
 }
 
 export function normalizeQuestionAnswer(args: {

@@ -230,6 +230,33 @@ export type ConnectorStatus = {
 	kicadVersion: string | null;
 };
 
+export type ToolPolicy = 'enabled' | 'ask' | 'disabled';
+
+/** Env and header values are write-only, so connectors list their names only. */
+export type McpConnector = {
+	id: string;
+	name: string;
+	transport:
+		| { type: 'stdio'; command: string; args: string[]; env: string[] }
+		| { type: 'http'; url: string; headers: string[] };
+};
+
+export type NewMcpConnector = {
+	name: string;
+	transport:
+		| { type: 'stdio'; command: string; args: string[]; env: Record<string, string> }
+		| { type: 'http'; url: string; headers: Record<string, string> };
+};
+
+export type McpTool = {
+	name: string;
+	title?: string | null;
+	description?: string | null;
+	readOnly: boolean;
+	destructive: boolean;
+	policy: ToolPolicy;
+};
+
 export type ChatGptBrowserLoginResult = {
 	status: 'pending' | 'complete' | 'error';
 	error?: string;
@@ -450,6 +477,11 @@ export type LocalApi = {
 	fetchConnectors: (userId: string) => Promise<ConnectorStatus[]>;
 	installOrUpdateConnector: (userId: string, id: ConnectorStatus['id']) => Promise<ConnectorStatus>;
 	uninstallConnector: (userId: string, id: ConnectorStatus['id']) => Promise<ConnectorStatus>;
+	fetchMcpConnectors: (userId: string) => Promise<McpConnector[]>;
+	addMcpConnector: (userId: string, connector: NewMcpConnector) => Promise<McpConnector>;
+	removeMcpConnector: (userId: string, id: string) => Promise<void>;
+	fetchMcpTools: (userId: string, id: string) => Promise<McpTool[]>;
+	setMcpToolPolicy: (userId: string, id: string, tool: string, policy: ToolPolicy) => Promise<void>;
 	fetchClaudeCodeStatus: (userId: string) => Promise<ClaudeCodeStatus>;
 	installClaudeCode: (userId: string) => Promise<ClaudeCodeStatus>;
 	startClaudeCodeLogin: (userId: string) => Promise<ClaudeCodeLoginStart>;
