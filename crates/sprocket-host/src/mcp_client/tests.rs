@@ -217,14 +217,269 @@ async fn http_client_returns_redirects_instead_of_forwarding_secret_headers() {
         .await
         .unwrap();
     });
-    let response = http_client()
-        .unwrap()
-        .get(format!("http://{address}/"))
-        .header("x-secret", "token")
-        .send()
+    let (issue, issued) = credential_issuer(vec![("token", None)]);
+    let client = RemoteHttpClient::new(issue).await.unwrap();
+    let response = client
+        .send(client.client.get(format!("http://{address}/")))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(*issued.lock().unwrap(), [false]);
+    server.abort();
+}
+
+fn credential_issuer(
+    credentials: Vec<(&str, Option<f64>)>,
+) -> (IssueCredential, Arc<Mutex<Vec<bool>>>) {
+    let credentials: Vec<_> = credentials
+        .into_iter()
+        .map(|(token, expires_at)| IssuedCredential {
+            headers: HashMap::from([("authorization".into(), format!("Bearer {token}"))]),
+            expires_at,
+        })
+        .collect();
+    let credentials = Arc::new(Mutex::new(std::collections::VecDeque::from(credentials)));
+    let issued = Arc::new(Mutex::new(Vec::new()));
+    let issue: IssueCredential = Arc::new({
+        let issued = issued.clone();
+        move |force_refresh| {
+            issued.lock().unwrap().push(force_refresh);
+            let credential = credentials
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("unexpected credential refresh");
+            Box::pin(std::future::ready(Ok(credential)))
+        }
+    });
+    (issue, issued)
+}
+
+async fn http_fixture(app: axum::Router) -> (Arc<str>, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/", listener.local_addr().unwrap()).into();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    (url, server)
+}
+
+fn ping_message() -> ClientJsonRpcMessage {
+    serde_json::from_value(json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" })).unwrap()
+}
+
+#[tokio::test]
+async fn remote_requests_force_refresh_once_on_401_and_replay_the_original_request() {
+    use axum::{body::Body, http::StatusCode, response::Response, routing::any};
+
+    for method in [
+        reqwest::Method::POST,
+        reqwest::Method::GET,
+        reqwest::Method::DELETE,
+    ] {
+        for accept_refreshed in [true, false] {
+            let captured = Arc::new(Mutex::new(Vec::new()));
+            let app = axum::Router::new().route(
+                "/",
+                any({
+                    let captured = captured.clone();
+                    move |request: axum::extract::Request| {
+                        let captured = captured.clone();
+                        async move {
+                            let (parts, body) = request.into_parts();
+                            let body = axum::body::to_bytes(body, 4096).await.unwrap();
+                            let authorized = accept_refreshed
+                                && parts.headers["authorization"] == "Bearer fresh";
+                            let method = parts.method.clone();
+                            captured.lock().unwrap().push((parts, body));
+                            if !authorized {
+                                let mut response = Response::new(Body::empty());
+                                *response.status_mut() = StatusCode::UNAUTHORIZED;
+                                if method == reqwest::Method::GET {
+                                    response.headers_mut().insert(
+                                        "www-authenticate",
+                                        HeaderValue::from_bytes(b"\xff").unwrap(),
+                                    );
+                                }
+                                return response;
+                            }
+                            match method {
+                                reqwest::Method::GET => Response::builder()
+                                    .header("content-type", "text/event-stream")
+                                    .body(Body::from(
+                                        "data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n\n",
+                                    ))
+                                    .unwrap(),
+                                reqwest::Method::POST => Response::builder()
+                                    .header("content-type", "application/json")
+                                    .body(Body::from(
+                                        "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}",
+                                    ))
+                                    .unwrap(),
+                                _ => Response::builder()
+                                    .status(StatusCode::NO_CONTENT)
+                                    .body(Body::empty())
+                                    .unwrap(),
+                            }
+                        }
+                    }
+                }),
+            );
+            let (url, server) = http_fixture(app).await;
+            let (issue, issued) = credential_issuer(vec![("old", None), ("fresh", None)]);
+            let client = RemoteHttpClient::new(issue).await.unwrap();
+            let headers = HashMap::from([
+                (
+                    HeaderName::from_static("mcp-protocol-version"),
+                    HeaderValue::from_static("2025-11-25"),
+                ),
+                (
+                    HeaderName::from_static("x-api-key"),
+                    HeaderValue::from_static("additional-secret"),
+                ),
+            ]);
+            let result = match method {
+                reqwest::Method::POST => client
+                    .post_message(url, ping_message(), Some("session".into()), None, headers)
+                    .await
+                    .map(|response| {
+                        assert!(matches!(response, StreamableHttpPostResponse::Json(..)));
+                    }),
+                reqwest::Method::GET => match client
+                    .get_stream(
+                        url,
+                        Some("session".into()),
+                        Some("resume".into()),
+                        None,
+                        headers,
+                    )
+                    .await
+                {
+                    Ok(mut stream) => {
+                        assert!(stream.next().await.unwrap().unwrap().data.is_some());
+                        Ok(())
+                    }
+                    Err(error) => Err(error),
+                },
+                _ => {
+                    client
+                        .delete_session(url, "session".into(), None, headers)
+                        .await
+                }
+            };
+            if accept_refreshed {
+                result.unwrap();
+            } else {
+                assert!(matches!(result, Err(HttpError::AuthRequired(_))));
+            }
+            assert_eq!(*issued.lock().unwrap(), [false, true]);
+            let captured = captured.lock().unwrap();
+            assert_eq!(captured.len(), 2);
+            assert_eq!(captured[0].1, captured[1].1);
+            for (index, (parts, _)) in captured.iter().enumerate() {
+                assert_eq!(parts.method, method);
+                assert_eq!(
+                    parts.headers["authorization"],
+                    if index == 0 {
+                        "Bearer old"
+                    } else {
+                        "Bearer fresh"
+                    }
+                );
+                assert_eq!(parts.headers["mcp-session-id"], "session");
+                assert_eq!(parts.headers["mcp-protocol-version"], "2025-11-25");
+                assert_eq!(parts.headers["x-api-key"], "additional-secret");
+                if method == reqwest::Method::GET {
+                    assert_eq!(parts.headers["last-event-id"], "resume");
+                }
+            }
+            server.abort();
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn remote_requests_renew_expired_credentials_before_sending() {
+    use axum::{http::StatusCode, routing::post};
+
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let app = axum::Router::new().route(
+        "/",
+        post({
+            let captured = captured.clone();
+            move |headers: HeaderMap| {
+                captured
+                    .lock()
+                    .unwrap()
+                    .push(headers["authorization"].clone());
+                async { StatusCode::ACCEPTED }
+            }
+        }),
+    );
+    let (url, server) = http_fixture(app).await;
+    let expires_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64()
+        * 1000.0
+        + 60_000.0;
+    let (issue, issued) = credential_issuer(vec![("old", Some(expires_at)), ("fresh", None)]);
+    let client = RemoteHttpClient::new(issue).await.unwrap();
+    client
+        .post_message(url.clone(), ping_message(), None, None, HashMap::new())
+        .await
+        .unwrap();
+    tokio::time::advance(Duration::from_secs(61)).await;
+    client
+        .post_message(url.clone(), ping_message(), None, None, HashMap::new())
+        .await
+        .unwrap();
+    client
+        .post_message(url, ping_message(), None, None, HashMap::new())
+        .await
+        .unwrap();
+    assert_eq!(*issued.lock().unwrap(), [false, false]);
+    assert_eq!(
+        *captured.lock().unwrap(),
+        ["Bearer old", "Bearer fresh", "Bearer fresh"]
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn concurrent_401_responses_share_the_forced_refresh() {
+    use axum::{http::StatusCode, routing::post};
+
+    let barrier = Arc::new(tokio::sync::Barrier::new(2));
+    let app = axum::Router::new().route(
+        "/",
+        post(move |headers: HeaderMap| {
+            let barrier = barrier.clone();
+            async move {
+                if headers["authorization"] == "Bearer old" {
+                    barrier.wait().await;
+                    StatusCode::UNAUTHORIZED
+                } else {
+                    assert_eq!(headers["authorization"], "Bearer fresh");
+                    StatusCode::ACCEPTED
+                }
+            }
+        }),
+    );
+    let (url, server) = http_fixture(app).await;
+    let (issue, issued) = credential_issuer(vec![("old", None), ("fresh", None)]);
+    let client = RemoteHttpClient::new(issue).await.unwrap();
+    let (first, second) = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(
+            client.post_message(url.clone(), ping_message(), None, None, HashMap::new()),
+            client.post_message(url, ping_message(), None, None, HashMap::new()),
+        )
+    })
+    .await
+    .unwrap();
+    first.unwrap();
+    second.unwrap();
+    assert_eq!(*issued.lock().unwrap(), [false, true]);
     server.abort();
 }
 

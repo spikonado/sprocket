@@ -9580,6 +9580,7 @@ dependencies = [
  "sprocket-kicad",
  "sprocket-transcript",
  "sprocket-workspace",
+ "sse-stream",
  "tar",
  "tempfile",
  "tokio",
