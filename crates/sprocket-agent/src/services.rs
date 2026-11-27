@@ -45,7 +45,7 @@ impl McpTransport {
                 }
             }
             Self::Http { url, headers } => {
-                loopback_http_url(url)?;
+                mcp_http_url(url)?;
                 for name in headers {
                     ensure!(
                         http::HeaderName::from_bytes(name.as_bytes()).is_ok(),
@@ -163,23 +163,36 @@ pub fn split_tool_path(path: &str) -> Option<(&str, &str)> {
     (!connector.is_empty() && !tool.is_empty()).then_some((connector, tool))
 }
 
-/// Remote servers need OAuth, which comes later, so only servers on this machine are allowed.
-pub fn loopback_http_url(raw: &str) -> anyhow::Result<url::Url> {
+pub fn mcp_http_url(raw: &str) -> anyhow::Result<url::Url> {
     let url = url::Url::parse(raw.trim())?;
     ensure!(
         matches!(url.scheme(), "http" | "https"),
         "MCP server URLs must use http or https."
     );
-    let loopback = match url.host() {
+    ensure!(
+        url.username().is_empty() && url.password().is_none(),
+        "Enter credentials separately from the MCP server URL."
+    );
+    ensure!(
+        is_loopback(&url) || url.scheme() == "https",
+        "Remote MCP server URLs must use https."
+    );
+    Ok(url)
+}
+
+fn is_loopback(url: &url::Url) -> bool {
+    match url.host() {
         Some(url::Host::Ipv4(address)) => address.is_loopback(),
         Some(url::Host::Ipv6(address)) => address.is_loopback(),
         Some(url::Host::Domain(domain)) => domain.eq_ignore_ascii_case("localhost"),
         None => false,
-    };
-    if !loopback {
-        bail!(
-            "Only MCP servers on this machine (localhost, 127.0.0.1 or ::1) can be added for now."
-        );
+    }
+}
+
+pub fn loopback_http_url(raw: &str) -> anyhow::Result<url::Url> {
+    let url = mcp_http_url(raw)?;
+    if !is_loopback(&url) {
+        bail!("Only loopback MCP servers can be stored on this machine.");
     }
     Ok(url)
 }
