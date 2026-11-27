@@ -474,7 +474,6 @@ it.each(['oauth', 'none'] as const)(
 					options={[{ id: 'connected', label: 'Connected' }]}
 					detail={{
 						type: 'connector',
-						reason: 'To file the bug',
 						connector: { type: 'known', id: entry.id }
 					}}
 					runEnded={false}
@@ -482,7 +481,6 @@ it.each(['oauth', 'none'] as const)(
 					onToggleOption={vi.fn()}
 					onAnswer={onAnswer}
 					connectorSetup={{ userId: 'user-a', localApi: null }}
-					disabled={false}
 				/>
 			</ConvexTestProvider>
 		);
@@ -500,6 +498,6 @@ it.each(['oauth', 'none'] as const)(
 			);
 		}
 
-		await waitFor(() => expect(onAnswer).toHaveBeenCalledWith({ optionId: 'connected' }));
+		await waitFor(() => expect(onAnswer).toHaveBeenCalledWith('connected'));
 	}
 );

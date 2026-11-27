@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useId, useState, type FormEvent, type ReactNode } from 'react';
 import { useAction, useConvex } from 'convex/react';
 import { ConvexError } from 'convex/values';
 import { z } from 'zod';
@@ -12,10 +12,16 @@ const clientRequiredError = z.object({ code: z.literal('client_required') });
 
 type OAuthStatus = 'ready' | 'starting' | 'client_required' | 'authorizing';
 
-export default function McpOAuth(props: { connectorId: string } | { catalog: CatalogConnector }) {
+export type McpOAuthTarget = { connectorId: string } | { catalog: CatalogConnector };
+
+type McpOAuthParts = { button: ReactNode; details: ReactNode };
+
+/** The Connect button goes in the card header; `details` holds the fields and status below it. */
+export function useMcpOAuth(target: McpOAuthTarget | null): McpOAuthParts {
 	const convex = useConvex();
 	const addRemote = useAction(api.mcpServers.add);
 	const startOAuth = useAction(api.mcpServers.startOAuth);
+	const formId = useId();
 
 	const [status, setStatus] = useState<OAuthStatus>('ready');
 
@@ -25,6 +31,8 @@ export default function McpOAuth(props: { connectorId: string } | { catalog: Cat
 
 	async function connect(event: FormEvent) {
 		event.preventDefault();
+
+		if (!target) return;
 		const needsClient = status === 'client_required';
 		const bridge = window.sprocketDesktopBridge;
 		const loginWindow = bridge ? null : window.open('about:blank', '_blank');
@@ -38,9 +46,9 @@ export default function McpOAuth(props: { connectorId: string } | { catalog: Cat
 
 			let connectorId: string;
 
-			if ('connectorId' in props) connectorId = props.connectorId;
+			if ('connectorId' in target) connectorId = target.connectorId;
 			else {
-				const { catalog } = props;
+				const { catalog } = target;
 				connectorId = await addRemote({
 					name: catalog.name,
 					url: catalog.url,
@@ -78,8 +86,25 @@ export default function McpOAuth(props: { connectorId: string } | { catalog: Cat
 		}
 	}
 
-	return (
-		<form className="space-y-3 px-5 pb-5" onSubmit={(event) => void connect(event)}>
+	if (!target) return { button: null, details: null };
+
+	const button = (
+		<button
+			type="submit"
+			form={formId}
+			className={primaryButtonClass}
+			disabled={status === 'starting'}
+		>
+			{status === 'starting' ? 'Connecting…' : 'Connect'}
+		</button>
+	);
+
+	const details = (
+		<form
+			id={formId}
+			className="space-y-3 px-5 pb-5 empty:hidden"
+			onSubmit={(event) => void connect(event)}
+		>
 			{status === 'client_required' && (
 				<>
 					<label className="block space-y-1.5 text-[12px]">
@@ -114,11 +139,8 @@ export default function McpOAuth(props: { connectorId: string } | { catalog: Cat
 					{error}
 				</p>
 			)}
-			<div className="flex justify-end">
-				<button type="submit" className={primaryButtonClass} disabled={status === 'starting'}>
-					{status === 'starting' ? 'Connecting…' : 'Connect'}
-				</button>
-			</div>
 		</form>
 	);
+
+	return { button, details };
 }

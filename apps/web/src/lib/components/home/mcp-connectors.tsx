@@ -21,7 +21,7 @@ import {
 	useAddMcpConnector,
 	type RemoteMcpServer
 } from './mcp-connectors-client';
-import McpOAuth from './mcp-oauth';
+import { useMcpOAuth } from './mcp-oauth';
 
 export type McpApi = Pick<
 	LocalApi,
@@ -250,6 +250,16 @@ function McpConnectorCard({
 	const line = transportLine(connector.transport);
 	const secrets = secretNames(connector.transport);
 
+	const oauth = useMcpOAuth(
+		loading
+			? null
+			: needsAuth
+				? { connectorId: remote.connectorId }
+				: notConnected
+					? { catalog }
+					: null
+	);
+
 	return (
 		<ConnectorCardFrame
 			logo={<McpLogo iconUrl={catalog?.iconUrl} />}
@@ -281,46 +291,44 @@ function McpConnectorCard({
 				</>
 			}
 			actions={
-				!notConnected && (
-					<>
-						<button
-							type="button"
-							className={secondaryButtonClass}
-							aria-expanded={open}
-							disabled={!toolsApi}
-							onClick={() => setOpen((value) => !value)}
-						>
-							Tools
-							<ChevronRight
-								className={cn('ml-1 size-3.5 transition-transform', open && 'rotate-90')}
-								aria-hidden="true"
-							/>
-						</button>
-						<button
-							type="button"
-							className={secondaryButtonClass}
-							disabled={pending !== null}
-							onClick={() =>
-								void act('remove', async () => {
-									if (remote) await removeRemote({ connectorId: remote.connectorId });
-									else if (localApi) await localApi.removeMcpConnector(userId, connector.id);
-									onRemoved?.();
-								})
-							}
-						>
-							Remove
-						</button>
-					</>
-				)
+				<>
+					{!notConnected && (
+						<>
+							<button
+								type="button"
+								className={secondaryButtonClass}
+								aria-expanded={open}
+								disabled={!toolsApi}
+								onClick={() => setOpen((value) => !value)}
+							>
+								Tools
+								<ChevronRight
+									className={cn('ml-1 size-3.5 transition-transform', open && 'rotate-90')}
+									aria-hidden="true"
+								/>
+							</button>
+							<button
+								type="button"
+								className={secondaryButtonClass}
+								disabled={pending !== null}
+								onClick={() =>
+									void act('remove', async () => {
+										if (remote) await removeRemote({ connectorId: remote.connectorId });
+										else if (localApi) await localApi.removeMcpConnector(userId, connector.id);
+										onRemoved?.();
+									})
+								}
+							>
+								Remove
+							</button>
+						</>
+					)}
+					{oauth.button}
+				</>
 			}
 			error={error}
 		>
-			{!loading &&
-				(needsAuth ? (
-					<McpOAuth connectorId={remote.connectorId} />
-				) : (
-					notConnected && <McpOAuth catalog={catalog} />
-				))}
+			{oauth.details}
 			{open && toolsApi && (
 				<McpToolList
 					userId={userId}
