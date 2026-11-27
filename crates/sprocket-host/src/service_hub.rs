@@ -24,14 +24,15 @@ const CLI_STATUS_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_SEARCH_DESCRIPTION_CHARS: usize = 300;
 const REMOTE_TIMEOUT: Duration = Duration::from_secs(5);
 const REMOTE_PREFIX: &str = "remote:";
+const LIST_REMOTE_SERVERS: &str = "mcpServers:listMine";
 
-pub fn remote_connector_id(id: &str) -> Option<&str> {
+fn remote_connector_id(id: &str) -> Option<&str> {
     id.strip_prefix(REMOTE_PREFIX)
 }
 
-#[derive(Clone, Copy, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Copy, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub enum ConnectorStatus {
+enum ConnectorStatus {
     Connected,
     NeedsAuth,
 }
@@ -54,10 +55,14 @@ struct RemotePolicy {
 }
 
 impl RemoteServer {
+    fn id(&self) -> String {
+        format!("{REMOTE_PREFIX}{}", self.connector_id)
+    }
+
     fn config(&self) -> McpServer {
         McpServer {
             connector: McpConnector {
-                id: format!("{REMOTE_PREFIX}{}", self.connector_id),
+                id: self.id(),
                 name: self.name.clone(),
                 transport: McpTransport::Http {
                     url: self.url.clone(),
@@ -71,13 +76,6 @@ impl RemoteServer {
                 .collect(),
         }
     }
-}
-
-#[derive(Serialize)]
-pub struct ConnectorSummary {
-    #[serde(flatten)]
-    connector: McpConnector,
-    status: ConnectorStatus,
 }
 
 /// Connectors built on a CLI. MCP servers can't take their IDs.
@@ -183,60 +181,50 @@ impl RunServiceHub {
     }
 
     async fn remote_servers(&self) -> anyhow::Result<Vec<RemoteServer>> {
-        tokio::time::timeout(REMOTE_TIMEOUT, async {
-            let mut subscription = self.subscription.lock().await;
-            if subscription.is_none() {
-                let mut subscribed = self
-                    .host
-                    .convex_client_for(&self.user_id)
-                    .await?
-                    .subscribe("mcpServers:listMine", BTreeMap::new())
-                    .await?;
-                let initial = subscribed
-                    .next()
-                    .await
-                    .context("Remote connector subscription closed.")?;
-                let servers = sprocket_convex::decode_labeled_function_result(
-                    initial,
-                    "mcpServers:listMine",
-                )?;
-                self.update_remote(servers);
-                *subscription = Some(subscribed);
+        let mut subscription = self.subscription.lock().await;
+        let subscribed = match subscription.take() {
+            Some(subscribed) => subscribed,
+            None => tokio::time::timeout(REMOTE_TIMEOUT, self.subscribe_remote())
+                .await
+                .with_context(|| {
+                    format!(
+                        "Remote connectors did not sync within {} seconds.",
+                        REMOTE_TIMEOUT.as_secs()
+                    )
+                })??,
+        };
+        let subscribed = subscription.insert(subscribed);
+        while let Some(update) = subscribed.next().now_or_never() {
+            if let Err(error) = self.apply_remote(update) {
+                *subscription = None;
+                return Err(error);
             }
-            while let Some(update) = subscription
-                .as_mut()
-                .expect("subscription initialized")
-                .next()
-                .now_or_never()
-            {
-                let Some(update) = update else {
-                    *subscription = None;
-                    bail!("Remote connector subscription closed.");
-                };
-                let servers = match sprocket_convex::decode_labeled_function_result(
-                    update,
-                    "mcpServers:listMine",
-                ) {
-                    Ok(servers) => servers,
-                    Err(error) => {
-                        *subscription = None;
-                        self.remote
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .clear();
-                        return Err(error);
-                    }
-                };
-                self.update_remote(servers);
-            }
-            Ok(self
-                .remote
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .clone())
-        })
-        .await
-        .context("Remote connectors did not sync within 5 seconds.")?
+        }
+        Ok(self
+            .remote
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone())
+    }
+
+    async fn subscribe_remote(&self) -> anyhow::Result<sprocket_convex::Subscription> {
+        let mut subscribed = self
+            .host
+            .convex_client_for(&self.user_id)
+            .await?
+            .subscribe(LIST_REMOTE_SERVERS, BTreeMap::new())
+            .await?;
+        self.apply_remote(subscribed.next().await)?;
+        Ok(subscribed)
+    }
+
+    fn apply_remote(&self, update: Option<convex::FunctionResult>) -> anyhow::Result<()> {
+        let update = update.context("Remote connector subscription closed.")?;
+        self.update_remote(sprocket_convex::decode_labeled_function_result(
+            update,
+            LIST_REMOTE_SERVERS,
+        )?);
+        Ok(())
     }
 
     fn update_remote(&self, servers: Vec<RemoteServer>) {
@@ -248,26 +236,29 @@ impl RunServiceHub {
                     && s.url == previous.url
                     && s.status == previous.status
             }) {
-                connections.remove(&previous.config().connector.id);
+                connections.remove(&previous.id());
             }
         }
         *remote = servers;
     }
 
     async fn connection(&self, server: &McpServer) -> anyhow::Result<Arc<McpClient>> {
-        let remote_id = remote_connector_id(&server.connector.id);
-        if let Some(id) = remote_id {
-            let remote = self.remote.lock().unwrap_or_else(|e| e.into_inner());
-            let remote = remote
-                .iter()
-                .find(|s| s.connector_id == id)
-                .context("Connector was removed.")?;
-            ensure!(
-                remote.status == ConnectorStatus::Connected,
-                "{} needs you to connect it in Settings → Connectors.",
-                remote.name
-            );
-        }
+        let remote = match remote_connector_id(&server.connector.id) {
+            Some(id) => {
+                let remote = self.remote.lock().unwrap_or_else(|e| e.into_inner());
+                let remote = remote
+                    .iter()
+                    .find(|s| s.connector_id == id)
+                    .context("Connector was removed.")?;
+                ensure!(
+                    remote.status == ConnectorStatus::Connected,
+                    "{} needs you to connect it in Settings → Connectors.",
+                    remote.name
+                );
+                Some((id, remote.url.clone()))
+            }
+            None => None,
+        };
         let slot = self
             .connections
             .lock()
@@ -284,17 +275,11 @@ impl RunServiceHub {
             _ => {}
         }
         *slot = None;
-        let connecting = async {
-            if let Some(id) = remote_id {
-                let McpTransport::Http { url, .. } = &server.connector.transport else {
-                    unreachable!()
-                };
-                McpClient::connect_remote(&self.host, &self.user_id, id, url).await
-            } else {
-                McpClient::connect(&self.host, server).await
-            }
+        let connected = match &remote {
+            Some((id, url)) => McpClient::connect_remote(&self.host, &self.user_id, id, url).await,
+            None => McpClient::connect(&self.host, server).await,
         };
-        match connecting.await {
+        match connected {
             Ok(client) => {
                 let client = Arc::new(client);
                 *slot = Some(Connection::Connected(client.clone()));
@@ -376,20 +361,38 @@ impl ServiceHub for RunServiceHub {
                 self.remote_servers()
             );
             let mut servers = Vec::new();
-            for (name, listing) in [
-                ("Local MCP connectors", local),
-                (
-                    "Remote MCP connectors",
-                    remote.map(|s| s.iter().map(RemoteServer::config).collect()),
-                ),
-            ] {
-                match listing {
-                    Ok(listing) => servers.extend(listing),
-                    Err(error) => result.unavailable.push(Unavailable {
-                        connector: name.into(),
-                        error: format!("{error:#}"),
-                    }),
+            let mut not_connected = Vec::new();
+            match local {
+                Ok(local) => servers.extend(local),
+                Err(error) => result.unavailable.push(Unavailable {
+                    connector: "Local MCP connectors".into(),
+                    error: format!("{error:#}"),
+                }),
+            }
+            match remote {
+                Ok(remote) => {
+                    for server in remote {
+                        if server.status == ConnectorStatus::Connected {
+                            servers.push(server.config());
+                            continue;
+                        }
+                        let id = server.id();
+                        let score = keyword_score(&keywords, &[&id, &server.name]);
+                        if score > 0 {
+                            not_connected.push((
+                                score,
+                                SearchHit::NotConnected {
+                                    connector: server.name,
+                                    connector_id: id,
+                                },
+                            ));
+                        }
+                    }
                 }
+                Err(error) => result.unavailable.push(Unavailable {
+                    connector: "Remote MCP connectors".into(),
+                    error: format!("{error:#}"),
+                }),
             }
             let (servers, mut hits) = tokio::join!(
                 join_all(servers.into_iter().map(|server| async move {
@@ -398,6 +401,7 @@ impl ServiceHub for RunServiceHub {
                 })),
                 self.cli_hits(&keywords)
             );
+            hits.extend(not_connected);
             for (server, tools) in servers {
                 match tools {
                     Ok(tools) => hits.extend(tools.into_iter().filter_map(|tool| {
@@ -431,35 +435,10 @@ impl ServiceHub for RunServiceHub {
                             )
                         })
                     })),
-                    Err(error) => {
-                        let needs_auth = self
-                            .remote
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .iter()
-                            .any(|s| {
-                                remote_connector_id(&server.connector.id)
-                                    == Some(s.connector_id.as_str())
-                                    && s.status == ConnectorStatus::NeedsAuth
-                            });
-                        let score = keyword_score(
-                            &keywords,
-                            &[&server.connector.id, &server.connector.name],
-                        );
-                        if needs_auth && score > 0 {
-                            hits.push((
-                                score,
-                                SearchHit::NotConnected {
-                                    connector: server.connector.name.clone(),
-                                    connector_id: server.connector.id.clone(),
-                                },
-                            ));
-                        }
-                        result.unavailable.push(Unavailable {
-                            connector: server.connector.name,
-                            error: format!("{error:#}"),
-                        });
-                    }
+                    Err(error) => result.unavailable.push(Unavailable {
+                        connector: server.connector.name,
+                        error: format!("{error:#}"),
+                    }),
                 }
             }
             hits.sort_by_key(|hit| std::cmp::Reverse(hit.0));
@@ -543,16 +522,16 @@ impl ServiceHub for RunServiceHub {
     }
 
     fn connector_name(&self, id: &str) -> Option<String> {
-        CliConnector::from_id(id)
-            .map(|connector| connector.name().to_string())
-            .or_else(|| {
-                self.remote
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .iter()
-                    .find(|s| remote_connector_id(id) == Some(s.connector_id.as_str()))
-                    .map(|s| s.name.clone())
-            })
+        if let Some(connector) = CliConnector::from_id(id) {
+            return Some(connector.name().to_string());
+        }
+        let remote_id = remote_connector_id(id)?;
+        self.remote
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .find(|s| s.connector_id == remote_id)
+            .map(|s| s.name.clone())
     }
 }
 
@@ -592,28 +571,6 @@ pub struct ServerTool {
     policy: ToolPolicy,
 }
 
-pub async fn list_connectors(host: &Host, user_id: &str) -> anyhow::Result<Vec<ConnectorSummary>> {
-    let hub = RunServiceHub::new(host, user_id);
-    let mut connectors: Vec<_> = host
-        .mcp
-        .run(|store| store.list())
-        .await?
-        .into_iter()
-        .map(|s| ConnectorSummary {
-            connector: s.connector,
-            status: ConnectorStatus::Connected,
-        })
-        .collect();
-    match hub.remote_servers().await {
-        Ok(servers) => connectors.extend(servers.into_iter().map(|s| ConnectorSummary {
-            connector: s.config().connector,
-            status: s.status,
-        })),
-        Err(error) => tracing::warn!("couldn't list remote MCP connectors: {error:#}"),
-    }
-    Ok(connectors)
-}
-
 pub async fn set_tool_policy(
     host: &Host,
     user_id: &str,
@@ -632,11 +589,7 @@ pub async fn set_tool_policy(
                     ("tool".into(), tool.to_owned().into()),
                     (
                         "policy".into(),
-                        serde_json::to_value(policy)?
-                            .as_str()
-                            .expect("policy string")
-                            .to_owned()
-                            .into(),
+                        convex::Value::try_from(serde_json::to_value(policy)?)?,
                     ),
                 ]),
             )

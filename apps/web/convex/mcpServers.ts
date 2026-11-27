@@ -61,8 +61,6 @@ const REFRESH_MARGIN_MS = 60_000;
 
 const HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$/;
 
-const RESERVED_CONNECTOR_IDS = new Set(['github', 'vercel', 'kicad']);
-
 const oauthCredentialSchema = z.object({
 	type: z.literal('oauth'),
 	accessToken: z.string(),
@@ -140,7 +138,6 @@ export const listMine = query({
 	args: {},
 	returns: v.array(
 		schema.tables.mcpServers.validator.omit('userId').extend({
-			createdAt: v.number(),
 			policies: v.array(schema.tables.mcpToolPolicies.validator.pick('tool', 'policy'))
 		})
 	),
@@ -161,7 +158,6 @@ export const listMine = query({
 				auth: server.auth,
 				headerNames: server.headerNames,
 				status: server.status,
-				createdAt: server._creationTime,
 				policies: (
 					await serverPolicies(ctx, userId, server.connectorId).take(MAX_TOOL_POLICIES_PER_SERVER)
 				).map(({ tool, policy }) => ({ tool, policy }))
@@ -193,7 +189,7 @@ export const insertServer = internalMutation({
 			throw new ConvexError(`Add at most ${MAX_SERVERS} remote MCP servers.`);
 		}
 
-		const taken = new Set([...RESERVED_CONNECTOR_IDS, ...existing.map((s) => s.connectorId)]);
+		const taken = new Set(existing.map((s) => s.connectorId));
 		const base = connectorSlug(args.name);
 		let connectorId = base;
 

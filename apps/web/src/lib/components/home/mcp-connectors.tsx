@@ -16,7 +16,6 @@ import {
 } from './connector-card-parts';
 import { caughtMessage, usePolledStatus } from './use-connectors';
 import {
-	REMOTE_MCP_PREFIX,
 	remoteMcpConnector,
 	useAddMcpConnector,
 	type RemoteMcpServer
@@ -98,30 +97,32 @@ export default function McpConnectors({
 
 	return (
 		<>
-			{connectors
-				?.filter((connector) => !connector.id.startsWith(REMOTE_MCP_PREFIX))
-				.map((connector) => (
+			{connectors?.map((connector) => (
+				<McpConnectorCard
+					key={connector.id}
+					userId={userId}
+					localApi={localApi}
+					connector={connector}
+					onRemoved={() =>
+						setConnectors(
+							(current) => current && current.filter((entry) => entry.id !== connector.id)
+						)
+					}
+				/>
+			))}
+			{remoteServers?.map((server) => {
+				const connector = remoteMcpConnector(server);
+
+				return (
 					<McpConnectorCard
 						key={connector.id}
 						userId={userId}
 						localApi={localApi}
 						connector={connector}
-						onRemoved={() =>
-							setConnectors(
-								(current) => current && current.filter((entry) => entry.id !== connector.id)
-							)
-						}
+						remote={server}
 					/>
-				))}
-			{remoteServers?.map((server) => (
-				<McpConnectorCard
-					key={`${REMOTE_MCP_PREFIX}${server.connectorId}`}
-					userId={userId}
-					localApi={localApi}
-					connector={remoteMcpConnector(server)}
-					remote={server}
-				/>
-			))}
+				);
+			})}
 			{loadError && (
 				<p role="alert" className="text-destructive text-sm">
 					{loadError}
@@ -155,7 +156,8 @@ function McpConnectorCard({
 	useOnConnected(remote?.status === 'connected', onConnected);
 	const [open, setOpen] = useState(false);
 	const { pending, error, act } = useConnectorAction<'remove'>(connector.name);
-	const toolsApi = remote?.status === 'needs_auth' ? null : localApi;
+	const needsAuth = remote?.status === 'needs_auth';
+	const toolsApi = needsAuth ? null : localApi;
 	const line = transportLine(connector.transport);
 	const secrets = secretNames(connector.transport);
 
@@ -175,7 +177,7 @@ function McpConnectorCard({
 						</p>
 					)}
 					<p className="text-muted-foreground mt-0.5 text-[12px]" role="status">
-						{remote?.status === 'needs_auth' ? 'Needs sign-in' : 'Connected'}
+						{needsAuth ? 'Needs sign-in' : 'Connected'}
 					</p>
 				</>
 			}

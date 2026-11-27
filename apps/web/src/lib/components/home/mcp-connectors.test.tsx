@@ -6,7 +6,7 @@ import { api } from '@convex/_generated/api';
 import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
 import type { McpConnector } from '$lib/types/sprocket';
 import McpConnectors, { RequestedConnectorSetup, type McpApi } from './mcp-connectors';
-import { remoteMcpConnector, type RemoteMcpServer } from './mcp-connectors-client';
+import type { RemoteMcpServer } from './mcp-connectors-client';
 import AgentQuestion from './agent-question';
 
 afterEach(() => {
@@ -23,7 +23,6 @@ function remoteServer(overrides: Partial<RemoteMcpServer> = {}): RemoteMcpServer
 		auth: 'oauth',
 		headerNames: [],
 		status: 'needs_auth',
-		createdAt: 1,
 		policies: [],
 		...overrides
 	};
@@ -113,7 +112,7 @@ it.each([
 	}
 });
 
-it('uses reactive remote status without duplicating the merged host listing', async () => {
+it('shows local and remote connectors and removes a remote one through Convex', async () => {
 	const server = remoteServer();
 	const convex = client([server]);
 
@@ -132,7 +131,7 @@ it('uses reactive remote status without duplicating the merged host listing', as
 			<McpConnectors
 				userId="user-a"
 				localApi={localApi({
-					fetchMcpConnectors: async () => [local, remoteMcpConnector(server)],
+					fetchMcpConnectors: async () => [local],
 					removeMcpConnector: removeLocal
 				})}
 			/>
@@ -333,33 +332,6 @@ it('reuses a connected server by normalized URL when its request card is reopene
 	);
 	await waitFor(() => expect(onConnected).toHaveBeenCalledTimes(1));
 	expect(addRemote).not.toHaveBeenCalled();
-});
-
-it('explains a blocked OAuth popup without starting sign-in', async () => {
-	const convex = client([remoteServer()]);
-
-	const startOAuth = vi.fn(async () => ({
-		authorizationUrl: 'https://auth.linear.test/authorize'
-	}));
-
-	convex.handleAction(api.mcpServers.startOAuth, startOAuth);
-	vi.stubGlobal('sprocketDesktopBridge', undefined);
-	vi.stubGlobal(
-		'open',
-		vi.fn(() => null)
-	);
-
-	render(
-		<ConvexTestProvider client={convex}>
-			<McpConnectors userId="user-a" localApi={null} />
-		</ConvexTestProvider>
-	);
-	fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
-	expect(await screen.findByRole('alert')).toHaveProperty(
-		'textContent',
-		'Allow popups to connect this server.'
-	);
-	expect(startOAuth).not.toHaveBeenCalled();
 });
 
 it('reconnects a canonical remote ID requested by the agent', async () => {

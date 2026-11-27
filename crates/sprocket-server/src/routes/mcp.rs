@@ -4,8 +4,7 @@ use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 use sprocket_agent::services::ToolPolicy;
 use sprocket_host::mcp_store::{McpConnector, NewMcpTransport};
-use sprocket_host::service_hub::{self, ConnectorSummary, ServerTool};
-use std::collections::BTreeMap;
+use sprocket_host::service_hub::{self, ServerTool};
 
 use crate::AppState;
 use crate::routes::api_error::ApiError;
@@ -66,9 +65,18 @@ pub fn routes() -> axum::Router<AppState> {
 
 async fn list(
     State(state): State<AppState>,
-    AuthorizedQuery(payload): AuthorizedQuery<UserRequest>,
-) -> Result<Json<Vec<ConnectorSummary>>, ApiError> {
-    let connectors = service_hub::list_connectors(&state.host, &payload.user_id)
+    AuthorizedQuery(_): AuthorizedQuery<UserRequest>,
+) -> Result<Json<Vec<McpConnector>>, ApiError> {
+    let connectors = state
+        .host
+        .mcp
+        .run(|store| {
+            Ok(store
+                .list()?
+                .into_iter()
+                .map(|server| server.connector)
+                .collect())
+        })
         .await
         .map_err(ApiError::internal)?;
     Ok(Json(connectors))
@@ -90,22 +98,8 @@ async fn add(
 async fn delete(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    AuthorizedJson(payload): AuthorizedJson<UserRequest>,
+    AuthorizedJson(_): AuthorizedJson<UserRequest>,
 ) -> Result<Json<()>, ApiError> {
-    if let Some(connector_id) = service_hub::remote_connector_id(&id) {
-        let _: serde_json::Value = state
-            .host
-            .convex_client_for(&payload.user_id)
-            .await
-            .map_err(ApiError::internal)?
-            .act(
-                "mcpServers:remove",
-                BTreeMap::from([("connectorId".into(), connector_id.to_owned().into())]),
-            )
-            .await
-            .map_err(ApiError::bad_request)?;
-        return Ok(Json(()));
-    }
     state
         .host
         .mcp
