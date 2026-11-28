@@ -11,8 +11,6 @@ import { ownsActiveRunClaim } from '@convex/lib/runLease';
 import { agentError, toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { checkWiring, vWiringIssue } from '@convex/lib/wiring';
 
-const MAX_TITLE_LENGTH = MAX_FILE_NAME_LENGTH;
-
 export const MAX_ARTIFACT_CONTENT_BYTES = 500_000;
 
 const MAX_PAGE_BYTES_READ = 1_000_000;
@@ -35,20 +33,6 @@ function withLegacyType(artifact: Doc<'artifacts'>) {
 	return { ...artifact, type };
 }
 
-function utf8ByteLength(value: string): number {
-	return new TextEncoder().encode(value).byteLength;
-}
-
-function requireRepositoryKey(thread: Doc<'threadRecords'>): string {
-	const repositoryKey = thread.repositoryKey?.trim();
-
-	if (!repositoryKey) {
-		throw new Error('Repository key is required.');
-	}
-
-	return repositoryKey;
-}
-
 function validateRepositoryKey(repositoryKey: string): string {
 	const trimmed = repositoryKey.trim();
 
@@ -66,15 +50,15 @@ function validateArtifactTitle(title: string): string {
 		throw new Error('Artifact title cannot be empty.');
 	}
 
-	if (trimmed.length > MAX_TITLE_LENGTH) {
-		throw new Error(`Artifact title cannot exceed ${MAX_TITLE_LENGTH} characters.`);
+	if (trimmed.length > MAX_FILE_NAME_LENGTH) {
+		throw new Error(`Artifact title cannot exceed ${MAX_FILE_NAME_LENGTH} characters.`);
 	}
 
 	return trimmed;
 }
 
 function validateArtifactContent(content: string) {
-	if (utf8ByteLength(content) > MAX_ARTIFACT_CONTENT_BYTES) {
+	if (new TextEncoder().encode(content).byteLength > MAX_ARTIFACT_CONTENT_BYTES) {
 		throw new Error(`Artifact content cannot exceed ${MAX_ARTIFACT_CONTENT_BYTES} bytes.`);
 	}
 }
@@ -108,10 +92,10 @@ async function requireActiveRun(
 	return run;
 }
 
-async function loadThreadForRun(ctx: QueryCtx | MutationCtx, run: Doc<'runs'>): Promise<string> {
+async function repositoryKeyForRun(ctx: QueryCtx | MutationCtx, run: Doc<'runs'>): Promise<string> {
 	const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
 
-	return requireRepositoryKey(thread);
+	return validateRepositoryKey(thread.repositoryKey ?? '');
 }
 
 async function listVisibleArtifacts(
@@ -137,23 +121,19 @@ async function listVisibleArtifacts(
 
 const pageFields = { isDone: v.boolean(), continueCursor: v.string(), revision: v.number() };
 
-function canAccessArtifact(
-	artifact: Doc<'artifacts'>,
-	userId: string,
-	repositoryKey: string
-): boolean {
-	return artifact.userId === userId && artifact.repositoryKey === repositoryKey;
-}
-
 async function findAccessibleArtifact(
 	ctx: QueryCtx | MutationCtx,
 	artifactId: Id<'artifacts'>,
 	userId: string,
-	repositoryKey: string
+	repositoryKey?: string
 ): Promise<Doc<'artifacts'> | null> {
 	const artifact = await ctx.db.get('artifacts', artifactId);
 
-	if (artifact && !canAccessArtifact(artifact, userId, repositoryKey)) {
+	if (
+		artifact &&
+		(artifact.userId !== userId ||
+			(repositoryKey !== undefined && artifact.repositoryKey !== repositoryKey))
+	) {
 		throw new Error('Artifact not found.');
 	}
 
@@ -164,7 +144,7 @@ async function requireAccessibleArtifact(
 	ctx: QueryCtx | MutationCtx,
 	artifactId: Id<'artifacts'>,
 	userId: string,
-	repositoryKey: string
+	repositoryKey?: string
 ): Promise<Doc<'artifacts'>> {
 	const artifact = await findAccessibleArtifact(ctx, artifactId, userId, repositoryKey);
 
@@ -177,16 +157,39 @@ async function deleteAccessibleArtifact(
 	ctx: MutationCtx,
 	artifactId: Id<'artifacts'>,
 	userId: string,
-	repositoryKey: string
+	repositoryKey?: string
 ) {
 	const artifact = await findAccessibleArtifact(ctx, artifactId, userId, repositoryKey);
 
 	if (artifact) {
 		await ctx.db.delete('artifacts', artifactId);
-		await bumpRegistry(ctx, userId, repositoryKey);
+		await bumpRegistry(ctx, userId, artifact.repositoryKey);
 	}
 
 	return { artifactId };
+}
+
+async function transferAccessibleArtifact(
+	ctx: MutationCtx,
+	artifactId: Id<'artifacts'>,
+	userId: string,
+	destination: string
+) {
+	const repositoryKey = validateRepositoryKey(destination);
+	const artifact = await requireAccessibleArtifact(ctx, artifactId, userId);
+
+	if (artifact.repositoryKey !== repositoryKey) {
+		await ctx.db.patch('artifacts', artifactId, {
+			repositoryKey,
+			sourcePath: undefined,
+			revision: artifact.revision + 1,
+			updatedAt: Date.now()
+		});
+		await bumpRegistry(ctx, userId, artifact.repositoryKey);
+		await bumpRegistry(ctx, userId, repositoryKey);
+	}
+
+	return {};
 }
 
 async function writeArtifactFields(
@@ -233,7 +236,7 @@ export const addArtifact = mutation({
 	handler: async (ctx, args) => {
 		try {
 			const run = await requireActiveRun(ctx, args.runId, args.claimId, args.executionSecret);
-			const repositoryKey = await loadThreadForRun(ctx, run);
+			const repositoryKey = await repositoryKeyForRun(ctx, run);
 
 			if (!args.registrationId || args.registrationId.length > 128)
 				throw new Error('Invalid registration ID.');
@@ -249,10 +252,6 @@ export const addArtifact = mutation({
 				.unique();
 
 			if (existing) {
-				if (!canAccessArtifact(existing, run.userId, repositoryKey)) {
-					throw new Error('Artifact not found.');
-				}
-
 				return { artifactId: existing._id };
 			}
 
@@ -294,17 +293,11 @@ export const editArtifact = mutation({
 	handler: async (ctx, args) => {
 		try {
 			const run = await requireActiveRun(ctx, args.runId, args.claimId, args.executionSecret);
-			const repositoryKey = await loadThreadForRun(ctx, run);
 			const title = validateArtifactTitle(args.title);
 			validateArtifactContent(args.content);
 			validateArtifactSourcePath(args.sourcePath);
 
-			const artifact = await requireAccessibleArtifact(
-				ctx,
-				args.artifactId,
-				run.userId,
-				repositoryKey
-			);
+			const artifact = await requireAccessibleArtifact(ctx, args.artifactId, run.userId);
 
 			if (artifact.revision !== args.expectedRevision)
 				throw new Error('Artifact changed; reload it before editing.');
@@ -344,12 +337,41 @@ export const deleteArtifactForRun = mutation({
 	handler: async (ctx, args) => {
 		try {
 			const run = await requireActiveRun(ctx, args.runId, args.claimId, args.executionSecret);
-			const repositoryKey = await loadThreadForRun(ctx, run);
 
-			return await deleteAccessibleArtifact(ctx, args.artifactId, run.userId, repositoryKey);
+			return await deleteAccessibleArtifact(ctx, args.artifactId, run.userId);
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
+	}
+});
+
+export const transferArtifactForRun = mutation({
+	args: {
+		runId: v.id('runs'),
+		claimId: v.string(),
+		executionSecret: v.string(),
+		artifactId: v.id('artifacts'),
+		repositoryKey: v.string()
+	},
+	returns: v.object({}),
+	handler: async (ctx, args) => {
+		try {
+			const run = await requireActiveRun(ctx, args.runId, args.claimId, args.executionSecret);
+
+			return await transferAccessibleArtifact(ctx, args.artifactId, run.userId, args.repositoryKey);
+		} catch (error) {
+			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
+		}
+	}
+});
+
+export const transferArtifact = mutation({
+	args: { artifactId: v.id('artifacts'), repositoryKey: v.string() },
+	returns: v.object({}),
+	handler: async (ctx, args) => {
+		const userId = await getUserId(ctx);
+
+		return await transferAccessibleArtifact(ctx, args.artifactId, userId, args.repositoryKey);
 	}
 });
 
@@ -358,6 +380,7 @@ export const listArtifactsForRun = query({
 		runId: v.id('runs'),
 		claimId: v.string(),
 		executionSecret: v.string(),
+		repositoryKey: v.optional(v.string()),
 		cursor: v.optional(v.union(v.string(), v.null()))
 	},
 	returns: v.object({
@@ -367,7 +390,11 @@ export const listArtifactsForRun = query({
 	handler: async (ctx, args) => {
 		try {
 			const run = await requireActiveRun(ctx, args.runId, args.claimId, args.executionSecret);
-			const repositoryKey = await loadThreadForRun(ctx, run);
+
+			const repositoryKey =
+				args.repositoryKey === undefined
+					? await repositoryKeyForRun(ctx, run)
+					: validateRepositoryKey(args.repositoryKey);
 
 			const result = await listVisibleArtifacts(
 				ctx,
@@ -467,11 +494,8 @@ export const getArtifactForRun = query({
 	handler: async (ctx, args) => {
 		try {
 			const run = await requireActiveRun(ctx, args.runId, args.claimId, args.executionSecret);
-			const repositoryKey = await loadThreadForRun(ctx, run);
 
-			return withLegacyType(
-				await requireAccessibleArtifact(ctx, args.artifactId, run.userId, repositoryKey)
-			);
+			return withLegacyType(await requireAccessibleArtifact(ctx, args.artifactId, run.userId));
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}

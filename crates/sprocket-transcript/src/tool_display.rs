@@ -246,7 +246,7 @@ impl<'a> ToolDisplayInput<'a> {
                 .unwrap_or("Docs")
                 .into(),
             "bind_artifact" | "add_artifact" | "create_artifact" | "edit_artifact"
-            | "save_artifact" | "delete_artifact" => self.artifact_summary(),
+            | "save_artifact" | "delete_artifact" | "transfer_artifact" => self.artifact_summary(),
             "update_artifact" => field("title").unwrap_or("Updated artifact").into(),
             "list_artifacts" => artifact_list(self.output),
             "exec_cmd" | "exec_command" => match command {
@@ -400,6 +400,7 @@ fn label(name: &str) -> Option<String> {
             "list_artifacts" => "Listed Artifacts",
             "save_artifact" => "Saved Artifact",
             "delete_artifact" => "Deleted Artifact",
+            "transfer_artifact" => "Transferred Artifact",
             "get_workspace_instructions" => "Read Instructions",
             "card_checkout" => "Card Checkout",
             "poll_checkout" => "Checkout Approval",

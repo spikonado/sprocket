@@ -15,7 +15,7 @@ use tokio::time::{MissedTickBehavior, interval, timeout};
 
 use crate::convex_clients::ConvexClients;
 use crate::native_auth::NativeAuthManager;
-use crate::transcript_client::{ArtifactSnapshot, UserConvexClient};
+use crate::transcript_client::{ARTIFACT_BINDING_BATCH_SIZE, ArtifactSnapshot, UserConvexClient};
 use crate::watch_registry::{WatchRegistry, WatchSession};
 
 const NETWORK_TIMEOUT: Duration = Duration::from_secs(10);
@@ -171,7 +171,10 @@ impl ArtifactWatchSession {
                 &mut feed,
                 || async {
                     Ok(client
-                        .list_artifacts(&self.key.repository_key)
+                        .list_artifacts_with_bindings(
+                            &self.key.repository_key,
+                            &bound_ids(&bindings).await?,
+                        )
                         .await?
                         .artifacts)
                 },
@@ -294,32 +297,61 @@ async fn cloud_worker(
     loop {
         let outcome = async {
             let client = timeout(NETWORK_TIMEOUT, source.connect(&key)).await??;
+            let artifact_ids = bound_ids(&bindings).await?;
             let updates = timeout(
                 NETWORK_TIMEOUT,
                 client.subscribe_artifact_state(&key.repository_key),
             )
             .await??;
+            let mut subscriptions = vec![
+                updates
+                    .map(|result| {
+                        let revision: f64 =
+                            decode_labeled_function_result(result, "artifacts:getArtifactState")?;
+                        Ok(CloudUpdate::Project(revision as u64))
+                    })
+                    .chain(stream::once(std::future::ready(Err(anyhow::anyhow!(
+                        "Artifact subscription ended"
+                    )))))
+                    .boxed(),
+            ];
+            for batch in artifact_ids.chunks(ARTIFACT_BINDING_BATCH_SIZE) {
+                let updates =
+                    timeout(NETWORK_TIMEOUT, client.subscribe_artifact_bindings(batch)).await??;
+                subscriptions.push(
+                    updates
+                        .map(|result| {
+                            let _: serde_json::Value = decode_labeled_function_result(
+                                result,
+                                "artifactBindings:getState",
+                            )?;
+                            Ok(CloudUpdate::Bindings)
+                        })
+                        .chain(stream::once(std::future::ready(Err(anyhow::anyhow!(
+                            "Artifact binding subscription ended"
+                        )))))
+                        .boxed(),
+                );
+            }
             cloud_session(
-                updates.map(|result| {
-                    let revision: f64 =
-                        decode_labeled_function_result(result, "artifacts:getArtifactState")?;
-                    Ok(revision as u64)
-                }),
+                stream::select_all(subscriptions),
                 &pending,
                 &output,
-                || client.list_artifacts(&key.repository_key),
+                || client.list_artifacts_with_bindings(&key.repository_key, &artifact_ids),
                 |request| {
                     let client = &client;
                     let bindings = &bindings;
                     let workspace = Path::new(&key.workspace_path);
                     async move { sync(client, bindings, workspace, &request).await }
                 },
+                || async { Ok(bound_ids(&bindings).await? != artifact_ids) },
             )
             .await
         }
         .await;
         match outcome {
-            Ok(()) => return,
+            Ok(CloudSessionEnd::Closed) => return,
+            Ok(CloudSessionEnd::BindingsChanged) => continue,
             Err(error) => {
                 if output.send(Err(error)).await.is_err() {
                     return;
@@ -330,24 +362,54 @@ async fn cloud_worker(
     }
 }
 
-async fn cloud_session<U, L, LF, S, SF>(
+async fn bound_ids(bindings: &ArtifactBindings) -> anyhow::Result<Vec<String>> {
+    let mut ids: Vec<_> = bindings
+        .snapshot()
+        .await?
+        .into_iter()
+        .filter_map(|binding| binding.artifact_id)
+        .collect();
+    ids.sort();
+    ids.dedup();
+    Ok(ids)
+}
+
+enum CloudUpdate {
+    Project(u64),
+    Bindings,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum CloudSessionEnd {
+    Closed,
+    BindingsChanged,
+}
+
+async fn cloud_session<U, L, LF, S, SF, B, BF>(
     mut updates: U,
     pending: &tokio::sync::watch::Receiver<Vec<SyncRequest>>,
     output: &tokio::sync::mpsc::Sender<anyhow::Result<ArtifactSnapshot>>,
     mut load: L,
     mut synchronize: S,
-) -> anyhow::Result<()>
+    mut bindings_changed: B,
+) -> anyhow::Result<CloudSessionEnd>
 where
-    U: Stream<Item = anyhow::Result<u64>> + Unpin,
+    U: Stream<Item = anyhow::Result<CloudUpdate>> + Unpin,
     L: FnMut() -> LF,
     LF: std::future::Future<Output = anyhow::Result<ArtifactSnapshot>>,
     S: FnMut(SyncRequest) -> SF,
     SF: std::future::Future<Output = anyhow::Result<()>>,
+    B: FnMut() -> BF,
+    BF: std::future::Future<Output = anyhow::Result<bool>>,
 {
     let first = timeout(NETWORK_TIMEOUT, updates.next())
         .await?
         .ok_or_else(|| anyhow::anyhow!("Artifact subscription ended"))??;
-    let mut observed_revision = Some(first);
+    let mut observed_revision = match first {
+        CloudUpdate::Project(revision) => Some(revision),
+        CloudUpdate::Bindings => None,
+    };
+    let mut bindings_dirty = true;
     let mut loaded_revision = None;
     let mut requests = Vec::new();
     let mut poll = interval(Duration::from_secs(1));
@@ -359,6 +421,7 @@ where
         }
         // A page load can read ahead of buffered subscription updates.
         if had_pending
+            || bindings_dirty
             || observed_revision
                 .is_some_and(|next| loaded_revision.is_none_or(|loaded| next > loaded))
         {
@@ -367,19 +430,26 @@ where
                 anyhow::bail!("Artifact registry changed during refresh; retrying");
             }
             loaded_revision = Some(snapshot.revision);
+            bindings_dirty = false;
             if output.send(Ok(snapshot)).await.is_err() {
-                return Ok(());
+                return Ok(CloudSessionEnd::Closed);
             }
         }
         tokio::select! {
             update = updates.next() => {
-                observed_revision = Some(update.ok_or_else(|| anyhow::anyhow!("Artifact subscription ended"))??);
+                match update.ok_or_else(|| anyhow::anyhow!("Artifact subscription ended"))?? {
+                    CloudUpdate::Project(revision) => observed_revision = Some(revision),
+                    CloudUpdate::Bindings => bindings_dirty = true,
+                }
             }
             _ = poll.tick() => {
+                if bindings_changed().await? {
+                    return Ok(CloudSessionEnd::BindingsChanged);
+                }
                 requests = pending.borrow().clone();
                 observed_revision = None;
             }
-            _ = output.closed() => return Ok(()),
+            _ = output.closed() => return Ok(CloudSessionEnd::Closed),
         }
     }
 }
@@ -485,10 +555,7 @@ impl ArtifactFeed {
     fn apply_registry(&mut self, artifacts: Vec<RemoteArtifact>) {
         self.remote = artifacts
             .into_iter()
-            .filter(|artifact| {
-                artifact.user_id == self.key.user_id
-                    && artifact.repository_key == self.key.repository_key
-            })
+            .filter(|artifact| artifact.user_id == self.key.user_id)
             .map(|artifact| (artifact.id.clone(), artifact))
             .collect();
         self.local.retain(|id, _| self.remote.contains_key(id));
@@ -534,6 +601,11 @@ impl ArtifactFeed {
             .collect::<HashMap<_, _>>()
             .await;
         for artifact in self.remote.values() {
+            if artifact.repository_key != self.key.repository_key
+                && !bindings.contains_key(&artifact.id)
+            {
+                continue;
+            }
             let mut view = LocalArtifact {
                 remote: artifact.clone(),
                 local_path: None,

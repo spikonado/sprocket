@@ -14,14 +14,14 @@ impl ArtifactWatchers {
 
 #[tokio::test(start_paused = true)]
 async fn cloud_subscription_does_not_poll_or_reload_already_loaded_revisions() {
-    let (updates, subscription) = futures::channel::mpsc::unbounded();
+    let (updates, subscription) = futures::channel::mpsc::unbounded::<anyhow::Result<u64>>();
     let (_pending, pending) = tokio::sync::watch::channel(Vec::new());
     let (output, mut snapshots) = tokio::sync::mpsc::channel(1);
     let loads = Arc::new(AtomicUsize::new(0));
     let task_loads = Arc::clone(&loads);
     let task = tokio::spawn(async move {
         cloud_session(
-            subscription,
+            subscription.map(|result| result.map(CloudUpdate::Project)),
             &pending,
             &output,
             || {
@@ -32,6 +32,7 @@ async fn cloud_subscription_does_not_poll_or_reload_already_loaded_revisions() {
                 }))
             },
             |_| async { panic!("idle watcher must not sync") },
+            || async { Ok(false) },
         )
         .await
     });
@@ -53,14 +54,14 @@ async fn cloud_subscription_does_not_poll_or_reload_already_loaded_revisions() {
 
 #[tokio::test(start_paused = true)]
 async fn local_changes_sync_without_a_cloud_revision_event() {
-    let (updates, subscription) = futures::channel::mpsc::unbounded();
+    let (updates, subscription) = futures::channel::mpsc::unbounded::<anyhow::Result<u64>>();
     let (pending_tx, pending) = tokio::sync::watch::channel(Vec::new());
     let (output, mut snapshots) = tokio::sync::mpsc::channel(1);
     let syncs = Arc::new(AtomicUsize::new(0));
     let task_syncs = Arc::clone(&syncs);
     let task = tokio::spawn(async move {
         cloud_session(
-            subscription,
+            subscription.map(|result| result.map(CloudUpdate::Project)),
             &pending,
             &output,
             || async {
@@ -74,6 +75,7 @@ async fn local_changes_sync_without_a_cloud_revision_event() {
                 task_syncs.fetch_add(1, Ordering::SeqCst);
                 std::future::ready(Ok(()))
             },
+            || async { Ok(false) },
         )
         .await
     });
@@ -93,6 +95,62 @@ async fn local_changes_sync_without_a_cloud_revision_event() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn bound_artifact_changes_reload_without_a_project_revision_change() {
+    let (updates, subscription) = futures::channel::mpsc::unbounded();
+    let (_pending_tx, pending) = tokio::sync::watch::channel(Vec::new());
+    let (output, mut snapshots) = tokio::sync::mpsc::channel(1);
+    let task = tokio::spawn(async move {
+        cloud_session(
+            subscription,
+            &pending,
+            &output,
+            || async {
+                Ok(ArtifactSnapshot {
+                    artifacts: vec![],
+                    revision: 1,
+                })
+            },
+            |_| async { panic!("idle watcher must not sync") },
+            || async { Ok(false) },
+        )
+        .await
+    });
+    updates.unbounded_send(Ok(CloudUpdate::Project(1))).unwrap();
+    snapshots.recv().await.unwrap().unwrap();
+    updates.unbounded_send(Ok(CloudUpdate::Bindings)).unwrap();
+    assert_eq!(snapshots.recv().await.unwrap().unwrap().revision, 1);
+    drop(snapshots);
+    task.await.unwrap().unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn new_local_bindings_restart_cloud_subscriptions() {
+    let (_dir, feed) = setup().await;
+    let subscribed_ids = bound_ids(&feed.bindings).await.unwrap();
+    bind(&feed).await;
+    let (_pending_tx, pending) = tokio::sync::watch::channel(Vec::new());
+    let (output, _snapshots) = tokio::sync::mpsc::channel(1);
+    let updates =
+        stream::once(std::future::ready(Ok(CloudUpdate::Project(1)))).chain(stream::pending());
+    let result = cloud_session(
+        updates,
+        &pending,
+        &output,
+        || async {
+            Ok(ArtifactSnapshot {
+                artifacts: vec![],
+                revision: 1,
+            })
+        },
+        |_| async { panic!("idle watcher must not sync") },
+        || async { Ok(bound_ids(&feed.bindings).await? != subscribed_ids) },
+    )
+    .await
+    .unwrap();
+    assert_eq!(result, CloudSessionEnd::BindingsChanged);
+}
+
+#[tokio::test(start_paused = true)]
 async fn cloud_subscription_failures_exit_for_reconnect() {
     for updates in [
         vec![],
@@ -102,7 +160,7 @@ async fn cloud_subscription_failures_exit_for_reconnect() {
         let (_pending_tx, pending) = tokio::sync::watch::channel(Vec::new());
         let (output, _snapshots) = tokio::sync::mpsc::channel(1);
         let result = cloud_session(
-            stream::iter(updates),
+            stream::iter(updates).map(|result| result.map(CloudUpdate::Project)),
             &pending,
             &output,
             || async {
@@ -112,6 +170,7 @@ async fn cloud_subscription_failures_exit_for_reconnect() {
                 })
             },
             |_| async { Ok(()) },
+            || async { Ok(false) },
         )
         .await;
         assert!(result.is_err());
@@ -124,6 +183,7 @@ async fn cloud_subscription_failures_exit_for_reconnect() {
         &output,
         || async { panic!("must receive the first revision before loading") },
         |_| async { Ok(()) },
+        || async { Ok(false) },
     )
     .await;
     assert!(result.unwrap_err().is::<tokio::time::error::Elapsed>());
@@ -338,6 +398,30 @@ async fn local_edits_sync_but_missing_files_are_not_recreated() {
 }
 
 #[tokio::test]
+async fn transferred_bindings_keep_files_and_sync_edits_to_the_new_project_after_restart() {
+    let (dir, feed) = setup().await;
+    bind(&feed).await;
+    let path = dir.path().join("notes.md");
+    tokio::fs::write(&path, "local edit").await.unwrap();
+    let mut feed = ArtifactFeed::new(feed.key, feed.bindings);
+    feed.apply_registry(vec![RemoteArtifact {
+        repository_key: "destination".into(),
+        revision: 2,
+        ..remote()
+    }]);
+    feed.refresh().await.unwrap();
+    assert_eq!(feed.pending.len(), 1);
+    assert_eq!(feed.pending[0].artifact.repository_key, "destination");
+    assert_eq!(feed.pending[0].artifact.revision, 2);
+    assert_eq!(feed.pending[0].content, "local edit");
+    assert_eq!(
+        feed.local["artifact"].local_path.as_deref(),
+        Some("notes.md")
+    );
+    assert_eq!(tokio::fs::read_to_string(path).await.unwrap(), "local edit");
+}
+
+#[tokio::test]
 async fn interrupted_sync_ack_reconciles_baseline() {
     let (dir, mut feed) = setup().await;
     bind(&feed).await;
@@ -479,4 +563,17 @@ async fn registry_filters_account_and_repository() {
         feed.refresh().await.unwrap();
         assert!(feed.local.is_empty());
     }
+}
+
+#[tokio::test]
+async fn explicit_binding_never_allows_another_users_artifact() {
+    let (_dir, mut feed) = setup().await;
+    bind(&feed).await;
+    feed.apply_registry(vec![RemoteArtifact {
+        user_id: "bob".into(),
+        ..remote()
+    }]);
+    feed.refresh().await.unwrap();
+    assert!(feed.local.is_empty());
+    assert!(feed.pending.is_empty());
 }

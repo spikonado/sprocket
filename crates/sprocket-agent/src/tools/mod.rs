@@ -24,7 +24,9 @@ mod url_fetch;
 mod web;
 mod wiring;
 
-use self::artifacts::{BindArtifactTool, DeleteArtifactTool, ListArtifactsTool, SaveArtifactTool};
+use self::artifacts::{
+    BindArtifactTool, DeleteArtifactTool, ListArtifactsTool, SaveArtifactTool, TransferArtifactTool,
+};
 pub(crate) use self::async_tools::max_yield_ms;
 pub(crate) use self::commands::CommandCursors;
 use self::commands::{ControlCmdTool, ExecCmdTool, PollCmdTool};
@@ -79,6 +81,7 @@ pub(crate) const AGENT_TOOLS: &[(&str, NormalizeToolArgs)] = &[
     agent_tool::<ServiceSearchTool>(),
     agent_tool::<SetCwdTool>(),
     agent_tool::<SpawnSubagentTool>(),
+    agent_tool::<TransferArtifactTool>(),
     agent_tool::<WebSearchTool>(),
 ];
 
@@ -120,6 +123,7 @@ pub(crate) struct AgentToolSet {
     pub(crate) list_artifacts: ListArtifactsTool,
     pub(crate) save_artifact: SaveArtifactTool,
     pub(crate) delete_artifact: DeleteArtifactTool,
+    pub(crate) transfer_artifact: TransferArtifactTool,
     pub(crate) set_cwd: SetCwdTool,
     pub(crate) link_prs: LinkPrsTool,
     pub(crate) poll_pr: PollPrTool,
@@ -208,6 +212,7 @@ pub(crate) fn agent_tools(
         run_id: request.run_id.clone(),
         claim_id: request.claim_id.clone(),
         user_id: request.user_id.clone(),
+        repository_key: request.repository_key.clone(),
         workspace_root: request.workspace_root.clone(),
         cwd: WorkingDirectory::new(request.cwd.clone()),
         transcript_dir: request.transcript_dir.clone(),
@@ -263,6 +268,7 @@ pub(crate) fn agent_tools(
         list_artifacts: ListArtifactsTool(context.clone()),
         save_artifact: SaveArtifactTool(context.clone()),
         delete_artifact: DeleteArtifactTool(context.clone()),
+        transfer_artifact: TransferArtifactTool(context.clone()),
         set_cwd: SetCwdTool(context.clone()),
         link_prs: LinkPrsTool(context.clone()),
         poll_pr: PollPrTool(context.clone()),

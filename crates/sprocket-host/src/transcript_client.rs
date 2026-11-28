@@ -10,6 +10,7 @@ use sprocket_convex::{
 use tokio::time::sleep;
 
 pub const THREAD_NOT_FOUND: &str = "Thread not found.";
+pub(crate) const ARTIFACT_BINDING_BATCH_SIZE: usize = 8;
 
 #[derive(Clone)]
 pub struct UserConvexClient {
@@ -104,6 +105,35 @@ impl UserConvexClient {
             }
             args.insert("cursor".to_string(), cursor);
         }
+    }
+
+    pub(crate) async fn subscribe_artifact_bindings(
+        &self,
+        artifact_ids: &[String],
+    ) -> anyhow::Result<Subscription> {
+        self.subscribe("artifactBindings:getState", artifact_ids_args(artifact_ids))
+            .await
+    }
+
+    pub(crate) async fn list_artifacts_with_bindings(
+        &self,
+        repository_key: &str,
+        artifact_ids: &[String],
+    ) -> anyhow::Result<ArtifactSnapshot> {
+        let mut snapshot = self.list_artifacts(repository_key).await?;
+        // Project pages may predate a bound artifact's transfer or deletion.
+        snapshot
+            .artifacts
+            .retain(|artifact| !artifact_ids.contains(&artifact.id));
+        for batch in artifact_ids.chunks(ARTIFACT_BINDING_BATCH_SIZE) {
+            let artifacts: Vec<crate::artifact_watch::RemoteArtifact> = tokio::time::timeout(
+                Duration::from_secs(10),
+                self.query("artifactBindings:getArtifacts", artifact_ids_args(batch)),
+            )
+            .await??;
+            snapshot.artifacts.extend(artifacts);
+        }
+        Ok(snapshot)
     }
 
     pub async fn sync_artifact(
@@ -208,6 +238,13 @@ fn artifacts_list_args(repository_key: &str) -> BTreeMap<String, Value> {
         repository_key.to_string().into(),
     );
     args
+}
+
+fn artifact_ids_args(artifact_ids: &[String]) -> BTreeMap<String, Value> {
+    BTreeMap::from([(
+        "artifactIds".into(),
+        Value::Array(artifact_ids.iter().cloned().map(Value::String).collect()),
+    )])
 }
 
 pub async fn retry_after_failure() {

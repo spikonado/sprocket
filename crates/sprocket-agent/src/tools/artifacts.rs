@@ -25,6 +25,16 @@ pub(crate) struct SaveArtifactTool(pub(super) AgentToolContext);
 #[derive(Clone)]
 pub(crate) struct DeleteArtifactTool(pub(super) AgentToolContext);
 
+#[derive(Clone)]
+pub(crate) struct TransferArtifactTool(pub(super) AgentToolContext);
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct TransferArtifactArgs {
+    pub(crate) artifact_id: String,
+    pub(crate) repository_key: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct DeleteArtifactArgs {
@@ -48,8 +58,12 @@ pub(crate) struct SaveArtifactArgs {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ListArtifactsArgs {}
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ListArtifactsArgs {
+    /// Defaults to the current project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) repository_key: Option<String>,
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -208,10 +222,15 @@ async fn register_file(
     }
     fields["content"] = json!(file.content);
     fields["title"] = json!(file.title);
-    if let Some(source_path) = artifact_source_path(&context.workspace_root, &file.local_path) {
-        fields["sourcePath"] = json!(source_path);
-    } else if existing.is_some() {
-        fields["sourcePath"] = serde_json::Value::Null;
+    if existing
+        .as_ref()
+        .is_none_or(|artifact| artifact.repository_key == context.repository_key)
+    {
+        if let Some(source_path) = artifact_source_path(&context.workspace_root, &file.local_path) {
+            fields["sourcePath"] = json!(source_path);
+        } else if existing.is_some() {
+            fields["sourcePath"] = serde_json::Value::Null;
+        }
     }
     let mutation_args = mutation_args_from_payload(&context.run_id, &context.claim_id, &fields)?;
     let result = run_convex_tool_mutation(
@@ -240,6 +259,7 @@ struct StoredArtifact {
     #[serde(rename = "_id")]
     id: String,
     registration_id: String,
+    repository_key: String,
     content: String,
     #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u64")]
     revision: u64,
@@ -361,7 +381,7 @@ impl rig::tool::Tool for ListArtifactsTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "List the project's artifacts. Ones bound on this machine include their `path`.".to_string()
+        "List a project's artifacts. Ones bound in this workspace include their `path`.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -371,13 +391,13 @@ impl rig::tool::Tool for ListArtifactsTool {
     async fn call(
         &self,
         _context: &mut rig::tool::ToolContext,
-        _args: Self::Args,
+        args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
-        let payload = serde_json::to_value(&_args).map_err(|error| tool_error(error.into()))?;
+        let payload = serde_json::to_value(&args).map_err(|error| tool_error(error.into()))?;
         execute_tool_job(
             &self.0,
             Self::NAME,
-            payload,
+            payload.clone(),
             |cancellation| async move {
                 let bindings = tokio::select! {
                     biased;
@@ -389,7 +409,9 @@ impl rig::tool::Tool for ListArtifactsTool {
                     let mut revision = None;
                     let mut artifacts = Vec::new();
                     loop {
-                        let args = mutation_args_from_payload(&self.0.run_id, &self.0.claim_id, &json!({"cursor": cursor}))?;
+                        let mut fields = payload.clone();
+                        fields["cursor"] = json!(cursor);
+                        let args = mutation_args_from_payload(&self.0.run_id, &self.0.claim_id, &fields)?;
                         let page = tokio::select! {
                             biased;
                             _ = cancellation.cancelled() => return Err(cancelled_error()),
@@ -410,6 +432,41 @@ impl rig::tool::Tool for ListArtifactsTool {
                 Err(tool_error(anyhow::anyhow!("Artifact registry kept changing during listing; retry the tool")))
             },
         ).await
+    }
+}
+
+impl rig::tool::Tool for TransferArtifactTool {
+    const NAME: &'static str = "transfer_artifact";
+    type Error = ToolExecutionError;
+    type Args = TransferArtifactArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Move an artifact to another project, keeping its ID, content, and local file bindings."
+            .into()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(TransferArtifactArgs))
+    }
+
+    async fn call(
+        &self,
+        _context: &mut rig::tool::ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
+        let payload = serde_json::to_value(&args).map_err(|error| tool_error(error.into()))?;
+        let mutation_args = mutation_args_from_payload(&self.0.run_id, &self.0.claim_id, &payload)?;
+        execute_tool_job(&self.0, Self::NAME, payload, |cancellation| async move {
+            run_convex_tool_mutation(
+                &self.0.runtime,
+                cancellation,
+                "artifacts:transferArtifactForRun",
+                mutation_args,
+            )
+            .await
+        })
+        .await
     }
 }
 

@@ -181,6 +181,14 @@ export const vEditArtifactPayload = v.object({
 	artifactId: v.string()
 });
 
+export const vListArtifactsPayload = v.object({
+	repositoryKey: v.optional(v.string())
+});
+
+export const vTransferArtifactPayload = vEditArtifactPayload.extend({
+	repositoryKey: v.string()
+});
+
 export const vCreateArtifactPayload = v.object({
 	title: v.string(),
 	contentType: vLegacyArtifactType,
@@ -548,6 +556,8 @@ export const vCurrentExecutorJobPayload = v.union(
 	vPollCommandsPayload,
 	vBindArtifactPayload,
 	vEditArtifactPayload,
+	vListArtifactsPayload,
+	vTransferArtifactPayload,
 	vCreateArtifactPayload,
 	vUpdateArtifactPayload,
 	vMandateSetupPayload,
@@ -1194,6 +1204,7 @@ export const vCurrentExecutorJobKind = v.union(
 	v.literal('edit_artifact'),
 	v.literal('delete_artifact'),
 	v.literal('save_artifact'),
+	v.literal('transfer_artifact'),
 	v.literal('spawn_subagent'),
 	v.literal('control_subagent'),
 	v.literal('poll_subagent')
