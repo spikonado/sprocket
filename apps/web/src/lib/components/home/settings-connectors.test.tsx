@@ -79,11 +79,17 @@ function mount(fetchConnectors: LocalApi['fetchConnectors'], mcp: Partial<Connec
 	return { installOrUpdateConnector };
 }
 
-it('installs KiCad and flips the card once the install finishes', async () => {
+async function openConnector(name: string) {
+	const list = await screen.findByRole('region', { name: 'Your connectors' });
+	fireEvent.click(await within(list).findByRole('button', { name: new RegExp(`^${name}`) }));
+}
+
+it('installs KiCad from the catalog and moves it to your connectors', async () => {
 	vi.useFakeTimers({ shouldAdvanceTime: true });
 
 	const fetchConnectors = vi
 		.fn<LocalApi['fetchConnectors']>()
+		.mockResolvedValueOnce([kicad({})])
 		.mockResolvedValueOnce([kicad({})])
 		.mockResolvedValue([
 			kicad({ state: 'installed', updateAvailable: true, kicadVersion: '10.0.1' })
@@ -91,6 +97,8 @@ it('installs KiCad and flips the card once the install finishes', async () => {
 
 	const { installOrUpdateConnector } = mount(fetchConnectors);
 
+	const available = await screen.findByRole('list', { name: 'Available connectors' });
+	fireEvent.click(await within(available).findByRole('button', { name: /^KiCad/ }));
 	fireEvent.click(await screen.findByRole('button', { name: 'Install' }));
 
 	expect(installOrUpdateConnector).toHaveBeenCalledWith('user-a', 'kicad');
@@ -101,11 +109,19 @@ it('installs KiCad and flips the card once the install finishes', async () => {
 	expect(await screen.findByRole('button', { name: 'Uninstall' })).toBeTruthy();
 	expect(screen.getByRole('button', { name: 'Update' })).toBeTruthy();
 	expect(screen.getByText('10.0.1')).toBeTruthy();
+
+	fireEvent.click(screen.getByRole('button', { name: 'Back to connectors' }));
+	const list = await screen.findByRole('region', { name: 'Your connectors' });
+	expect(await within(list).findByText('Update available')).toBeTruthy();
+	expect(
+		within(screen.getByRole('list', { name: 'Available connectors' })).queryByText('KiCad')
+	).toBeNull();
 });
 
 it('offers a retry with the install error', async () => {
 	mount(async () => [kicad({ state: 'failed', error: 'Not enough disk space.' })]);
 
+	await openConnector('KiCad');
 	expect(await screen.findByRole('button', { name: 'Retry' })).toBeTruthy();
 	expect(screen.getByText('Not enough disk space.')).toBeTruthy();
 });
@@ -115,6 +131,7 @@ it('keeps an older install usable after a failed update', async () => {
 		kicad({ state: 'installed', updateAvailable: true, error: 'Download failed.' })
 	]);
 
+	await openConnector('KiCad');
 	expect(await screen.findByRole('button', { name: 'Update' })).toBeTruthy();
 	expect(screen.getByRole('button', { name: 'Uninstall' })).toBeTruthy();
 	expect(screen.getByText('Download failed.')).toBeTruthy();
@@ -134,7 +151,7 @@ it('saves an MCP tool permission and reverts it when the save fails', async () =
 		setMcpToolPolicy
 	});
 
-	fireEvent.click(await screen.findByRole('button', { name: 'Tools' }));
+	await openConnector('Linear');
 	const control = await screen.findByRole('group', { name: 'create_issue permission' });
 
 	const pressed = () =>

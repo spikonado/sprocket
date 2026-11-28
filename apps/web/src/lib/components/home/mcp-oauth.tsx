@@ -4,7 +4,7 @@ import { ConvexError } from 'convex/values';
 import { z } from 'zod';
 import { api } from '@convex/_generated/api';
 import type { CatalogConnector } from '$lib/connectors/catalog';
-import { inputClass, primaryButtonClass } from './connector-card-parts';
+import { inputClass, primaryButtonClass } from './connector-parts';
 import { caughtMessage } from './use-connectors';
 import { waitForMcpConnector } from './mcp-connectors-client';
 

@@ -54,7 +54,7 @@ function isRemoteMcpUrl(value: string): boolean {
 	);
 }
 
-type AddedConnector =
+export type AddedConnector =
 	{ type: 'local'; connector: McpConnector } | { type: 'remote'; connectorId: string };
 
 export function useAddMcpConnector(
