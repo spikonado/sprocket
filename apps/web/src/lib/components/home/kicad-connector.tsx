@@ -1,20 +1,38 @@
-import { useState } from 'react';
 import { LoaderCircle } from 'lucide-react';
 import type { ConnectorStatus, LocalApi } from '$lib/types/sprocket';
 import {
-	ConnectorCardFrame,
-	ConnectorDescription,
+	ConnectorPanel,
 	primaryButtonClass,
-	secondaryButtonClass,
+	rowSecondaryButtonClass,
+	unloadedState,
+	useConnectorAction,
 	useOnConnected,
-	VersionLine
-} from './connector-card-parts';
-import { caughtMessage, useConnectors } from './use-connectors';
+	type ConnectorState
+} from './connector-parts';
+import { useConnectors } from './use-connectors';
 
 export type KiCadApi = Pick<
 	LocalApi,
 	'fetchConnectors' | 'installOrUpdateConnector' | 'uninstallConnector'
 >;
+
+export const kicadDescription = 'Lets the agent design PCBs';
+
+export function kicadState(connector: ConnectorStatus): ConnectorState {
+	if (connector.state === 'installing') return { tone: 'working', label: 'Installing…' };
+
+	if (connector.state === 'failed') return { tone: 'attention', label: 'Install failed' };
+
+	if (connector.state === 'notInstalled') return { tone: 'off', label: 'Not installed' };
+
+	if (connector.updateAvailable) return { tone: 'attention', label: 'Update available' };
+
+	return { tone: 'ready', label: 'Ready' };
+}
+
+export function KiCadLogo() {
+	return <img src={`${import.meta.env.BASE_URL}kicad.svg`} alt="" />;
+}
 
 export default function KiCadConnector({
 	userId,
@@ -27,111 +45,63 @@ export default function KiCadConnector({
 }) {
 	const { connectors, loadError, replace } = useConnectors(userId, localApi);
 	const connector = connectors?.find((entry) => entry.id === 'kicad');
+	const { pending, error, act } = useConnectorAction<'change'>('KiCad');
+	const installing = connector?.state === 'installing';
+	const busy = pending !== null || installing;
 
 	useOnConnected(connector?.state === 'installed', onConnected);
 
-	return (
-		<>
-			{connector && (
-				<ConnectorCard
-					connector={connector}
-					onInstall={() => localApi.installOrUpdateConnector(userId, connector.id)}
-					onUninstall={() => localApi.uninstallConnector(userId, connector.id)}
-					onStatus={replace}
-				/>
-			)}
-			{loadError && (
-				<p role="alert" className="text-destructive text-sm">
-					{loadError}
-				</p>
-			)}
-		</>
-	);
-}
+	const run = (action: (id: ConnectorStatus['id']) => Promise<ConnectorStatus>) =>
+		void act('change', async () => replace(await action('kicad')));
 
-function ConnectorCard({
-	connector,
-	onInstall,
-	onUninstall,
-	onStatus
-}: {
-	connector: ConnectorStatus;
-	onInstall: () => Promise<ConnectorStatus>;
-	onUninstall: () => Promise<ConnectorStatus>;
-	onStatus: (status: ConnectorStatus) => void;
-}) {
-	const [pending, setPending] = useState(false);
-	const [requestError, setRequestError] = useState<string | null>(null);
-	const installing = connector.state === 'installing';
-	const busy = pending || installing;
-
-	async function run(action: () => Promise<ConnectorStatus>) {
-		setPending(true);
-		setRequestError(null);
-
-		try {
-			onStatus(await action());
-		} catch (caught) {
-			setRequestError(caughtMessage.parse(caught) || 'Something went wrong.');
-		} finally {
-			setPending(false);
-		}
-	}
+	const install = () => run((id) => localApi.installOrUpdateConnector(userId, id));
 
 	return (
-		<ConnectorCardFrame
-			logo={<img src={`${import.meta.env.BASE_URL}kicad.svg`} alt="" className="size-8 shrink-0" />}
-			name={
-				<>
-					{connector.name}
-					<span className="border-border text-muted-foreground rounded-full border px-1.5 text-[11px] leading-4 font-normal">
-						Experimental
-					</span>
-				</>
-			}
-			summary={
-				<>
-					<ConnectorDescription>Lets the agent design PCBs</ConnectorDescription>
-					{connector.kicadVersion && (
-						<VersionLine name={connector.name} version={connector.kicadVersion} />
-					)}
-				</>
-			}
+		<ConnectorPanel
+			logo={<KiCadLogo />}
+			name="KiCad"
+			tag="Experimental"
+			description={kicadDescription}
+			state={connector ? kicadState(connector) : unloadedState(loadError)}
 			actions={
-				connector.state === 'installed' ? (
-					<>
-						{connector.updateAvailable && (
-							<button
-								type="button"
-								className={primaryButtonClass}
-								disabled={busy}
-								onClick={() => void run(onInstall)}
-							>
-								Update
-							</button>
-						)}
-						<button
-							type="button"
-							className={secondaryButtonClass}
-							disabled={busy}
-							onClick={() => void run(onUninstall)}
-						>
-							Uninstall
-						</button>
-					</>
-				) : (
-					<button
-						type="button"
-						className={primaryButtonClass}
-						disabled={busy}
-						onClick={() => void run(onInstall)}
-					>
+				connector &&
+				(connector.state !== 'installed' || connector.updateAvailable) && (
+					<button type="button" className={primaryButtonClass} disabled={busy} onClick={install}>
 						{installing && <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />}
-						{installing ? 'Installing…' : connector.state === 'failed' ? 'Retry' : 'Install'}
+						{installing
+							? 'Installing…'
+							: connector.state === 'failed'
+								? 'Retry'
+								: connector.state === 'installed'
+									? 'Update'
+									: 'Install'}
 					</button>
 				)
 			}
-			error={requestError ?? connector.error}
+			error={error ?? connector?.error ?? loadError}
+			footer={
+				connector?.state === 'installed'
+					? {
+							info: connector.kicadVersion ? (
+								<>
+									KiCad <span className="font-mono">{connector.kicadVersion}</span>
+								</>
+							) : (
+								'Installed'
+							),
+							actions: (
+								<button
+									type="button"
+									className={rowSecondaryButtonClass}
+									disabled={busy}
+									onClick={() => run((id) => localApi.uninstallConnector(userId, id))}
+								>
+									Uninstall
+								</button>
+							)
+						}
+					: undefined
+			}
 		/>
 	);
 }

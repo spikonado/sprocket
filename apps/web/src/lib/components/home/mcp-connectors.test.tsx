@@ -6,8 +6,9 @@ import { api } from '@convex/_generated/api';
 import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
 import type { McpConnector } from '$lib/types/sprocket';
 import { catalogConnector } from '$lib/connectors/catalog';
-import McpConnectors, { RequestedConnectorSetup, type McpApi } from './mcp-connectors';
+import { RequestedConnectorSetup, type McpApi } from './mcp-connectors';
 import type { RemoteMcpServer } from './mcp-connectors-client';
+import SettingsConnectors from './settings-connectors';
 import AgentQuestion from './agent-question';
 
 afterEach(() => {
@@ -49,6 +50,41 @@ function client(servers: RemoteMcpServer[] = []) {
 	return convex;
 }
 
+function renderConnectors(convex: ConvexTestClient, mcp: McpApi | null) {
+	const unused = async () => Promise.reject(new Error('Unexpected connector call.'));
+
+	render(
+		<ConvexTestProvider client={convex}>
+			<SettingsConnectors
+				userId="user-a"
+				localApi={
+					mcp && {
+						...mcp,
+						fetchConnectors: async () => [],
+						installOrUpdateConnector: unused,
+						uninstallConnector: unused,
+						fetchGitHubStatus: unused,
+						updateGitHubSettings: unused,
+						signOutGitHub: unused,
+						fetchVercelStatus: unused,
+						signOutVercel: unused,
+						installConnectorCli: unused,
+						fetchConnectorSignIn: unused,
+						startConnectorSignIn: unused,
+						cancelConnectorSignIn: unused
+					}
+				}
+			/>
+		</ConvexTestProvider>
+	);
+}
+
+const yourConnectors = () => within(screen.getByRole('region', { name: 'Your connectors' }));
+
+function openConnector(name: string) {
+	fireEvent.click(yourConnectors().getByRole('button', { name: new RegExp(`^${name}`) }));
+}
+
 it.each([
 	{ url: 'https://mcp.linear.test/mcp', remote: true },
 	{ url: 'http://mcp.linear.test/mcp', remote: true },
@@ -68,11 +104,8 @@ it.each([
 		transport: { type: 'http', url, headers: ['Authorization'] }
 	}));
 
-	render(
-		<ConvexTestProvider client={convex}>
-			<McpConnectors userId="user-a" localApi={localApi({ addMcpConnector: addLocal })} />
-		</ConvexTestProvider>
-	);
+	renderConnectors(convex, localApi({ addMcpConnector: addLocal }));
+	fireEvent.click(screen.getByRole('button', { name: /^Custom MCP server/ }));
 	const form = within(screen.getByRole('form', { name: 'Custom connector' }));
 	const urlButton = form.getByRole('button', { name: 'URL' });
 	fireEvent.click(urlButton);
@@ -127,34 +160,25 @@ it('shows local and remote connectors and removes a remote one through Convex', 
 	convex.handleAction(api.mcpServers.remove, removeRemote);
 	const removeLocal = vi.fn<McpApi['removeMcpConnector']>(async () => {});
 
-	render(
-		<ConvexTestProvider client={convex}>
-			<McpConnectors
-				userId="user-a"
-				localApi={localApi({
-					fetchMcpConnectors: async () => [local],
-					removeMcpConnector: removeLocal
-				})}
-			/>
-		</ConvexTestProvider>
+	renderConnectors(
+		convex,
+		localApi({ fetchMcpConnectors: async () => [local], removeMcpConnector: removeLocal })
 	);
-	expect(await screen.findByText('Local Linear')).toBeTruthy();
-	expect(screen.getAllByText('Linear')).toHaveLength(1);
-	expect(screen.getByText('Needs sign-in')).toBeTruthy();
+	expect(await yourConnectors().findByText('Local Linear')).toBeTruthy();
+	expect(yourConnectors().getByText('Linear')).toBeTruthy();
+	expect(yourConnectors().getByText('Needs sign-in')).toBeTruthy();
 
 	await act(async () =>
 		convex.registerQuery(api.mcpServers.listMine, [{ ...server, status: 'connected' }])
 	);
-	expect(screen.getAllByText('Connected')).toHaveLength(2);
-	const card = screen.getByText('Linear').closest<HTMLDivElement>('.rounded-xl');
-
-	if (!card) throw new Error('Missing remote connector card.');
-	fireEvent.click(within(card).getByRole('button', { name: 'Remove' }));
+	expect(yourConnectors().getAllByText('Ready')).toHaveLength(2);
+	openConnector('Linear');
+	fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
 	await waitFor(() => expect(removeRemote).toHaveBeenCalledWith({ connectorId: 'linear' }));
 	expect(removeLocal).not.toHaveBeenCalled();
 	await act(async () => convex.registerQuery(api.mcpServers.listMine, []));
-	expect(screen.queryByText('Linear')).toBeNull();
-	expect(screen.getByText('Local Linear')).toBeTruthy();
+	expect(await yourConnectors().findByText('Local Linear')).toBeTruthy();
+	expect(yourConnectors().queryByText('Linear')).toBeNull();
 });
 
 it('loads canonical remote tool IDs and saves account policies reactively', async () => {
@@ -176,12 +200,8 @@ it('loads canonical remote tool IDs and saves account policies reactively', asyn
 		}
 	]);
 
-	render(
-		<ConvexTestProvider client={convex}>
-			<McpConnectors userId="user-a" localApi={localApi({ fetchMcpTools })} />
-		</ConvexTestProvider>
-	);
-	fireEvent.click(screen.getByRole('button', { name: 'Tools' }));
+	renderConnectors(convex, localApi({ fetchMcpTools }));
+	openConnector('Linear');
 	const control = within(await screen.findByRole('group', { name: 'create_issue permission' }));
 	expect(fetchMcpTools).toHaveBeenCalledWith('user-a', 'remote:linear');
 	expect(control.getByRole('button', { name: 'Disabled' }).getAttribute('aria-pressed')).toBe(
@@ -299,11 +319,8 @@ it('opens a browser popup before starting OAuth and follows the returned authori
 
 		return { authorizationUrl: 'https://auth.linear.test/authorize' };
 	});
-	render(
-		<ConvexTestProvider client={convex}>
-			<McpConnectors userId="user-a" localApi={null} />
-		</ConvexTestProvider>
-	);
+	renderConnectors(convex, null);
+	openConnector('Linear');
 	fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
 	await waitFor(() => expect(replace).toHaveBeenCalledWith('https://auth.linear.test/authorize'));
 	expect(screen.getByText(/Finish connecting in your browser/)).toBeTruthy();
@@ -408,15 +425,11 @@ it('connects a catalog entry in one click and keeps OAuth client input after the
 
 	convex.handleAction(api.mcpServers.startOAuth, startOAuth);
 
-	render(
-		<ConvexTestProvider client={convex}>
-			<McpConnectors userId="user-a" localApi={null} />
-		</ConvexTestProvider>
-	);
-	fireEvent.click(screen.getByRole('button', { name: 'Browse connectors' }));
+	renderConnectors(convex, null);
 	fireEvent.change(screen.getByRole('searchbox', { name: 'Search connectors' }), {
 		target: { value: entry.name }
 	});
+	fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${entry.name}`) }));
 	fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
 	await waitFor(() => expect(addRemote).toHaveBeenCalledTimes(1));
 	expect(startOAuth).not.toHaveBeenCalled();
@@ -433,9 +446,12 @@ it('connects a catalog entry in one click and keeps OAuth client input after the
 	await act(async () =>
 		convex.registerQuery(api.mcpServers.listMine, [{ ...server, status: 'connected' }])
 	);
-	expect(screen.getByText('Connected')).toBeTruthy();
-	fireEvent.click(screen.getByRole('button', { name: 'Browse connectors' }));
-	expect(screen.getByText(entry.name)).toBeTruthy();
+	expect(screen.getByText('Ready')).toBeTruthy();
+	fireEvent.click(screen.getByRole('button', { name: 'Back to connectors' }));
+	expect(yourConnectors().getByText(entry.name)).toBeTruthy();
+	expect(
+		within(screen.getByRole('list', { name: 'Available connectors' })).queryByText(entry.name)
+	).toBeNull();
 });
 
 it.each(['oauth', 'none'] as const)(

@@ -10,9 +10,9 @@ import { catalogConnector } from '$lib/connectors/catalog';
 import GitHubConnector from './github-connector';
 import KiCadConnector from './kicad-connector';
 import {
-	RequestedCatalogConnectorSetup,
+	CatalogConnectorSetup,
 	RequestedConnectorSetup,
-	RequestedRemoteConnectorSetup
+	RemoteConnectorSetup
 } from './mcp-connectors';
 import { REMOTE_MCP_PREFIX } from './mcp-connectors-client';
 import type { ConnectorsApi } from './settings-connectors';
@@ -175,14 +175,14 @@ function ConnectorRequest({
 					onConnected={onConnected}
 				/>
 			) : catalog ? (
-				<RequestedCatalogConnectorSetup
+				<CatalogConnectorSetup
 					userId={setup.userId}
 					localApi={setup.localApi}
 					entry={catalog}
 					onConnected={onConnected}
 				/>
 			) : connector.id.startsWith(REMOTE_MCP_PREFIX) ? (
-				<RequestedRemoteConnectorSetup
+				<RemoteConnectorSetup
 					userId={setup.userId}
 					localApi={setup.localApi}
 					connectorId={connector.id}

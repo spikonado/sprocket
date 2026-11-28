@@ -99,7 +99,7 @@ it('signs in to a new Enterprise host', async () => {
 	expect(await screen.findByText('ABCD-1234')).toBeTruthy();
 });
 
-it('turns GitHub or one host off on this machine', async () => {
+it('turns one host off, and turns GitHub back on after an older install turned it off', async () => {
 	const api = mount();
 
 	fireEvent.click(await screen.findByRole('switch', { name: 'Use github.com' }));
@@ -108,20 +108,23 @@ it('turns GitHub or one host off on this machine', async () => {
 			host: { host: 'github.com', enabled: false }
 		})
 	);
+	cleanup();
 
-	fireEvent.click(screen.getByRole('switch', { name: 'Use GitHub' }));
+	const off = mount({ ...signedIn, enabled: false });
+
+	fireEvent.click(await screen.findByRole('button', { name: 'Turn on' }));
 	await waitFor(() =>
-		expect(api.updateGitHubSettings).toHaveBeenLastCalledWith('user-a', { enabled: false })
+		expect(off.updateGitHubSettings).toHaveBeenLastCalledWith('user-a', { enabled: true })
 	);
-	expect(await screen.findByText(/GitHub is off/)).toBeTruthy();
+	expect(await screen.findByRole('switch', { name: 'Use github.com' })).toBeTruthy();
 });
 
 it('retries a failed GitHub CLI install', async () => {
 	const api = mount({ ...signedIn, install: { state: 'failed', error: 'Download failed.' } });
 
 	expect(await screen.findByText('Download failed.')).toBeTruthy();
-	fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+	fireEvent.click(screen.getByRole('button', { name: 'Retry install' }));
 
 	expect(api.installConnectorCli).toHaveBeenCalledWith('user-a', 'github');
-	expect(await screen.findByText('Installing GitHub CLI…')).toBeTruthy();
+	expect(await screen.findByText('Installing…')).toBeTruthy();
 });
