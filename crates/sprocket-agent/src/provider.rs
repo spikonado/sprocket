@@ -788,6 +788,7 @@ async fn run_with_completion_model(
         .tool(tools.list_artifacts)
         .tool(tools.save_artifact)
         .tool(tools.delete_artifact)
+        .tool(tools.transfer_artifact)
         .tool(tools.parse_file)
         .tool(tools.spawn_subagent)
         .tool(tools.control_subagent)

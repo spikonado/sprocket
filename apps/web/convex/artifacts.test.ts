@@ -56,10 +56,7 @@ describe('cloud artifacts', () => {
 		expect(artifact).not.toHaveProperty('localPath');
 		expect(created).not.toHaveProperty('localPath');
 		const metadata = await asUser.query(api.artifacts.listArtifactsForRun, auth);
-		expect(metadata.page).toHaveLength(1);
-		expect(metadata.page[0]).not.toHaveProperty('content');
-		expect(metadata.page[0]).not.toHaveProperty('registrationId');
-		expect(metadata.page[0]).not.toHaveProperty('localPath');
+		expect(metadata.page).toEqual([{ artifactId: created.artifactId, title: fields.title }]);
 
 		const uiMetadata = await asUser.query(api.artifacts.listArtifactMetadata, {
 			repositoryKey,
@@ -220,26 +217,24 @@ describe('cloud artifacts', () => {
 			})
 		).toMatchObject({ _id: created.artifactId, scope: 'project' });
 
-		for (const project of [{ repositoryKey }]) {
-			const listed = await asUser.query(api.artifacts.listArtifacts, project);
-			expect(listed.page.map((artifact) => artifact._id)).toEqual([created.artifactId]);
+		const listed = await asUser.query(api.artifacts.listArtifacts, { repositoryKey });
+		expect(listed.page.map((artifact) => artifact._id)).toEqual([created.artifactId]);
 
-			const loaded = await asUser.query(api.artifacts.getArtifact, {
-				...project,
-				artifactId: created.artifactId
-			});
+		const loaded = await asUser.query(api.artifacts.getArtifact, {
+			repositoryKey,
+			artifactId: created.artifactId
+		});
 
-			expect(loaded.scope).toBe('project');
-			expect(loaded).not.toHaveProperty('threadId');
-			expect(
-				await asUser.mutation(api.artifacts.syncArtifact, {
-					...project,
-					artifactId: created.artifactId,
-					expectedRevision: 1,
-					content: 'initial'
-				})
-			).toBe(true);
-		}
+		expect(loaded.scope).toBe('project');
+		expect(loaded).not.toHaveProperty('threadId');
+		expect(
+			await asUser.mutation(api.artifacts.syncArtifact, {
+				repositoryKey,
+				artifactId: created.artifactId,
+				expectedRevision: 1,
+				content: 'initial'
+			})
+		).toBe(true);
 
 		expect(await asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields })).toEqual(
 			created
@@ -251,27 +246,11 @@ describe('cloud artifacts', () => {
 				repositoryKey: 'other'
 			})
 		).rejects.toThrow(/not found/i);
-		await expect(
-			asUser.mutation(api.artifacts.syncArtifact, {
-				artifactId: created.artifactId,
-				repositoryKey: 'other',
-				expectedRevision: 1,
-				content: 'forbidden'
-			})
-		).rejects.toThrow(/not found/i);
 		const bob = t.withIdentity({ subject: 'user_bob' });
 		await expect(
 			bob.query(api.artifacts.getArtifact, {
 				repositoryKey,
 				artifactId: created.artifactId
-			})
-		).rejects.toThrow(/not found/i);
-		await expect(
-			bob.mutation(api.artifacts.syncArtifact, {
-				repositoryKey,
-				artifactId: created.artifactId,
-				expectedRevision: 1,
-				content: 'forbidden'
 			})
 		).rejects.toThrow(/not found/i);
 		await expect(t.query(api.artifacts.listArtifacts, { repositoryKey })).rejects.toThrow(
@@ -311,14 +290,156 @@ describe('cloud artifacts', () => {
 		).rejects.toThrow();
 	});
 
-	it('persists bind, released add and edit, save and list tool jobs', async () => {
+	it('allows run ID operations across projects and lists the requested project or defaults to the run project', async () => {
+		const { t, asUser, repositoryKey, auth } = await seedActiveRun();
+		const { artifactId } = await asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields });
+		const otherRun = await seedActiveRun('user_alice', t);
+		await t.run((ctx) =>
+			ctx.db.patch('threadRecords', otherRun.threadId, { repositoryKey: 'other' })
+		);
+
+		expect(
+			await asUser.query(api.artifacts.getArtifactForRun, { ...otherRun.auth, artifactId })
+		).toMatchObject({ _id: artifactId, repositoryKey, content: fields.content });
+		expect((await asUser.query(api.artifacts.listArtifactsForRun, otherRun.auth)).page).toEqual([]);
+		expect(
+			await asUser.query(api.artifacts.listArtifactsForRun, { ...otherRun.auth, repositoryKey })
+		).toMatchObject({ page: [{ artifactId, title: fields.title }], revision: 1 });
+
+		await asUser.mutation(api.artifacts.editArtifact, {
+			...otherRun.auth,
+			artifactId,
+			expectedRevision: 1,
+			title: fields.title,
+			content: 'edited from another project'
+		});
+		expect(
+			await asUser.query(api.artifacts.getArtifactForRun, { ...auth, artifactId })
+		).toMatchObject({ content: 'edited from another project', revision: 2 });
+		expect(await asUser.query(api.artifacts.getArtifactState, { repositoryKey })).toBe(2);
+		expect(await asUser.query(api.artifacts.getArtifactState, { repositoryKey: 'other' })).toBe(0);
+
+		expect(
+			await asUser.mutation(api.artifacts.deleteArtifactForRun, { ...otherRun.auth, artifactId })
+		).toEqual({ artifactId });
+		expect(
+			await asUser.query(api.artifacts.listArtifactsForRun, { ...otherRun.auth, repositoryKey })
+		).toMatchObject({ page: [], revision: 3 });
+		expect(await asUser.query(api.artifacts.getArtifactState, { repositoryKey: 'other' })).toBe(0);
+	});
+
+	it.each(['run', 'user'] as const)(
+		'transfers through %s auth without losing identity or accepting stale writes',
+		async (authKind) => {
+			const { asUser, repositoryKey, auth } = await seedActiveRun();
+
+			const { artifactId } = await asUser.mutation(api.artifacts.addArtifact, {
+				...auth,
+				...fields,
+				sourcePath: 'docs/notes.md'
+			});
+
+			const load = () => asUser.query(api.artifacts.getArtifactForRun, { ...auth, artifactId });
+
+			const transfer = (destination: string) =>
+				authKind === 'run'
+					? asUser.mutation(api.artifacts.transferArtifactForRun, {
+							...auth,
+							artifactId,
+							repositoryKey: destination
+						})
+					: asUser.mutation(api.artifacts.transferArtifact, {
+							artifactId,
+							repositoryKey: destination
+						});
+
+			const original = await load();
+
+			await expect(transfer(' ')).rejects.toThrow(/repository key is required/i);
+			expect(await transfer(repositoryKey)).toEqual({});
+			expect(await load()).toEqual(original);
+			expect(await asUser.query(api.artifacts.getArtifactState, { repositoryKey })).toBe(1);
+
+			expect(await transfer(' other ')).toEqual({});
+			const moved = await load();
+			expect(moved).toMatchObject({
+				_id: original._id,
+				_creationTime: original._creationTime,
+				userId: original.userId,
+				scope: original.scope,
+				title: original.title,
+				content: original.content,
+				registrationId: original.registrationId,
+				repositoryKey: 'other',
+				revision: original.revision + 1
+			});
+			expect(moved).not.toHaveProperty('sourcePath');
+			expect(await asUser.query(api.artifacts.listArtifactsForRun, auth)).toMatchObject({
+				page: [],
+				revision: 2
+			});
+			expect(
+				await asUser.query(api.artifacts.listArtifactsForRun, { ...auth, repositoryKey: 'other' })
+			).toMatchObject({ page: [{ artifactId, title: fields.title }], revision: 1 });
+			expect(await asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields })).toEqual({
+				artifactId
+			});
+			expect(
+				(await asUser.query(api.artifacts.listArtifacts, { repositoryKey: 'other' })).page
+			).toHaveLength(1);
+			expect(await transfer('other')).toEqual({});
+			expect(await load()).toEqual(moved);
+			expect(await asUser.query(api.artifacts.getArtifactState, { repositoryKey: 'other' })).toBe(
+				1
+			);
+
+			const staleSync = { artifactId, repositoryKey, expectedRevision: 1, content: 'stale' };
+			await expect(asUser.mutation(api.artifacts.syncArtifact, staleSync)).rejects.toThrow(
+				/not found/i
+			);
+			expect(
+				await asUser.mutation(api.artifacts.syncArtifact, { ...staleSync, repositoryKey: 'other' })
+			).toBe(false);
+			await expect(
+				asUser.mutation(api.artifacts.editArtifact, {
+					...auth,
+					artifactId,
+					expectedRevision: 1,
+					title: fields.title,
+					content: 'stale'
+				})
+			).rejects.toThrow(/changed/i);
+
+			await transfer(repositoryKey);
+			expect(await asUser.mutation(api.artifacts.syncArtifact, staleSync)).toBe(false);
+			expect(await load()).toMatchObject({ content: fields.content, repositoryKey, revision: 3 });
+			expect(await asUser.query(api.artifacts.getArtifactState, { repositoryKey })).toBe(3);
+			expect(await asUser.query(api.artifacts.getArtifactState, { repositoryKey: 'other' })).toBe(
+				2
+			);
+		}
+	);
+
+	it('persists artifact tool jobs, including transfers with empty results', async () => {
 		const { t, asUser, auth } = await seedActiveRun();
 		const artifact = await asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields });
 
 		for (const [index, kind] of (
-			['bind_artifact', 'add_artifact', 'edit_artifact', 'save_artifact', 'list_artifacts'] as const
+			[
+				'bind_artifact',
+				'add_artifact',
+				'edit_artifact',
+				'save_artifact',
+				'list_artifacts',
+				'transfer_artifact'
+			] as const
 		).entries()) {
-			const payload = kind === 'list_artifacts' ? {} : { artifactId: artifact.artifactId };
+			const payload =
+				kind === 'list_artifacts'
+					? { repositoryKey: 'other' }
+					: kind === 'transfer_artifact'
+						? { artifactId: artifact.artifactId, repositoryKey: 'other' }
+						: { artifactId: artifact.artifactId };
 
 			const job = await asUser.mutation(api.agentRuntime.beginToolJob, {
 				...auth,
@@ -334,7 +455,9 @@ describe('cloud artifacts', () => {
 								(metadata) => ({ ...metadata, path: '/workspace/Notes' })
 							)
 						}
-					: { ...artifact, path: '/workspace/Notes', wiringIssues: [] };
+					: kind === 'transfer_artifact'
+						? {}
+						: { ...artifact, path: '/workspace/Notes', wiringIssues: [] };
 
 			expect(
 				await asUser.mutation(api.executor.complete, { ...auth, jobId: job.jobId, result })
@@ -342,7 +465,7 @@ describe('cloud artifacts', () => {
 		}
 
 		const jobs = await t.run(async (ctx) => ctx.db.query('executorJobs').collect());
-		expect(jobs).toHaveLength(5);
+		expect(jobs).toHaveLength(6);
 
 		for (const job of jobs) {
 			expect(job.status).toBe('completed');
@@ -425,7 +548,7 @@ describe('cloud artifacts', () => {
 		expect(await asUser.query(api.artifacts.getArtifactState, { repositoryKey })).toBe(3);
 	});
 
-	it('enforces deletion account and project boundaries before changing registry state', async () => {
+	it('enforces account boundaries and legacy project boundaries before changing registry state', async () => {
 		const { t, asUser, repositoryKey, auth } = await seedActiveRun();
 		const { artifactId } = await asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields });
 		await expect(
@@ -456,21 +579,42 @@ describe('cloud artifacts', () => {
 		).rejects.toThrow(/not found/i);
 		const bobRun = await seedActiveRun('user_bob', t);
 		await expect(
+			bobRun.asUser.query(api.artifacts.getArtifactForRun, { ...bobRun.auth, artifactId })
+		).rejects.toThrow(/not found/i);
+		await expect(
+			bobRun.asUser.mutation(api.artifacts.editArtifact, {
+				...bobRun.auth,
+				artifactId,
+				expectedRevision: 1,
+				title: fields.title,
+				content: 'forbidden'
+			})
+		).rejects.toThrow(/not found/i);
+		await expect(
 			bobRun.asUser.mutation(api.artifacts.deleteArtifactForRun, {
 				...bobRun.auth,
 				artifactId
 			})
 		).rejects.toThrow(/not found/i);
-		const otherProjectRun = await seedActiveRun('user_alice', t);
-		await t.run((ctx) =>
-			ctx.db.patch('threadRecords', otherProjectRun.threadId, { repositoryKey: 'other' })
-		);
 		await expect(
-			asUser.mutation(api.artifacts.deleteArtifactForRun, {
-				...otherProjectRun.auth,
-				artifactId
+			bobRun.asUser.mutation(api.artifacts.transferArtifactForRun, {
+				...bobRun.auth,
+				artifactId,
+				repositoryKey: 'other'
 			})
 		).rejects.toThrow(/not found/i);
+		await expect(
+			bob.mutation(api.artifacts.transferArtifact, { artifactId, repositoryKey: 'other' })
+		).rejects.toThrow(/not found/i);
+		await expect(
+			t.mutation(api.artifacts.transferArtifact, { artifactId, repositoryKey: 'other' })
+		).rejects.toThrow(/authentication required/i);
+		expect(
+			await bobRun.asUser.query(api.artifacts.listArtifactsForRun, {
+				...bobRun.auth,
+				repositoryKey
+			})
+		).toMatchObject({ page: [], revision: 0 });
 		expect(await t.run((ctx) => ctx.db.get('artifacts', artifactId))).not.toBeNull();
 		expect(await asUser.query(api.artifacts.getArtifactState, { repositoryKey })).toBe(1);
 		expect(await asUser.query(api.artifacts.getArtifactState, { repositoryKey: 'other' })).toBe(0);
@@ -488,6 +632,13 @@ describe('cloud artifacts', () => {
 				asUser.mutation(api.artifacts.deleteArtifactForRun, {
 					...invalidAuth,
 					artifactId
+				})
+			).rejects.toThrow();
+			await expect(
+				asUser.mutation(api.artifacts.transferArtifactForRun, {
+					...invalidAuth,
+					artifactId,
+					repositoryKey: 'other'
 				})
 			).rejects.toThrow();
 		}

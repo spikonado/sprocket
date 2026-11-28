@@ -60,6 +60,7 @@ pub(super) struct AgentToolContext {
     pub(super) run_id: String,
     pub(super) claim_id: String,
     pub(super) user_id: String,
+    pub(super) repository_key: String,
     pub(super) workspace_root: PathBuf,
     pub(super) cwd: WorkingDirectory,
     pub(super) transcript_dir: PathBuf,

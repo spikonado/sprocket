@@ -11,6 +11,8 @@ An artifact's title is its filename, and the UI picks the renderer from the titl
 
 Bind the file with `bind_artifact` once, then keep editing the file. After moving or renaming it, call `bind_artifact` with the new path and the artifact's `artifactId` so the artifact follows the file.
 
+Artifact tools work across the user's projects. Use `list_artifacts` with `repositoryKey` to find another project's artifacts. `transfer_artifact` changes which project owns an artifact without moving its bound files.
+
 When the bound file goes missing, the artifact keeps its last content, and `save_artifact` writes it back. When both the file and the cloud copy changed, sync pauses. Compare the two versions, then keep the file's version by rebinding its path to the `artifactId`, or save the cloud copy to a new path with `save_artifact`.
 
 ## Visuals
