@@ -12,7 +12,7 @@ Sprocket can trigger WakaTime's AI transcript sync during local runs and when th
 
 ## Setup
 
-1. Install a `wakatime-cli` build that includes Sprocket support.
+1. Install a `wakatime-cli` build that includes the [Sprocket transcript parser](https://github.com/wakatime/wakatime-cli/pull/1681). Until it is released, build from that PR rather than using a stock release.
 2. Configure your account in `~/.wakatime.cfg`.
 3. Close any running Sprocket server or desktop app, then restart it with `SPROCKET_WAKATIME_CLI` set to the CLI executable.
 

@@ -102,21 +102,21 @@ async fn watch(
             _ = tokio::time::sleep(SYNC_INTERVAL) => {},
         }
         changes = changes.resubscribe();
-        if let Ok(mut last_sync) = SYNC_LOCK.try_lock() {
-            let started = Instant::now();
-            sync(&executable, &data_dir).await;
-            *last_sync = Some((data_dir.clone(), started));
-        }
+        sync_pending(&executable, &data_dir).await;
     }
+    sync_pending(&executable, &data_dir).await;
+}
+
+async fn sync_pending(executable: &OsString, data_dir: &Path) {
     let requested = Instant::now();
     let mut last_sync = SYNC_LOCK.lock().await;
     if !last_sync
         .as_ref()
-        .is_some_and(|(profile, started)| profile == &data_dir && *started >= requested)
+        .is_some_and(|(profile, started)| profile == data_dir && *started >= requested)
     {
         let started = Instant::now();
-        sync(&executable, &data_dir).await;
-        *last_sync = Some((data_dir, started));
+        sync(executable, data_dir).await;
+        *last_sync = Some((data_dir.to_owned(), started));
     }
 }
 

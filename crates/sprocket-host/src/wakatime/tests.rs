@@ -2,16 +2,8 @@ use super::*;
 
 #[tokio::test]
 async fn ending_a_local_run_syncs_its_profile_with_the_configured_cli() {
-    use std::os::unix::fs::PermissionsExt;
-
     let dir = tempfile::tempdir().unwrap();
-    let executable = dir.path().join("fake wakatime-cli");
-    std::fs::write(
-        &executable,
-        "#!/bin/sh\nprintf '%s\\n' \"$SPROCKET_DATA_DIR\" \"$@\" > \"$(dirname \"$0\")/invocation\"\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let executable = fake_cli(dir.path());
     let data_dir = dir.path().join("separate profile");
     let store = TranscriptStore::new(data_dir.join("transcripts"));
     let workspace = dir.path().join("project");
@@ -53,4 +45,50 @@ async fn ending_a_local_run_syncs_its_profile_with_the_configured_cli() {
         .unwrap();
         assert_eq!(metadata["workspacePath"], workspace.to_str().unwrap());
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_transcript_change_syncs_after_another_sync_releases_the_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    let executable = fake_cli(dir.path());
+    let (changes, receiver) = broadcast::channel(16);
+    let (finish, stopped) = oneshot::channel();
+    let lock = SYNC_LOCK.lock().await;
+    let task = tokio::spawn(watch(
+        executable.into_os_string(),
+        dir.path().to_owned(),
+        "user".into(),
+        "thread".into(),
+        receiver,
+        stopped,
+    ));
+    changes.send(("user".into(), "thread".into())).unwrap();
+    tokio::task::yield_now().await;
+    tokio::time::advance(SYNC_INTERVAL).await;
+    tokio::task::yield_now().await;
+    tokio::time::resume();
+    drop(lock);
+
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !dir.path().join("invocation").exists() {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+    finish.send(()).unwrap();
+    task.await.unwrap();
+}
+
+fn fake_cli(dir: &Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let executable = dir.join("fake wakatime-cli");
+    std::fs::write(
+        &executable,
+        "#!/bin/sh\nprintf '%s\\n' \"$SPROCKET_DATA_DIR\" \"$@\" > \"$(dirname \"$0\")/invocation\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    executable
 }
