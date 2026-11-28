@@ -56,7 +56,7 @@ export function McpLogo({ iconUrl }: { iconUrl?: string }) {
 			<img
 				src={iconUrl}
 				alt=""
-				className="object-contain"
+				className="rounded-sm bg-white object-contain p-0.5 scheme-light"
 				loading="lazy"
 				referrerPolicy="no-referrer"
 				onError={() => setFailed(true)}

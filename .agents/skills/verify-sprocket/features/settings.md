@@ -35,6 +35,8 @@ Precondition: the new-thread screen with the inbox sidebar visible.
 - **GitHub.** On Connectors, wait until `switch "Use GitHub"` is present and not `[disabled]`. It starts as `Checking GitHub…` with the switch disabled. After a click it is disabled again until the save finishes; the JSON file updates first, then `checked`. Click it. It reads `[checked=false]`, plain `snapshot` shows "GitHub is off. Agents can’t link pull requests and their status won’t refresh.", and `~/.sprocket-dev-verify/github-settings.json` has `"disabled": true`. Click it again, wait until it is not disabled, and the file has `"disabled": false`.
 - **Back.** Click `button "Back"`. The new-thread screen or selected thread workspace returns, along with `button "New thread"`.
 
+- **Catalog logos.** On Connectors, scroll through Add a connector in light and dark mode. Every reviewed connector should show its brand image, not the generic plug; black marks should remain visible on their white backing. Restore the original theme.
+
 ## Gotchas
 
 - Preferences belong to the user's dev account. Flip one at a time and restore it. `Settle threads when their PRs merge` can settle the user's real dev threads while on.
