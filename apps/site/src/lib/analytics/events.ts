@@ -14,6 +14,7 @@ export type AnalyticsEvents = {
 		release_tag: string;
 	};
 	install_command_copied: { command: string };
+	product_film_played: Record<string, never>;
 	pricing_interval_selected: { interval: BillingInterval };
 	pricing_plan_selected: { plan: string; interval: BillingInterval; signed_in: boolean };
 	pricing_credit_pack_selected: { pack: string; signed_in: boolean };
