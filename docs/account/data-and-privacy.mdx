@@ -1,26 +1,28 @@
 ---
 title: Data and privacy
-description: How Sprocket keeps your code, conversations, and keys private and encrypted.
+description: Where Sprocket stores your data, how it handles secrets, and how to request deletion.
 ---
 
-Your project files stay on your computer. The agent reads and edits them in place, and Sprocket's servers see a file only when the agent reads it into a thread. Spikonado doesn't sell your data. Read the full [privacy policy](https://spikonado.com/privacy).
+The agent reads and edits project files on your computer. Sprocket syncs thread content, artifacts, and attachments to the cloud. Model providers also receive the context sent with model requests, which can include file contents and tool output.
 
 ## Encryption
 
-- Everything between your computer and Sprocket's servers travels over TLS.
+- Connections to Sprocket's hosted services use TLS.
 - Threads, artifacts, and account data are stored in [Convex](https://www.convex.dev/security), encrypted at rest with AES-256.
 - Attachments are stored in [Cloudflare R2](https://developers.cloudflare.com/r2/reference/data-security/), encrypted at rest with AES-256.
-- API keys and Claude sign-ins are encrypted in [WorkOS Vault](https://workos.com/docs/vault). Each one gets its own encryption key, which is protected by a key that never leaves a hardware security module.
-- Your Sprocket, ChatGPT, GitHub, and Vercel sign-ins are stored only on your computer.
+- Saved provider API keys, Claude sign-ins, and GitHub tokens use [WorkOS Vault](https://workos.com/docs/vault). Vault encrypts each stored secret with a unique encryption key.
+- ChatGPT sign-in credentials are stored on your computer.
 
 ## Secrets in threads
 
-Before a thread leaves your computer, Sprocket replaces API keys, passwords, and private keys in your messages and tool output with placeholders like `[redacted:openai-key]`.
+Before syncing transcript text to Sprocket's servers, Sprocket replaces detected secrets with placeholders like `[redacted:openai-key]`. It looks for known key formats, passwords in URLs, and random-looking tokens. It can miss secrets, and this redaction does not prevent secrets from reaching model providers or tools. Avoid putting secrets in messages or tool output.
 
 ## Usage analytics
 
-Sprocket sends usage numbers, such as token counts and how long runs take, to [PostHog](https://posthog.com). It doesn't send your prompts, the agent's replies, or your files. Session replays mask all text.
+Sprocket sends usage events, such as token counts and run durations, to [PostHog](https://posthog.com). The app also identifies signed-in users by user ID and email and captures errors. Session replay is configured to mask text and inputs.
 
 ## Deleting data
 
-You can delete threads, artifacts, and saved keys at any time. Deleting an artifact also deletes its file in your project. Sprocket deletes threads after 180 days without activity. To delete your account, email [aarav@spikonado.com](mailto:aarav@spikonado.com).
+You can delete threads, artifacts, and saved keys. Deleting an artifact also deletes its bound local files. Each day, Sprocket deletes cloud-stored threads that have been inactive for 180 days, along with their subagents. It skips deletion if the thread or any of its subagents has an active run.
+
+For privacy questions or account deletion requests, email [privacy@spikonado.com](mailto:privacy@spikonado.com).

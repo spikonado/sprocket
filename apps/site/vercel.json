@@ -16,6 +16,16 @@
 	],
 	"redirects": [
 		{
+			"source": "/docs/reference/settings",
+			"destination": "/docs/reference/configuration",
+			"permanent": true
+		},
+		{
+			"source": "/docs/quickstart",
+			"destination": "/docs",
+			"permanent": true
+		},
+		{
 			"source": "/",
 			"has": [{ "type": "host", "value": "docs.usesprocket.dev" }],
 			"destination": "https://usesprocket.dev/docs",

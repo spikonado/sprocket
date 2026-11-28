@@ -1,15 +1,13 @@
 ---
 title: Purchases
-description: Let Sprocket's agent buy parts and subscriptions at online checkouts with your saved card, approving purchases with your passkey.
+description: Save a card, approve online purchases with your passkey, and check purchase history.
 ---
 
 The agent can pay at an online checkout with a card you saved in Sprocket. You approve each purchase with your passkey, unless you turned on auto-approval in Agentcard. [Agentcard](https://agentcard.sh) stores your cards, and Sprocket never sees the card number.
 
 ## Save a card
 
-Open **Settings → Payments** and click **Add a card**. Scan the QR code with your phone and save the card on Agentcard's page with Face ID or your fingerprint.
-
-Agentcard locks your card with a passkey. If your computer has one, like Touch ID, Windows Hello, or a password manager, you can click **Open on this computer** instead.
+Open **Settings → Payments** and click **Add a card**. Scan the QR code with your phone to save the card on Agentcard's page. Use **Open on this computer** instead if your passkey is on your computer.
 
 ## How a purchase works
 
@@ -20,19 +18,22 @@ Agentcard locks your card with a passkey. If your computer has one, like Touch I
 	</Step>
 	<Step title="You approve">
 		The thread shows the amount and the store, such as **Approve $24.99 at Adafruit**. Click
-		**Approve**, scan the QR code with the phone or open it on the computer that holds your passkey,
-		and confirm. Purchases that Agentcard auto-approves skip this step.
+		**Approve**, scan the QR code with your phone or open the link on the computer with your
+		passkey, and confirm. Purchases that Agentcard auto-approves skip this step.
 	</Step>
 	<Step title="Agentcard pays">
-		Agentcard fills in your real card and Sprocket submits the order. The agent then reports the
-		order number, or the store's error if payment failed.
+		Agentcard sends the payment to the store's payment processor. Some payments need you to finish
+		on Agentcard's page or complete a bank check. The agent checks the store's result and reports
+		the order number or payment error.
 	</Step>
 </Steps>
 
-The checkout page must use HTTPS. If you stop the run while a purchase waits for approval, Sprocket cancels the purchase.
+The checkout page must use HTTPS and a payment processor that Agentcard recognizes. Approval alone doesn't mean the store accepted the order. If the payment result is unknown, check the store and your card before trying again to avoid a duplicate charge.
+
+Sprocket cancels a pending purchase when the agent's run ends, including when you stop it.
 
 The agent can only start a purchase in a thread you started from the app. Subagents and `sprocket run` tasks can't start purchases.
 
 ## Purchase history
 
-**Settings → Payments** lists your last 100 purchases with their status, such as Awaiting approval, Declined, Expired, Cancelled, or Completed.
+**Settings → Payments** lists your last 100 purchases with their status and links to their threads.

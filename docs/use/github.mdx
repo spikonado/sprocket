@@ -1,6 +1,6 @@
 ---
 title: GitHub
-description: Connect GitHub so Sprocket's agent can link pull requests to threads, watch their checks and reviews, and settle threads when they merge.
+description: Sign in to GitHub, track pull requests in threads, and configure commits and automatic pulls.
 ---
 
 The agent uses the [GitHub CLI](https://cli.github.com) for pull requests and other GitHub work. Sprocket installs it for you.
@@ -13,21 +13,19 @@ For GitHub Enterprise, click **Add a GitHub Enterprise host**, enter its hostnam
 
 If `GH_TOKEN` or `GITHUB_TOKEN` is set where Sprocket runs, Sprocket uses that token instead. For an Enterprise host, set `GH_HOST` to its hostname and `GH_ENTERPRISE_TOKEN` or `GITHUB_ENTERPRISE_TOKEN` to its token.
 
-Sprocket no longer saves GitHub tokens. If you saved one in **Settings → Version Control**, sign in again from **Settings → Connectors**.
-
 ## Pull requests in threads
 
 The agent links the pull requests it works on to the thread. They appear in the thread's **Pull requests** list with their current status. The agent can wait on a pull request until its checks finish or a reviewer comments.
 
-To settle a thread when its pull requests merge, turn on **Settle threads when their PRs merge** in [Settings → General](/reference/settings#general).
+To settle a thread when its pull requests merge, turn on **Settle threads when their PRs merge** in [Settings → General](/reference/configuration#general).
 
 ## Commits
 
-Sprocket tells the agent to add Sprocket as a co-author on its commits. Turn this off in [Settings → Version Control](/reference/settings#version-control).
+Sprocket tells the agent to add Sprocket as a co-author on its commits. Turn this off in [Settings → Version Control](/reference/configuration#version-control).
 
 ## Pull the latest code
 
-Turn on **Pull the latest code automatically** in [Settings → Version Control](/reference/settings#version-control) to keep your projects up to date. Every 5 minutes, each computer running Sprocket runs `git pull --ff-only` in the checkout of each of its projects that has an `origin` remote.
+Turn on **Pull the latest code automatically** in [Settings → Version Control](/reference/configuration#version-control). Every 5 minutes, each computer running Sprocket attempts a fast-forward pull in its available project checkouts that use Git. Git pulls from the branch's upstream and refuses if the branches have diverged or the pull would overwrite local changes.
 
 ## Turn off GitHub
 

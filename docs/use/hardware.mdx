@@ -1,11 +1,11 @@
 ---
 title: Hardware
-description: Install the KiCad connector so Sprocket can edit schematics and PCBs, view designs in 2D and 3D, pick parts, and draw wiring diagrams.
+description: Install the KiCad connector for schematic and PCB work, view designs, and follow wiring diagrams.
 ---
 
 ## KiCad connector
 
-The KiCad connector gives the agent KiCad, the KiCad Python API, routing tools, and libraries. The agent uses it to create and edit schematics and boards, run ERC and DRC, and export Gerbers, renders, and BOMs.
+The KiCad connector lets the agent create and edit schematics and boards, run electrical and design rule checks, and export Gerbers, renders, and bills of materials. It includes KiCad, its Python API, and libraries. Routing tools are included except on Windows Arm.
 
 <Steps>
 	<Step title="Open Settings → Connectors">
@@ -13,11 +13,11 @@ The KiCad connector gives the agent KiCad, the KiCad Python API, routing tools, 
 		computer.
 	</Step>
 	<Step title="Install KiCad">
-		Click **Install**. The connector needs about 10 GiB of free disk space.
+		Click **Install**. Allow 10 GiB of free disk space if the connector needs to download KiCad.
 	</Step>
 </Steps>
 
-The connector runs on macOS on Apple silicon and Intel, Windows on x64 and Arm, and Linux x64. It needs KiCad 10.99 or newer. If you already have one installed, the connector uses it. Otherwise it downloads its own KiCad nightly build. If you uninstall or downgrade a KiCad the connector uses, reinstall the connector.
+The connector runs on macOS on Apple silicon and Intel, Windows on x64 and Arm, and Linux x64. It uses an existing KiCad installation if it finds version 10.99 or newer with API server support. Otherwise it downloads a KiCad nightly build. If you uninstall or downgrade the KiCad installation it uses, reinstall the connector.
 
 When a connector update is ready, **Settings → Connectors** shows an **Update** button.
 
@@ -30,7 +30,7 @@ When the agent works on a KiCad project, it can add a project card to its reply.
 In the board view:
 
 - Drag to pan. Scroll or pinch to zoom at the pointer.
-- **Layers** lists the board's layers in KiCad's default colors, top layer first. Click a layer to show or hide it. Copper, silkscreen, the board edge and holes start shown. Mask, paste, adhesive, courtyard, fabrication and user layers start hidden.
+- Use **Layers** to show or hide board layers.
 - Zoom in on a pad to see its number and net name.
 - **Fit board** zooms to the whole board. **Flip board** shows the back side, mirrored, with the back layers on top.
 - Click an item to select it and see its reference, value, net, layer, and position. Selecting a pad also shows its footprint. Press Escape or click empty space to clear the selection.
@@ -39,31 +39,26 @@ In the board view:
 In the 3D view:
 
 - Drag to orbit. Right-drag, middle-drag, or Shift-drag to pan. Scroll or pinch to zoom at the pointer.
-- The board, copper, solder mask, silkscreen, and holes show right away. Component models load from KiCad in the background, which needs the KiCad connector.
+- The board, copper, solder mask, silkscreen, and holes show right away. Component models load in the background and need the KiCad connector.
 - **Components** shows or hides the component models. **Fit board** fits the whole board in view. **Flip board** turns the board over.
-- When the board file changes, the board updates at the same camera angle. Component models load again only when a footprint or its model changes.
-
-Sprocket reads the board on your computer and draws it in the background, so large boards don't slow down the rest of the app.
+- When the board file changes, the board updates at the same camera angle.
 
 The board view doesn't draw images or barcodes yet.
 
 ## Wiring diagrams
 
-For projects built from modules and dev boards, the agent can save a wiring diagram as a `.wiring.json` artifact. The agent lists the parts and the wires, and Sprocket draws the diagram:
+For projects built from modules and dev boards, the agent can save a wiring diagram as a `.wiring.json` artifact. You don't need the KiCad connector to view it.
 
-- The build is split into steps of up to 6 wires. Pick a step to see its wires, with earlier wires faded, or pick **Show all**.
-- Every part is a box with its used pins named on the left and right sides.
-- Power and ground run along rails under each row of parts, like on a breadboard.
-- Wires run at right angles, and no two wires share a stretch, so you can follow each one from end to end. Wires only cross straight over each other.
-- Click a part to see only its wires. Click it again to go back to the steps.
+- Pick a build step to see its wires, with earlier wires faded, or pick **Show all**.
+- Click a part to focus its connections. Click it again to go back to the steps.
 - Tick off wires in the checklist as you connect them. Hover over a row to highlight its wire.
-- The parts list shows each part with a photo and, when the agent found one, a link to buy it.
+- The parts list includes photos and purchase links when available.
 
-Sprocket checks the wiring as it draws it. It shows errors for an invalid file, unknown parts or pins, power shorted to ground, two voltages joined together, and a supply above what a pin's logic can take. It warns about steps over 6 wires and about signals between parts with different logic voltages. The agent gets the same results each time it writes the file, so it can fix them before it hands you the diagram.
+Sprocket checks the diagram for invalid parts and pins, some shorts, and voltage conflicts using pin names and the voltage information in the file. It also warns about steps with more than 6 wires. The agent receives validation results when it uses the patch or artifact tools. These checks don't verify the physical circuit or individual pin tolerances.
 
 If a wire can't find a free path, it shows as a dashed straight line with a warning. Use the checklist for that wire.
 
-In a narrow workspace panel the diagram shrinks to fit. Open it fullscreen to read the pin names.
+In a narrow workspace panel, the diagram shrinks to fit. Open it fullscreen to read the pin names.
 
 ## Hardware skills
 

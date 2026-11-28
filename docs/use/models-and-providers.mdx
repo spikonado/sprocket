@@ -1,24 +1,13 @@
 ---
 title: Models and providers
-description: Pick a model, reasoning level, and fast mode, and connect your own API keys or ChatGPT, Claude, or Muse subscriptions.
+description: Choose a model and connect providers with API keys or subscriptions.
 ---
 
 ## Choose a model
 
-Pick a model in the composer's model menu. Models with reasoning levels have a reasoning submenu:
+Pick a model in the composer's model menu. Use the company logos to switch model groups. Choose a reasoning level if the model supports it. The **Fast** switch uses a faster service tier where available. Sprocket saves these choices for each thread.
 
-- None
-- Low
-- Medium
-- High
-- Extra High
-- Max
-
-Each model marks one level as its default. Models that support it also have a **Fast** switch, which uses the provider's faster service tier. Sprocket saves the model, reasoning level, and fast mode for each thread.
-
-The menu groups models by the company that makes them. Pick a logo to see that company's models. On desktop the logos run down the left side of the menu; on phones they sit above the list.
-
-Sprocket loads the model list from its servers, so new models show up without an update. To see the list from your terminal, run:
+The model list updates from Sprocket's servers. To list models in your terminal:
 
 ```sh
 sprocket run --list-models
@@ -26,7 +15,7 @@ sprocket run --list-models
 
 ## Providers
 
-A provider is where Sprocket sends model requests. Spikonado, Sprocket's own provider, is on by default and uses your plan's [AI usage](/account/plans-and-usage). The other providers use your own keys or subscriptions and don't count against your Sprocket AI usage.
+A provider handles model requests. Spikonado, Sprocket's own provider, is on by default and uses your plan's [AI usage](/account/plans-and-usage). Other providers use your keys or subscriptions and don't count against your Sprocket AI usage.
 
 | Provider               | How to connect                                                                                      |
 | ---------------------- | --------------------------------------------------------------------------------------------------- |
@@ -39,16 +28,12 @@ A provider is where Sprocket sends model requests. Spikonado, Sprocket's own pro
 | OpenRouter             | API key                                                                                             |
 | OpenCode               | API key                                                                                             |
 | OpenCode Go            | API key                                                                                             |
-| Morph                  | API key. See [Morph](#morph).                                                                       |
+| Morph                  | API key                                                                                             |
 | Gemini API             | API key from [Google AI Studio](https://aistudio.google.com/apikey)                                 |
 | Google Vertex AI       | Service account JSON key. See [Google Vertex AI](#google-vertex-ai).                                |
 | Muse Code Subscription | Sign in with Muse through the Muse CLI. Sprocket can install the Muse CLI for you.                  |
 
 Add keys and subscriptions in **Settings → Providers**.
-
-### Morph
-
-Morph serves Kimi K3.1 Pro and DeepSeek V4.1 Flash 1017. Pay-as-you-go keys and [Ultra plan](https://docs.morphllm.com/ultra-plan) keys connect the same way. On Ultra, neither model has a token meter, but each has a per-minute limit on uncached input and output tokens. Kimi K3.1 Pro's output limit is lower than one nonstop stream, so threads with several agents hit it quickly. Keep another provider enabled after Morph so those requests [fall back](#provider-order-and-fallback) instead of failing.
 
 ### Google Vertex AI
 
@@ -64,10 +49,10 @@ Sprocket sends requests to Vertex's global endpoint.
 
 In **Settings → Providers**, drag providers into the order you want and turn each on or off. At least one provider must stay on.
 
-Connecting a provider adds it to the end of the list. Removing a provider takes it off the list and deletes its saved credentials.
+New providers go at the end of the list. Reconnecting a provider keeps its position. Removing a provider deletes its saved credentials. You can't remove Spikonado, but you can turn it off.
 
-For each request, Sprocket uses the first enabled provider that offers the model. Sprocket retries server errors. If the provider still fails or rate-limits the request, Sprocket moves the run to the next enabled provider.
+Sprocket starts each run with the first enabled provider that serves the model. It retries transient server errors before trying other enabled providers that serve the same model, in your saved order. Rate limits also trigger fallback.
 
-## Context Handoff
+## Context handoff
 
-When a thread's context gets close to the model's limit, the model writes a handoff note covering the task, its progress, and what's left. Sprocket continues the thread in a fresh context that starts from that note. It does the same when a thread switches to another provider or to a model from a different vendor.
+Near the model's context limit, Sprocket asks it to write a handoff note and continues the thread in a fresh context. Changing providers or switching to a model from another vendor also prompts a handoff. Automatic provider fallback during a run reuses the conversation instead of writing a handoff note.

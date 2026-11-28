@@ -1,23 +1,46 @@
 ---
 title: Configuration
-description: Environment variables, the ~/.sprocket data directory, ports, and credential storage for the Sprocket server, CLI, and desktop app.
+description: App settings, environment variables, local data, and sign-in storage.
 ---
+
+## App settings
+
+Open Settings or switch between light and dark mode from the sidebar.
+
+### General
+
+| Setting                                                  | Default |
+| -------------------------------------------------------- | ------- |
+| Automatically name threads                               | On      |
+| Continue agents automatically after restarts and crashes | On      |
+| Settle threads when their PRs merge                      | Off     |
+
+### Version control
+
+| Setting                                      | Default |
+| -------------------------------------------- | ------- |
+| Add Sprocket as a co-author on agent commits | On      |
+| Pull the latest code automatically           | Off     |
+
+See [Pull the latest code](/use/github#pull-the-latest-code) for how automatic pulls work.
+
+Other settings pages cover [account and AI usage](/account/plans-and-usage#track-usage), [providers](/use/models-and-providers#providers), and [payments](/use/purchases). Under Connectors, sign in to [GitHub](/use/github) or [Vercel](/use/vercel), or install [KiCad](/use/hardware#kicad-connector).
 
 ## Environment variables
 
-| Variable                      | Effect                                                                                           | Default                          |
-| ----------------------------- | ------------------------------------------------------------------------------------------------ | -------------------------------- |
-| `SPROCKET_PORT`               | Port for the local server. The desktop app reads it too.                                         | `17731`                          |
-| `SPROCKET_HOST`               | Address the server listens on. It accepts connections only from this machine.                    | `127.0.0.1`                      |
-| `SPROCKET_DATA_DIR`           | Data directory. The desktop app reads it too.                                                    | `~/.sprocket`                    |
-| `SPROCKET_DESKTOP_EXECUTABLE` | Path to the desktop app that `sprocket` opens.                                                   | The path in `desktop-executable` |
-| `RUST_LOG`                    | Log filter, such as `info` or `sprocket_host=debug`. `sprocket_server` logs stay at errors only. | Errors only                      |
+| Variable                      | Effect                                                                                           | Default                                              |
+| ----------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
+| `SPROCKET_PORT`               | Port for the local server. The desktop app reads it too.                                         | `17731`                                              |
+| `SPROCKET_HOST`               | Address the server listens on. It accepts connections only from this machine.                    | `127.0.0.1`                                          |
+| `SPROCKET_DATA_DIR`           | Data directory. The desktop app reads it too.                                                    | `~/.sprocket`                                        |
+| `SPROCKET_DESKTOP_EXECUTABLE` | Path to the desktop app that `sprocket` opens.                                                   | The path in `desktop-executable`                     |
+| `RUST_LOG`                    | Log filter, such as `info` or `sprocket_host=debug`. `sprocket_server` logs stay at errors only. | `error,sprocket_agent=info,sprocket_transcript=warn` |
 
 ## Data directory
 
 Sprocket keeps its local state in `~/.sprocket` on every OS. On Windows without `HOME` set, it uses `%USERPROFILE%\.sprocket`.
 
-Each data directory is a separate profile with its own sign-in. Set `SPROCKET_DATA_DIR` to run a second profile.
+Each data directory is a separate profile with its own sign-in. To run a second profile alongside the first, set both `SPROCKET_DATA_DIR` and a different `SPROCKET_PORT`.
 
 | Path                 | Contents                                                 |
 | -------------------- | -------------------------------------------------------- |
@@ -27,12 +50,6 @@ Each data directory is a separate profile with its own sign-in. Set `SPROCKET_DA
 | `connectors/`        | Installed connectors, such as KiCad                      |
 | `desktop-executable` | Where the desktop app is, saved each time it starts      |
 | `cli-server.log`     | Log of the temporary server the CLI starts               |
-
-### Transcript parts
-
-Transcript parts record prompts, model completions, and tool results. A completion's tool-call item contains the tool's name, input, and `toolInvocationId`. Its result has the same invocation ID, a terminal status (`completed`, `failed`, or `cancelled`), and output. A call without a result is still running. Reasoning and tool calls form work blocks until the next non-empty text item.
-
-Transcripts also contain `started` tool parts, `work` section data, and tool names and inputs copied onto results. Older Sprocket versions read these. Current versions skip `started` parts and read names and inputs from the call item.
 
 ### Transcript files
 
@@ -48,11 +65,9 @@ Convex holds the full transcript. Sprocket downloads the newest parts first, and
 
 From the thread directory, `cat parts/*.jsonl` reads cached parts in order. The cache can have gaps while older history downloads.
 
-After upgrading, the first open of a thread replaces its old transcript cache, including SQLite and `state.json`. Attachments and command logs are preserved.
-
 ## Credentials
 
-Sprocket stores your sign-in in the OS keyring when one is available. Otherwise it falls back to an unencrypted file in the data directory that only your user can read, and `sprocket login` tells you so.
+Sprocket stores your sign-in in the OS keyring when one is available. Otherwise it uses an unencrypted file in the data directory that only your user can read. `sprocket login` tells you when it uses this fallback.
 
 To choose the store yourself:
 
@@ -61,4 +76,4 @@ sprocket logout
 sprocket login --credential-store keyring
 ```
 
-Use `--credential-store file` to always use the file. Choosing one store clears the other.
+Use `--credential-store file` to always use the file. Your choice applies to this data directory.

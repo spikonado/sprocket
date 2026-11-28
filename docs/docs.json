@@ -38,7 +38,7 @@
 				"groups": [
 					{
 						"group": "Get started",
-						"pages": ["index", "quickstart", "install"]
+						"pages": ["index", "install"]
 					},
 					{
 						"group": "Use Sprocket",
@@ -62,7 +62,6 @@
 						"pages": [
 							"reference/cli",
 							"reference/configuration",
-							"reference/settings",
 							"reference/keyboard-shortcuts",
 							"troubleshooting"
 						]
