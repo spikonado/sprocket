@@ -38,6 +38,7 @@ mod tool_install;
 pub mod transcript_client;
 pub mod transcript_watch;
 pub mod vercel_connector;
+mod wakatime;
 mod watch_registry;
 mod work_sync;
 pub mod workspace_search;

@@ -1,0 +1,63 @@
+---
+title: WakaTime and Hackatime
+description: Track Sprocket AI coding activity with your existing WakaTime or Hackatime account.
+---
+
+Sprocket can trigger WakaTime's AI transcript sync during local runs and when they finish. The CLI reads Sprocket's local transcript cache and sends activity metadata, not source code or prompt text.
+
+<Warning>
+	This requires a `wakatime-cli` build with the Sprocket transcript parser. Existing releases
+	without that parser do not track Sprocket, even if the sync command succeeds.
+</Warning>
+
+## Setup
+
+1. Install a `wakatime-cli` build that includes the [Sprocket transcript parser](https://github.com/wakatime/wakatime-cli/pull/1681). Until it is released, build from that PR rather than using a stock release.
+2. Configure your account in `~/.wakatime.cfg`.
+3. Close any running Sprocket server or desktop app, then restart it with `SPROCKET_WAKATIME_CLI` set to the CLI executable.
+
+For WakaTime:
+
+```ini
+[settings]
+api_key = YOUR_WAKATIME_API_KEY
+```
+
+For Hackatime, use the configuration from your [Hackatime setup page](https://hackatime.hackclub.com/my/wakatime_setup), including its API URL:
+
+```ini
+[settings]
+api_url = https://hackatime.hackclub.com/api/hackatime/v1
+api_key = YOUR_HACKATIME_API_KEY
+```
+
+For example, start Sprocket from a shell with:
+
+```sh
+SPROCKET_WAKATIME_CLI=/absolute/path/to/wakatime-cli sprocket
+```
+
+On PowerShell:
+
+```powershell
+$env:SPROCKET_WAKATIME_CLI = 'C:\path\to\wakatime-cli.exe'
+sprocket
+```
+
+You can also use `wakatime-cli` as the value if it is on the local server's `PATH`.
+
+## What gets tracked
+
+Tracking is off until you set `SPROCKET_WAKATIME_CLI`. Sprocket marks locally executed runs with their workspace and version so that merely opening a thread from another machine does not make it a tracked local run.
+
+Transcript changes trigger batched syncs, with a final sync when the run completes, fails, or is cancelled. Syncing does not create synthetic activity while the agent waits. The parser uses the events' original timestamps and labels agent activity as `ai coding`.
+
+The CLI handles credentials, project detection, privacy settings, exclusions, and offline delivery. Sprocket does not store a second API key. CLI failures are logged without failing the agent run.
+
+This tracks AI activity, not your personal active time or a stopwatch of agent runtime. Hack Club programs decide which tracked hours qualify under their own rules.
+
+## Troubleshooting
+
+Check `~/.wakatime/wakatime.log` and your account's recent activity. Confirm that your CLI includes the Sprocket parser and that the running Sprocket process has `SPROCKET_WAKATIME_CLI` set.
+
+Unset the variable and restart Sprocket to stop automatic syncs. Previously queued activity remains managed by WakaTime's CLI.
