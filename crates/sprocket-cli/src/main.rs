@@ -80,6 +80,9 @@ struct UpdateArgs {
 }
 
 fn main() -> std::process::ExitCode {
+    if let Some(code) = sprocket_host::agent_browser_shim::run_if_invoked() {
+        return code;
+    }
     match entry() {
         Ok(code) => std::process::ExitCode::from(code),
         Err(error) => {
