@@ -19,9 +19,9 @@ const navItems: ReadonlyArray<{ id: SettingsPage; label: string; icon: typeof Us
 	{ id: 'account', label: 'Account', icon: UserRound },
 	{ id: 'aiUsage', label: 'AI Usage', icon: ChartColumn },
 	{ id: 'providers', label: 'Providers', icon: ListOrdered },
-	{ id: 'versionControl', label: 'Version Control', icon: GitBranch },
 	{ id: 'connectors', label: 'Connectors', icon: Plug },
-	{ id: 'payments', label: 'Payments', icon: CreditCard }
+	{ id: 'payments', label: 'Payments', icon: CreditCard },
+	{ id: 'versionControl', label: 'Version Control', icon: GitBranch }
 ];
 
 const navItemClass =
