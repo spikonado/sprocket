@@ -1,6 +1,6 @@
 ---
 title: What the agent can do
-description: The tools Sprocket's agent uses to edit files, run commands, search the web, ask questions, run subagents, and work with GitHub, plus the tools Sprocket installs for it.
+description: How the agent works with files, commands, the web, questions, and subagents, and which tools Sprocket installs.
 ---
 
 The agent runs as your user in your real project folder. Commands aren't sandboxed.
@@ -11,7 +11,7 @@ The agent edits files with patches that apply fully or not at all. It can read P
 
 ## Commands
 
-The agent runs shell commands and keeps long ones going in the background while it works on something else. It can read their output, type into them, and stop them. Running commands show in the composer, where you can stop each one.
+The agent runs shell commands and can leave them running in the background while it works on something else. It can read their output, type into them, and stop them. Running commands appear in the composer, where you can stop each one.
 
 Commands belong to the thread and keep running after the agent's turn ends. They stop when the Sprocket server stops. On macOS, processes that detach from their shell can outlive the server.
 
@@ -47,7 +47,7 @@ The agent links the pull requests it works on to the thread and waits for their 
 
 ## Purchases
 
-The agent can pay at online checkouts with your saved card and your approval. See [Purchases](/use/purchases).
+The agent can pay at online checkouts with your saved card. See [Purchases](/use/purchases) for approval and checkout limits.
 
 ## Tools Sprocket installs
 
@@ -58,11 +58,12 @@ Sprocket downloads these tools into its [data directory](/reference/configuratio
 | [agent-browser](https://github.com/vercel-labs/agent-browser) and Chromium | Browsing and testing websites                      |
 | [agent-desktop](https://github.com/vercel-labs/agent-desktop)              | Operating desktop apps through accessibility trees |
 | [GitHub CLI](https://cli.github.com)                                       | Pull requests and other GitHub work                |
+| [Vercel CLI](https://vercel.com/docs/cli)                                  | Deploying and managing Vercel projects             |
 | [Bun](https://bun.sh)                                                      | Running JavaScript and TypeScript                  |
 | [Node.js](https://nodejs.org) and npm                                      | Running JavaScript tools that need Node or npm     |
 | [uv](https://docs.astral.sh/uv/) and Python                                | Running Python                                     |
 | Git for Windows                                                            | Git and Git Bash, on Windows only                  |
 
-If you have your own Bun, Node.js, uv, Python, or Git installed, the agent uses yours. Each thread gets its own browser session, so parallel agents don't share tabs.
+If you have your own Bun, Node.js, uv, Python, or Git on `PATH`, it takes precedence over Sprocket's copies. Each thread gets its own browser session.
 
-The [KiCad connector](/use/hardware) is the one tool you install yourself.
+Install the optional [KiCad connector](/use/hardware) from Settings → Connectors. Sign in to [GitHub](/use/github) and [Vercel](/use/vercel) there too.

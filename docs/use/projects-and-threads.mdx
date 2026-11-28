@@ -1,20 +1,20 @@
 ---
 title: Projects and threads
-description: Open project folders, manage threads, attach files, mention paths and skills, and arrange transcript, artifacts, files, and browser tabs.
+description: Open projects, manage conversations, and view files, artifacts, and the agent's browser.
 ---
 
 ## Projects
 
-A project is a folder on your computer. Open one with **Add project**, which has a path field, a folder browser, and a list of recent folders. You can also open a folder from your terminal with `sprocket path/to/folder`.
+A project groups threads for a repository or local folder. Open a folder with **Add project → Local folder**, or run `sprocket path/to/folder` in your terminal.
 
 ### Clone or create a GitHub repository
 
-**Add project** first asks where the project comes from: **Local folder**, **Clone a repo**, or **New GitHub repo**. Local folder goes straight to the folder browser. The GitHub options ask for the repository first, then where to put it:
+**Add project** also lets you clone or create a repository:
 
-- **Clone a repo** takes `owner/repo` or any git URL and clones it into a new folder, named after the repository, inside the folder you pick.
-- **New GitHub repo** takes a name and Private or Public. It creates the repository on your github.com account, then clones it the same way.
+- **Clone a repo** accepts `owner/repo` or a git URL.
+- **New GitHub repo** creates a public or private repository on your github.com account.
 
-Both use your GitHub sign-in from Settings → Connectors. Creating a repository needs a token that can create repositories.
+Choose a destination folder. Sprocket clones into a new subfolder named after the repository. GitHub authentication uses your sign-in from **Settings → Connectors**. Creating a repository needs a token with permission to do so.
 
 Sprocket identifies a project by its git `origin` remote. Every clone and worktree of the same repository shares one project and one thread list, even on different machines. A repository without an `origin` remote, or a folder outside git, is identified by its folder name, so two such folders with the same name share a project.
 
@@ -24,12 +24,11 @@ Switch projects from the project menu. **Remove** takes a project off the list w
 
 ## Threads
 
-A thread is one conversation with the agent. The sidebar lists a project's threads in two groups:
+A thread is one conversation with the agent. The sidebar groups threads into **Unsettled** and **Settled Threads**.
 
-- **Unsettled** for threads you're still working on.
-- **Settled Threads** for finished ones.
+Open a thread's menu to settle or unsettle it, rename it, regenerate its title, move it to another project, copy its ID, or delete it. You can't settle, move, or delete a thread while it or its subagents are running. Deleting a thread also deletes its subagents and attachments, and you can't undo it.
 
-Open a thread's menu to settle or unsettle it, rename it, regenerate its title, move it to another project, copy its ID, or delete it. Deleting a thread also deletes its subagents and attachments, and you can't undo it. You can't settle, move, or delete a thread while it or its subagents are running. Sprocket names new threads for you unless you turn this off in [Settings](/reference/settings#general). It can also [settle threads when their pull requests merge](/use/github#pull-requests-in-threads).
+Sprocket names new threads for you unless you turn this off in [Settings → General](/reference/configuration#general). It can also [settle threads when their pull requests merge](/use/github#pull-requests-in-threads).
 
 ### Search threads
 
@@ -37,7 +36,7 @@ Type in the search box above the thread list to show only threads whose titles m
 
 ### Send messages
 
-Press Enter to send and Shift+Enter for a new line. The composer accepts new messages once the current run ends. While a run is going, you can still answer the agent's questions.
+On desktop, press Enter to send and Shift+Enter for a new line. On touch devices, use the send button. Wait for the current run to end before sending another message. You can answer the agent's questions during a run.
 
 Add context to a message:
 
@@ -51,53 +50,44 @@ Add context to a message:
 
 **Stop generation** ends the current run. Each running command also has its own **Stop command** button.
 
-If a run fails or the server restarts, **Continue working** resumes the thread. Sprocket also resumes interrupted runs by itself after a restart or crash, unless you turn this off in [Settings](/reference/settings#general).
+If a run fails or the server restarts, **Continue working** resumes the thread. Sprocket also resumes interrupted runs automatically after a restart or crash, unless you turn this off in [Settings → General](/reference/configuration#general).
 
 ### Read the agent's work
 
-Work blocks summarize what the agent did, such as "Ran 3 commands", and show whether the work is still running. Running work opens by default. Open a block to see its tools and reasoning. A long block shows its newest 200 items first. Click **Show earlier** to load older ones. Reasoning starts closed, even while the agent is thinking. Click a reasoning row to read it. An open row updates as the agent reasons.
-
-Tool rows show a one-line summary. Click a command, question, subagent, or patch row to read the full text, with commands syntax highlighted. Click a parsed file row to open the file in the file viewer. Hover any other row to see a summary that doesn't fit. Checkout results keep their **Save card** action after a reload.
+Work blocks summarize the agent's activity. Open a block to inspect tool calls, then click a row for details. Reasoning stays collapsed until you open it. Use **Show earlier** to load older items in a long block.
 
 ### Subagents
 
-The agent can start subagents to work on parts of a task in parallel. Each subagent is its own thread and appears under its parent in the sidebar. See [Subagents](/use/agent-tools#subagents).
+The agent can delegate tasks to [subagents](/use/agent-tools#subagents). Each has its own thread under the parent in the sidebar.
 
 ## Workspace tabs and panels
 
-The main workspace has tabs and panels. Each thread, and the new-thread screen, starts with a **Thread** tab that holds the conversation and message composer. You can switch away from it, but you can't close it. Tabs you open on the new-thread screen stay with the thread it creates.
+Each thread starts with a **Thread** tab for the conversation and composer. You can't close this tab. Tabs opened before your first message stay with the new thread.
 
 Use **New tab** to open a view, or **Split right** and **Split down** to add panels. Drag a divider to resize panels. Each thread keeps its own tabs and panel sizes until you reload the app.
 
 New tabs offer three views:
 
-- **Artifacts** shows files the agent linked to the project, rendered. See [Artifacts](#artifacts).
+- **Artifacts** shows files the agent linked to the project. See [Artifacts](#artifacts).
 - **Files** is a file tree where you can search, create, rename, delete, and edit files. The editor asks before it discards unsaved changes.
 - **Browser** shows the browser the agent controls.
 
 ### Artifacts
 
-An artifact is a project file the agent bound for you to view. Edits to the file show up in the artifact. Sprocket renders each artifact based on its file name:
+An artifact is a file the agent linked to the project for you to view. Edits to the file show up in the artifact. Sprocket chooses how to render it from its title, which defaults to the file name:
 
-| File name ends with | Renders as                                                               |
-| ------------------- | ------------------------------------------------------------------------ |
-| `.html` or `.htm`   | A web page                                                               |
-| `.jsx`              | A React component                                                        |
-| `.render.json`      | A [json-render](https://json-render.dev) spec using the app's components |
-| `.wiring.json`      | A [wiring diagram](/use/hardware#wiring-diagrams)                        |
-| Anything else       | Markdown                                                                 |
+| Title ends with   | Renders as                                                               |
+| ----------------- | ------------------------------------------------------------------------ |
+| `.html` or `.htm` | A web page                                                               |
+| `.jsx`            | A React component                                                        |
+| `.render.json`    | A [json-render](https://json-render.dev) spec using the app's components |
+| `.wiring.json`    | A [wiring diagram](/use/hardware#wiring-diagrams)                        |
+| Anything else     | Markdown                                                                 |
 
 ### Rich replies
 
-Agent replies render GitHub-flavored Markdown plus:
-
-- Inline HTML and React visuals.
-- Mermaid diagrams.
-- Math with KaTeX.
-- KiCad project cards with schematic, PCB, and 3D views. See [Hardware](/use/hardware#view-designs).
-- Artifact cards.
-- Code blocks with syntax highlighting and a copy button.
+Agent replies support GitHub-flavored Markdown, HTML and React visuals, Mermaid diagrams, math, and artifact cards. [KiCad cards](/use/hardware#view-designs) open schematic, PCB, and 3D views. Code blocks have syntax highlighting and a copy button.
 
 ### Usage per thread
 
-The **AI usage** button in a thread shows what the thread and its subagents cost at direct API prices.
+The **AI usage** button shows the thread's estimated API cost, with an option to include subagents. See [Plans and usage](/account/plans-and-usage#track-usage) for how these estimates differ from your bill.

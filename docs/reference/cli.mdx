@@ -1,9 +1,9 @@
 ---
 title: CLI
-description: Reference for the sprocket CLI, covering opening the app, running agent tasks, signing in and out, starting the server, and updating.
+description: Commands for opening Sprocket, running tasks, signing in, starting the server, and updating.
 ---
 
-Install the CLI with `npm install -g usesprocket`. Run `sprocket --help` or `sprocket <command> --help` for the same details in your terminal.
+Install the CLI with `npm install -g usesprocket`. Run `sprocket --help` or `sprocket <command> --help` to list commands and options.
 
 ## Open Sprocket
 
@@ -31,7 +31,7 @@ sprocket run [OPTIONS] [PROMPT]
 | Option                    | Effect                                                                                       |
 | ------------------------- | -------------------------------------------------------------------------------------------- |
 | `PROMPT`                  | The task to send.                                                                            |
-| `--prompt-file <PATH>`    | Reads the task from a UTF-8 file, or from stdin with `-`. Up to 1 MiB.                       |
+| `--prompt-file <PATH>`    | Reads the task from a UTF-8 file, or from stdin with `-`. Cannot be combined with `PROMPT`.  |
 | `-C`, `--directory <DIR>` | Working directory. Defaults to the current directory.                                        |
 | `--thread <ID>`           | Sends a follow-up to an existing thread instead of starting a new one.                       |
 | `--model <ID>`            | Model to use.                                                                                |
@@ -40,7 +40,9 @@ sprocket run [OPTIONS] [PROMPT]
 | `--timeout <DURATION>`    | Cancels the run after a duration such as `30s`, `10m`, or `2h`. A bare number means seconds. |
 | `--list-models`           | Lists the models your account can use with their reasoning levels, then exits.               |
 
-`sprocket run` needs you to be signed in. It writes the thread ID, run ID, model, and each tool call to stderr. It writes only the final answer to stdout, so you can pipe it:
+Prompts must be non-empty and at most 1 MiB, whether passed as an argument or read from a file or stdin.
+
+`sprocket run` needs you to be signed in. It writes the thread ID, run ID, model, and tool calls to stderr. It writes only the final answer to stdout, so you can pipe it:
 
 ```sh
 sprocket run "Summarize the open TODOs in this repo" > todos.md
@@ -84,6 +86,8 @@ Starts only the local server, without opening the app.
 | `--port <PORT>`    | `SPROCKET_PORT`      | `17731`       |
 | `--data-dir <DIR>` | `SPROCKET_DATA_DIR`  | `~/.sprocket` |
 | `--quiet`          | `SPROCKET_QUIET`     | Off           |
+
+`--quiet` limits startup output to machine-readable lines. Server logs still go to stderr.
 
 The server only accepts connections from this machine, whatever `--host` is. For remote access, put a loopback reverse proxy such as `tailscale serve` in front of it.
 
