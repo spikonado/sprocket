@@ -7,11 +7,10 @@ use sprocket_transcript::TranscriptStore;
 use sprocket_workspace::SPROCKET_VERSION;
 use tokio::sync::{Mutex, broadcast, oneshot};
 use tokio::task::JoinHandle;
-use tokio::time::Instant;
 
 const SYNC_INTERVAL: Duration = Duration::from_secs(30);
 const SYNC_TIMEOUT: Duration = Duration::from_secs(20);
-static SYNC_LOCK: Mutex<Option<(PathBuf, Instant)>> = Mutex::const_new(None);
+static SYNC_LOCK: Mutex<()> = Mutex::const_new(());
 
 pub(crate) struct WakaTimeSession {
     finish: oneshot::Sender<()>,
@@ -102,25 +101,13 @@ async fn watch(
             _ = tokio::time::sleep(SYNC_INTERVAL) => {},
         }
         changes = changes.resubscribe();
-        sync_pending(&executable, &data_dir).await;
+        sync(&executable, &data_dir).await;
     }
-    sync_pending(&executable, &data_dir).await;
-}
-
-async fn sync_pending(executable: &OsString, data_dir: &Path) {
-    let requested = Instant::now();
-    let mut last_sync = SYNC_LOCK.lock().await;
-    if !last_sync
-        .as_ref()
-        .is_some_and(|(profile, started)| profile == data_dir && *started >= requested)
-    {
-        let started = Instant::now();
-        sync(executable, data_dir).await;
-        *last_sync = Some((data_dir.to_owned(), started));
-    }
+    sync(&executable, &data_dir).await;
 }
 
 async fn sync(executable: &OsString, data_dir: &Path) {
+    let _guard = SYNC_LOCK.lock().await;
     let result = tokio::time::timeout(
         SYNC_TIMEOUT,
         tokio::process::Command::new(executable)
